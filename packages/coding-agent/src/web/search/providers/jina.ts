@@ -21,10 +21,17 @@ export interface JinaSearchParams {
 interface JinaSearchResult {
 	title?: string | null;
 	url?: string | null;
+	description?: string | null;
 	content?: string | null;
+	date?: string | null;
+	usage?: { tokens?: number | null } | null;
 }
 
 type JinaSearchResponse = JinaSearchResult[];
+
+interface JinaSearchPayload {
+	data?: JinaSearchResponse | null;
+}
 
 /** Find JINA_API_KEY from environment or .env files. */
 export function findApiKey(): string | null {
@@ -46,7 +53,8 @@ async function callJinaSearch(apiKey: string, query: string): Promise<JinaSearch
 		throw new SearchProviderError("jina", `Jina API error (${response.status}): ${errorText}`, response.status);
 	}
 
-	const payload = (await response.json()) as { data?: JinaSearchResponse } | null;
+	const payload = (await response.json()) as JinaSearchPayload | JinaSearchResponse | null;
+	if (Array.isArray(payload)) return payload;
 	return Array.isArray(payload?.data) ? payload.data : [];
 }
 
@@ -60,20 +68,30 @@ export async function searchJina(params: JinaSearchParams): Promise<SearchRespon
 	const response = await callJinaSearch(apiKey, params.query);
 	const sources: SearchSource[] = [];
 
+	let totalTokens = 0;
+	let hasUsage = false;
 	for (const result of response) {
 		if (!result?.url) continue;
 		sources.push({
 			title: result.title ?? result.url,
 			url: result.url,
-			snippet: result.content ?? undefined,
+			snippet: result.content?.trim() || result.description?.trim() || undefined,
+			publishedDate: result.date ?? undefined,
 		});
+
+		const tokens = result.usage?.tokens;
+		if (typeof tokens === "number" && Number.isFinite(tokens)) {
+			totalTokens += tokens;
+			hasUsage = true;
 	}
 
+	}
 	const limitedSources = params.num_results ? sources.slice(0, params.num_results) : sources;
 
 	return {
 		provider: "jina",
 		sources: limitedSources,
+		usage: hasUsage ? { totalTokens } : undefined,
 	};
 }
 
