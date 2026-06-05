@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+
+- Changed streaming frames to cap rendered content to viewport height and suppress `\r\n` scrolling, so intermediate tool output never enters terminal native scrollback. Rows are committed once via `historyRebuild` when the tool finishes (or via the stable-prefix commit path for already-stabilized content). ([#NNNN](https://github.com/can1357/oh-my-pi/pull/NNNN))
 
 ## [15.9.1] - 2026-06-04
 ### Fixed

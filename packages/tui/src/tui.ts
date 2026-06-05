@@ -1416,7 +1416,7 @@ export class TUI extends Container {
 			this.#streamingHighWater = 0;
 		}
 		this.#previousStreamingActive = streamingWasActive;
-		if (this.#streamingHighWater > 0) {
+		if (streamingWasActive) {
 			const streamingActive =
 				this.#eagerNativeScrollbackRebuild && !this.#eagerNativeScrollbackRebuildDisablePending;
 			const streamingJustEnded = !streamingActive && streamingWasActive;
@@ -1434,13 +1434,11 @@ export class TUI extends Container {
 				// On ED3-risk the intent stays as planRender returned (e.g. noop
 				// if content unchanged) — the capped state persists until shrink.
 			} else if (streamingActive) {
-				const suppressPureAppend =
-					intent.kind === "diff" && intent.appendedLines && intent.firstChanged === this.#previousLines.length;
 				if (
 					intent.kind === "sessionReplace" ||
 					intent.kind === "historyRebuild" ||
 					intent.kind === "overlayRebuild" ||
-					suppressPureAppend
+					(intent.kind === "diff" && intent.appendedLines)
 				) {
 					this.#clearScrollbackOnNextRender = false;
 					this.#clearNativeScrollbackDirty();
