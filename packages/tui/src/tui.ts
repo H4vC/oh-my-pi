@@ -384,6 +384,16 @@ export class TUI extends Container {
 	// not scroll replayed live chrome (status/editor) into fresh history.
 	#suppressNextSuffixScroll = false;
 	#nativeScrollbackDirty = false;
+	// Highest `#maxLinesRendered` reached during a foreground tool turn while
+	// intermediate frames were prevented from committing to terminal scrollback.
+	// Used after the tool finishes to push the settled content into scrollback
+	// via a non-destructive full paint (no ED 3). Reset to 0 once rows are
+	// committed (via any `#emitFullPaint`, `#emitDiff`, or `#emitAppendTail`
+	// path).
+	#streamingHighWater = 0;
+	// Tracks whether the previous frame was inside a foreground tool streaming
+	// turn. Used to reset `#streamingHighWater` on fresh streaming starts.
+	#previousStreamingActive = false;
 	#fullRedrawCount = 0;
 	// Caps how many inline images render as live graphics; older ones fall back
 	// to text via a purge + full redraw. Cap is configured by the host app.
@@ -1387,7 +1397,7 @@ export class TUI extends Container {
 		this.#allowUnknownViewportMutationOnNextRender = false;
 
 		// 3. Classify intent.
-		const intent = this.#planRender(
+		let intent = this.#planRender(
 			lines,
 			widthChanged,
 			heightChanged,
@@ -1397,6 +1407,55 @@ export class TUI extends Container {
 			overlayVisibilityReduced,
 			allowUnknownViewportMutation,
 		);
+		// 3b. During foreground tool streaming, suppress any destructive scrollback
+		// commit. Intermediate frames repaint the viewport in place so transient
+		// streaming output never enters terminal native scrollback. Track the peak
+		// row count so the settled content can be pushed into scrollback later.
+		const streamingWasActive = this.#eagerNativeScrollbackRebuild;
+		if (streamingWasActive && !this.#previousStreamingActive) {
+			this.#streamingHighWater = 0;
+		}
+		this.#previousStreamingActive = streamingWasActive;
+		if (this.#streamingHighWater > 0) {
+			const streamingActive =
+				this.#eagerNativeScrollbackRebuild && !this.#eagerNativeScrollbackRebuildDisablePending;
+			const streamingJustEnded = !streamingActive && streamingWasActive;
+			if (streamingJustEnded) {
+				// Streaming just ended. Commit the full content to scrollback.
+				// On safe terminals use ED 3 + re-emit; on ED3-risk terminals
+				// (VTE, Windows) use a non-destructive viewport repaint —
+				// the shrink-across-high-water paths handle cleanup later.
+				this.#streamingHighWater = 0;
+				this.#clearScrollbackOnNextRender = false;
+				this.#clearNativeScrollbackDirty();
+				if (!eagerEraseScrollbackRisk) {
+					intent = { kind: "historyRebuild" };
+				}
+				// On ED3-risk the intent stays as planRender returned (e.g. noop
+				// if content unchanged) — the capped state persists until shrink.
+			} else if (streamingActive) {
+				const suppressPureAppend =
+					intent.kind === "diff" && intent.appendedLines && intent.firstChanged === this.#previousLines.length;
+				if (
+					intent.kind === "sessionReplace" ||
+					intent.kind === "historyRebuild" ||
+					intent.kind === "overlayRebuild" ||
+					suppressPureAppend
+				) {
+					this.#clearScrollbackOnNextRender = false;
+					this.#clearNativeScrollbackDirty();
+					// Cap lines to viewport height during streaming so frames
+					// never grow #previousLines past the visible area.
+					this.#streamingHighWater = Math.max(this.#streamingHighWater, lines.length);
+					this.#scrollbackHighWater = 0;
+					lines = lines.slice(-height);
+					intent = { kind: "viewportRepaint" };
+				} else {
+					// Frame wasn't suppressed (e.g. noop), but still track peak.
+					this.#streamingHighWater = Math.max(this.#streamingHighWater, lines.length);
+				}
+			}
+		}
 		if (this.#eagerNativeScrollbackRebuildDisablePending) {
 			this.#eagerNativeScrollbackRebuildDisablePending = false;
 			this.#eagerNativeScrollbackRebuild = false;
@@ -1530,6 +1589,19 @@ export class TUI extends Container {
 			}
 			this.#markNativeScrollbackDirty();
 			return { kind: "viewportRepaint" };
+		}
+
+		// After foreground tool streaming: when content finally shrinks from the
+		// streaming peak, rebuild with ED 3 to commit the settled state cleanly.
+		// The check uses `#streamingHighWater` (the real peak) rather than
+		// `#previousLines.length` because streaming capped lines to viewport
+		// height, so `#previousLines` never reflects the true transcript size.
+		if (this.#streamingHighWater > height && newLines.length < this.#streamingHighWater && newLines.length > height) {
+			this.#streamingHighWater = 0;
+			return { kind: "historyRebuild" };
+		}
+		if (this.#streamingHighWater > 0 && newLines.length <= height) {
+			this.#streamingHighWater = 0;
 		}
 
 		if (
