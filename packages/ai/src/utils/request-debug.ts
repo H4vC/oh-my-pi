@@ -28,7 +28,7 @@ export interface RequestDebugPayload {
 }
 
 export interface RequestDebugResponseLog {
-	write(chunk: Uint8Array | string): void;
+	write(chunk: Uint8Array | string): Promise<void>;
 	close(): Promise<void>;
 }
 
@@ -141,7 +141,7 @@ class FileRequestDebugSession implements RequestDebugSession {
 						controller.close();
 						return;
 					}
-					log.write(value);
+					await log.write(value);
 					controller.enqueue(value);
 				} catch (error) {
 					await log.close().catch(() => undefined);
@@ -175,13 +175,14 @@ class FileRequestDebugResponseLog implements RequestDebugResponseLog {
 		this.#handle = handle;
 	}
 
-	write(chunk: Uint8Array | string): void {
+	write(chunk: Uint8Array | string): Promise<void> {
 		const handle = this.#handle;
-		if (!handle) return;
+		if (!handle) return Promise.resolve();
 		const bytes = typeof chunk === "string" ? textEncoder.encode(chunk) : chunk.slice();
 		this.#pending = this.#pending.then(async () => {
 			await handle.write(bytes);
 		});
+		return this.#pending;
 	}
 
 	async close(): Promise<void> {
