@@ -490,7 +490,16 @@ async function enrichWithCdpAxMetadata(page: Page, entries: ObservationEntry[]):
 				properties?: Array<{ name: string; value?: { value?: unknown } }>;
 			}>;
 		};
-		const cdpQueue: Array<{ role: string; name: string; description?: string; keyshortcuts?: string }> = [];
+		// Build a queue of ALL CDP nodes (not just those with metadata) so the
+		// sequential matcher preserves DOM order across duplicates. If we only
+		// queued nodes with description/keyshortcuts, a later duplicate's metadata
+		// could be applied to an earlier entry with the same role/name.
+		const cdpQueue: Array<{
+			role: string;
+			name: string;
+			description?: string;
+			keyshortcuts?: string;
+		}> = [];
 		for (const node of result.nodes ?? []) {
 			const role = node.role?.value;
 			if (
@@ -505,15 +514,14 @@ async function enrichWithCdpAxMetadata(page: Page, entries: ObservationEntry[]):
 			const name = node.name?.value ?? "";
 			const description = node.description?.value;
 			const keyshortcuts = node.properties?.find(p => p.name === "keyshortcuts")?.value?.value as string | undefined;
-			if (description || keyshortcuts) {
-				cdpQueue.push({ role, name, description, keyshortcuts });
-			}
+			cdpQueue.push({ role, name, description, keyshortcuts });
 		}
 		let cdpIdx = 0;
 		for (const entry of entries) {
 			while (cdpIdx < cdpQueue.length) {
 				const cdp = cdpQueue[cdpIdx]!;
 				if (cdp.role === entry.role && cdp.name === (entry.name ?? "")) {
+					// Only enrich if this CDP node actually has metadata.
 					if (cdp.description) entry.description = cdp.description;
 					if (cdp.keyshortcuts) entry.keyshortcuts = cdp.keyshortcuts;
 					cdpIdx++;

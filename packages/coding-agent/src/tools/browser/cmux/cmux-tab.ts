@@ -899,6 +899,20 @@ export class CmuxTab {
 				return { kind: prefix, value, raw, name: prefix === "aria" ? value : undefined };
 			}
 		}
+		// Playwright engine= syntax (text=X, xpath=X, role=button[name="..."])
+		const eqIdx = normalized.indexOf("=");
+		if (eqIdx > 0) {
+			const prefix = normalized.slice(0, eqIdx);
+			const value = normalized.slice(eqIdx + 1);
+			if (prefix === "text") return { kind: "text", value, raw };
+			if (prefix === "xpath") return { kind: "xpath", value, raw };
+			if (prefix === "role") {
+				// role=button[name="Save"] → extract accessible name if present
+				const nameMatch = value.match(/\[\s*name\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\]]+))\s*\]/);
+				const name = nameMatch?.[1] ?? nameMatch?.[2] ?? nameMatch?.[3];
+				return { kind: "aria", value: (name ?? value).trim(), raw, name: (name ?? value).trim() };
+			}
+		}
 		return { kind: "css", value: normalized, raw };
 	}
 
