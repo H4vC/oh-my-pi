@@ -629,14 +629,21 @@ async function waitForClosed(tab: WorkerTabSession): Promise<void> {
 }
 
 async function closeOrphanTarget(tab: WorkerTabSession): Promise<void> {
-	// Playwright: iterate pages across all contexts instead of targets.
-	const browser = tab.browser.browser as Browser;
-	const pages = browser.contexts().flatMap(ctx => ctx.pages());
-	for (const page of pages) {
-		const tid = await pageTargetId(page).catch(() => "");
-		if (tid !== tab.targetId) continue;
-		await page.close().catch(() => undefined);
-		return;
+	// In headless mode, browser is a BrowserServer (no contexts() method) — the server
+	// and all its pages will be killed by releaseBrowser's close(), so orphan cleanup
+	// is unnecessary. For attach mode (Browser), iterate pages to close the orphan.
+	try {
+		const browser = tab.browser.browser as Browser;
+		if (typeof browser.contexts !== "function") return;
+		const pages = browser.contexts().flatMap(ctx => ctx.pages());
+		for (const page of pages) {
+			const tid = await pageTargetId(page).catch(() => "");
+			if (tid !== tab.targetId) continue;
+			await page.close().catch(() => undefined);
+			return;
+		}
+	} catch {
+		// Never let orphan cleanup block releaseBrowser/tabs.delete.
 	}
 }
 

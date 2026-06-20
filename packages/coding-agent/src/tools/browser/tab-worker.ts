@@ -945,11 +945,22 @@ export class WorkerCore {
 				),
 			evaluate: (fn, ...args) =>
 				op("tab.evaluate()", INF, sig =>
-					untilAborted(sig, () =>
-						typeof fn === "string"
-							? page.evaluate(fn)
-							: page.evaluate(fn as (...a: unknown[]) => unknown, ...args),
-					),
+					untilAborted(sig, () => {
+						if (typeof fn === "string") return page.evaluate(fn);
+						// Playwright's page.evaluate forwards only one optional arg, not variadic
+						// args like Puppeteer's. For 0-1 args, pass directly. For 2+ args, pack
+						// into an array and use Function.toString() + eval to reconstruct the
+						// callback inside the page (functions aren't serializable as arg values).
+						const pageFn = fn as (...a: unknown[]) => unknown;
+						if (args.length <= 1) return page.evaluate(pageFn as never, args[0] as never);
+						return page.evaluate(
+							({ src, args: a }: { src: string; args: unknown[] }) => {
+								const f = new Function(`return (${src})`)() as (...a: unknown[]) => unknown;
+								return f(...a);
+							},
+							{ src: pageFn.toString(), args } as never,
+						);
+					}),
 				) as never,
 			scrollIntoView: selector =>
 				op(`tab.scrollIntoView(${JSON.stringify(selector)})`, INF, async sig => {
