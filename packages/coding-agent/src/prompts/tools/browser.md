@@ -17,7 +17,7 @@ Drives real Chromium tab; full Playwright (patchright) access via JS.
   - `tab.observe({ includeAll?, viewportOnly? })` — accessibility snapshot: `{ url, title, viewport, scroll, elements: [{ id, role, name, value, states, … }] }`. `id` is a **string** like `"e2"` (aria-ref). Ids stable until next observe/goto.
   - `tab.id(ref)` — ref string from last observe → handle (`.click()`, `.fill()`, `.type()`, …). Returns `Locator` in headless mode, `CmuxElementHandle` in cmux mode; both support the same action methods.
   - `tab.click(selector)` / `tab.type(selector, text)` / `tab.fill(selector, value)` / `tab.press(key, { selector? })` / `tab.scroll(dx, dy)`.
-  - `tab.waitFor(selector)` — wait until attached; returns element handle (`.click()`, `.type()`, …).
+  - `tab.waitFor(selector)` — wait until attached; returns `Locator`.
   - `tab.drag(from, to)` — endpoints: selector (center-to-center) or `{ x, y }` viewport point (canvases, sliders).
   - `tab.scrollIntoView(selector)` — center in viewport; before clicking off-screen elements.
   - `tab.select(selector, …values)` — set `<select>` option(s); returns selection. `tab.fill` NEVER works for selects.

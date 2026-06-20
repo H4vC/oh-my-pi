@@ -77,7 +77,7 @@ interface TabApi {
 	press(key: string, opts?: { selector?: string }): Promise<void>;
 	scroll(deltaX: number, deltaY: number): Promise<void>;
 	drag(from: DragTarget, to: DragTarget): Promise<void>;
-	waitFor(selector: string): Promise<ElementHandle>;
+	waitFor(selector: string): Promise<Locator>;
 	evaluate<TResult, TArgs extends unknown[]>(
 		fn: string | ((...args: TArgs) => TResult | Promise<TResult>),
 		...args: TArgs
@@ -417,7 +417,7 @@ function parseAriaLine(line: string): ParsedAriaNode | null {
 	const nameMatch = rest.match(/^(\S+)\s+"((?:[^"\\]|\\.)*)"\s*(.*)$/);
 	if (nameMatch) {
 		role = nameMatch[1]!.replace(/:$/, "");
-		name = nameMatch[2];
+		name = nameMatch[2]!.replace(/\\(.)/g, "$1");
 		afterName = nameMatch[3] ?? "";
 	} else {
 		// No quoted name — role is the first token, attributes follow in afterName
@@ -961,14 +961,11 @@ export class WorkerCore {
 				op("tab.scroll()", INF, sig => untilAborted(sig, () => page.mouse.wheel(deltaX, deltaY))),
 			drag: (from, to) => op("tab.drag()", INF, sig => this.#drag(from, to, sig)),
 			waitFor: selector =>
-				op(
-					`tab.waitFor(${JSON.stringify(selector)})`,
-					INF,
-					async sig =>
-						(await untilAborted(sig, () =>
-							page.locator(normalizeSelector(selector)).elementHandle({ timeout: timeoutMs }),
-						)) as ElementHandle,
-				),
+				op(`tab.waitFor(${JSON.stringify(selector)})`, INF, async sig => {
+					const loc = page.locator(normalizeSelector(selector));
+					await untilAborted(sig, () => loc.waitFor({ state: "attached", timeout: timeoutMs }));
+					return loc;
+				}),
 			evaluate: (fn, ...args) =>
 				op("tab.evaluate()", INF, sig =>
 					untilAborted(sig, () => {
