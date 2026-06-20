@@ -159,13 +159,15 @@ async function acquireTabImpl(
 				if (opts.viewport && browser.kind.kind !== "cmux") {
 					const vp = opts.viewport;
 					reuseSteps.push(`await page.setViewportSize({ width: ${vp.width}, height: ${vp.height} });`);
-					// Apply deviceScaleFactor via CDP to match the first-open path (applyViewport).
+					// Always apply deviceScaleFactor via CDP, even when dpr === 1. If the
+					// tab was previously opened with a non-1 scale, setViewportSize alone
+					// does not reset the old deviceScaleFactor, so screenshots, media
+					// queries, and coordinate-based clicks would keep running at the
+					// prior DPR. Sending the override unconditionally clears it.
 					const dpr = vp.deviceScaleFactor ?? DEFAULT_VIEWPORT.deviceScaleFactor;
-					if (dpr !== 1) {
-						reuseSteps.push(
-							`{ const s = await page.context().newCDPSession(page); await s.send("Emulation.setDeviceMetricsOverride", { width: ${vp.width}, height: ${vp.height}, deviceScaleFactor: ${dpr}, mobile: false }); await s.detach(); }`,
-						);
-					}
+					reuseSteps.push(
+						`{ const s = await page.context().newCDPSession(page); await s.send("Emulation.setDeviceMetricsOverride", { width: ${vp.width}, height: ${vp.height}, deviceScaleFactor: ${dpr}, mobile: false }); await s.detach(); }`,
+					);
 				}
 				if (opts.url) {
 					reuseSteps.push(

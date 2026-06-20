@@ -2,10 +2,27 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { $which, logger } from "@oh-my-pi/pi-utils";
-import { type Browser, type BrowserServer, type CDPSession, chromium, type Page } from "patchright";
+import type { Browser, BrowserServer, CDPSession, Page } from "patchright";
 import { ToolError } from "../tool-errors";
 
 export type { Browser, BrowserServer, CDPSession, Page };
+
+/**
+ * Lazy access to patchright's `chromium` browser type. The patchright package
+ * (→ patchright-core) runs a Node-version guard and loads the heavy coreBundle
+ * (which conditionally `require`s chromium-bidi) as a module side effect, so
+ * importing it at top level would execute Patchright during `omp` startup —
+ * before the browser tool is ever used. That conflicts with the packaging
+ * contract (bundle-dist.ts) that treats patchright/patchright-core/chromium-bidi
+ * as runtime externals: a missing or broken Patchright subtree in an npm or
+ * compiled-binary install would crash `omp` at startup instead of producing a
+ * browser-tool error on first use. Load it lazily, only inside launch/connect.
+ */
+let _chromium: typeof import("patchright").chromium | undefined;
+function chromium(): typeof import("patchright").chromium {
+	if (!_chromium) _chromium = require("patchright").chromium;
+	return _chromium!;
+}
 
 export const DEFAULT_VIEWPORT = { width: 1365, height: 768, deviceScaleFactor: 1.25 };
 
@@ -43,13 +60,17 @@ let chromiumExecutablePromise: Promise<string | undefined> | undefined;
  * Bun-only hosts. Throws ToolError with an actionable message if all fail.
  */
 async function installPatchrightChromium(): Promise<void> {
-	// Strategy 1: npx patchright install chromium (npm-based installs)
-	const child = Bun.spawn(["npx", "patchright", "install", "chromium"], {
-		stdout: "inherit",
-		stderr: "inherit",
-	});
-	const exitCode = await child.exited;
-	if (exitCode === 0) return;
+	// Strategy 1: npx patchright install chromium (npm-based installs).
+	// Bun.spawn throws synchronously if npx is not on PATH, so catch and
+	// fall through to the node strategy instead of crashing.
+	try {
+		const child = Bun.spawn(["npx", "patchright", "install", "chromium"], {
+			stdout: "inherit",
+			stderr: "inherit",
+		});
+		const exitCode = await child.exited;
+		if (exitCode === 0) return;
+	} catch {}
 
 	// Strategy 2: node with patchright CLI module (binary installs where node exists)
 	try {
@@ -76,7 +97,7 @@ async function ensureChromiumExecutable(): Promise<string | undefined> {
 	if (chromiumExecutablePromise) return chromiumExecutablePromise;
 
 	chromiumExecutablePromise = (async () => {
-		const exe = chromium.executablePath();
+		const exe = chromium().executablePath();
 		if (fs.existsSync(exe)) return exe;
 		// Self-provision: download Chromium on first use, matching the old
 		// @puppeteer/browsers behavior. Try multiple strategies so this works
@@ -228,7 +249,7 @@ export async function launchHeadlessBrowser(opts: LaunchHeadlessOptions): Promis
 	const sysChrome = resolveSystemChromium();
 	// Use launchServer so the worker can connect via chromium.connect(wsEndpoint).
 	// Playwright's Browser (from launch()) doesn't expose wsEndpoint(); BrowserServer does.
-	return await chromium.launchServer({
+	return await chromium().launchServer({
 		headless: opts.headless,
 		// When using a system Chrome, use channel "chrome" for the best fingerprint.
 		// Otherwise let patchright use its bundled Chromium.
@@ -274,7 +295,7 @@ export async function applyViewport(
  * Used by the tab worker to connect to the browser launched by the supervisor.
  */
 export async function connectBrowser(browserWSEndpoint: string): Promise<Browser> {
-	return await chromium.connect(browserWSEndpoint, { timeout: BROWSER_PROTOCOL_TIMEOUT_MS });
+	return await chromium().connect(browserWSEndpoint, { timeout: BROWSER_PROTOCOL_TIMEOUT_MS });
 }
 
 /**
@@ -282,7 +303,7 @@ export async function connectBrowser(browserWSEndpoint: string): Promise<Browser
  * Used for attaching to Electron apps or externally-launched Chrome instances.
  */
 export async function connectOverCDP(cdpUrl: string): Promise<Browser> {
-	return await chromium.connectOverCDP(cdpUrl, { timeout: BROWSER_PROTOCOL_TIMEOUT_MS });
+	return await chromium().connectOverCDP(cdpUrl, { timeout: BROWSER_PROTOCOL_TIMEOUT_MS });
 }
 
 /**
