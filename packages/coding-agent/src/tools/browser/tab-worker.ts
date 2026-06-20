@@ -222,9 +222,21 @@ async function resolveActionableQueryHandlerClickTarget(handles: ElementHandle[]
 			if (!intersecting) continue;
 			const rect = (await clickable.evaluate(el => {
 				const r = (el as Element).getBoundingClientRect();
-				return { x: r.left, y: r.top, w: r.width, h: r.height };
-			})) as { x: number; y: number; w: number; h: number };
+				return {
+					x: r.left,
+					y: r.top,
+					w: r.width,
+					h: r.height,
+					inViewport:
+						r.left < globalThis.innerWidth && r.right > 0 && r.top < globalThis.innerHeight && r.bottom > 0,
+				};
+			})) as { x: number; y: number; w: number; h: number; inViewport: boolean };
 			if (rect.w < 1 || rect.h < 1) continue;
+			// Filter out off-viewport elements before sorting — isVisible() only
+			// checks CSS visibility, not viewport intersection. Without this, an
+			// off-screen element with a lower y position wins the sort, and
+			// isClickActionable rejects it as off-viewport every retry until timeout.
+			if (!rect.inViewport) continue;
 			candidates.push({ handle: clickable, rect, ownedProxy: clickableProxy ?? undefined });
 		} catch {
 		} finally {
