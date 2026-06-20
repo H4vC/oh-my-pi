@@ -19,6 +19,8 @@ import {
 	type CmuxScreenshotResult,
 	type CmuxSnapshotResult,
 	type CmuxUrlGetResult,
+	type SelectorSpec,
+	cmuxSelectorSpec,
 	cmuxSnapshotToObservation,
 	GEOMETRY_SCRIPT,
 	mapWaitUntil,
@@ -49,16 +51,6 @@ interface RunContext {
 
 type WaitUntil = "load" | "domcontentloaded" | "networkidle0" | "networkidle2";
 type DragTarget = string | { readonly x: number; readonly y: number };
-type SelectorKind = "css" | "ref" | "text" | "aria" | "xpath" | "pierce" | "ax";
-
-interface SelectorSpec {
-	kind: SelectorKind;
-	value: string;
-	raw: string;
-	ref?: string;
-	name?: string;
-	role?: string;
-}
 
 interface CachedElementRef {
 	ref: string;
@@ -114,13 +106,65 @@ const pierceQuery = (root, selector) => {
 	}
 	return null;
 };
-const accessibleName = element =>
-	(
-		element.getAttribute("aria-label") ||
-		element.getAttribute("alt") ||
-		element.getAttribute("title") ||
-		textOf(element)
-	).trim();
+const accessibleName = element => {
+	const label = (element.getAttribute("aria-label") || "").trim();
+	if (label) return label;
+	const labelledby = element.getAttribute("aria-labelledby");
+	if (labelledby) {
+		const text = labelledby
+			.split(/\\s+/)
+			.map(id => document.getElementById(id))
+			.filter(node => node)
+			.map(node => (node.innerText || node.textContent || "").trim())
+			.filter(Boolean)
+			.join(" ")
+			.trim();
+		if (text) return text;
+	}
+	return (element.getAttribute("alt") || element.getAttribute("title") || textOf(element)).trim();
+};
+const IMPLICIT_INPUT_ROLES = {
+	button: "button",
+	submit: "button",
+	reset: "button",
+	image: "button",
+	checkbox: "checkbox",
+	radio: "radio",
+	range: "slider",
+	number: "spinbutton",
+	search: "searchbox",
+	email: "textbox",
+	tel: "textbox",
+	url: "textbox",
+	text: "textbox",
+};
+const implicitRole = element => {
+	const tag = element.tagName.toLowerCase();
+	if (tag === "a" || tag === "area") return element.hasAttribute("href") ? "link" : null;
+	if (tag === "button") return "button";
+	if (tag === "nav") return "navigation";
+	if (tag === "main") return "main";
+	if (tag === "header") return "banner";
+	if (tag === "footer") return "contentinfo";
+	if (tag === "aside") return "complementary";
+	if (tag === "ul" || tag === "ol") return "list";
+	if (tag === "li") return "listitem";
+	if (tag === "table") return "table";
+	if (tag === "img") return element.getAttribute("alt") === "" ? "presentation" : "img";
+	if (/^h[1-6]$/.test(tag)) return "heading";
+	if (tag === "select") return element.multiple || element.size > 1 ? "listbox" : "combobox";
+	if (tag === "textarea") return "textbox";
+	if (tag === "input") {
+		const type = (element.getAttribute("type") || "text").toLowerCase();
+		return IMPLICIT_INPUT_ROLES[type] || (type === "hidden" || type === "password" ? null : "textbox");
+	}
+	return null;
+};
+const matchesRole = (element, role) => {
+	const explicit = (element.getAttribute("role") || "").trim();
+	if (explicit) return explicit.split(/\\s+/).includes(role);
+	return implicitRole(element) === role;
+};
 const findElement = spec => {
 	if (spec.kind === "css") return document.querySelector(spec.value);
 	if (spec.kind === "pierce") return pierceQuery(document, spec.value);
@@ -133,12 +177,13 @@ const findElement = spec => {
 		return allElements().find(element => isVisible(element) && textOf(element).includes(wanted)) || null;
 	}
 	if (spec.kind === "aria" || spec.kind === "ax") {
-		const wanted = (spec.name || spec.value).trim();
-		const role = spec.role || "";
+		const wanted = (spec.name || "").trim();
+		const role = (spec.role || "").trim();
 		return (
 			allElements().find(element => {
 				if (!isVisible(element)) return false;
-				if (role && element.getAttribute("role") !== role) return false;
+				if (role && !matchesRole(element, role)) return false;
+				if (!wanted) return true;
 				const name = accessibleName(element);
 				return name === wanted || name.includes(wanted);
 			}) || null
@@ -317,6 +362,11 @@ export class CmuxTab {
 
 	async goto(url: string, opts?: { waitUntil?: WaitUntil; timeoutMs?: number }): Promise<void> {
 		const timeoutMs = opts?.timeoutMs ?? this.#runContext?.timeoutMs ?? 30_000;
+		// Navigation invalidates the prior snapshot's aria-refs; drop them up front (even
+		// if navigate times out mid-flight) so a stale tab.id(...) rejects with a
+		// re-observe hint instead of resolving a new-page element that reused the ref
+		// (matches the headless worker, which clears before page.goto).
+		this.#elementRefs.clear();
 		const result = await this.#request("browser.navigate", { url }, timeoutMs);
 		const navigatedUrl = result.url;
 		this.#lastUrl = typeof navigatedUrl === "string" && navigatedUrl.length > 0 ? navigatedUrl : url;
@@ -455,8 +505,25 @@ export class CmuxTab {
 		const explicitPath = opts.save ? resolveToCwd(opts.save, context.session.cwd) : undefined;
 		const returnedPath = typeof result.path === "string" && result.path.length > 0 ? result.path : undefined;
 		const saveFullRes = !!(explicitPath || context.session.browserScreenshotDir || returnedPath);
-		const savedBuffer = saveFullRes ? buffer : Buffer.from(resized.buffer);
-		const savedMimeType = saveFullRes ? captureMime : resized.mimeType;
+		// The cmux backend only returns PNG, so re-encode to JPEG/WebP when the save
+		// path's extension asks for one — never write PNG bytes to a .webp/.jpg file
+		// (matches the headless worker's save contract).
+		const pathFormat = explicitPath ? imageFormatForPath(explicitPath) : "png";
+		let savedBuffer: Buffer;
+		let savedMimeType: string;
+		if (pathFormat === "webp") {
+			savedBuffer = Buffer.from(await new Bun.Image(buffer).webp({ quality: 80 }).bytes());
+			savedMimeType = "image/webp";
+		} else if (pathFormat === "jpeg") {
+			savedBuffer = Buffer.from(await new Bun.Image(buffer).jpeg({ quality: 80 }).bytes());
+			savedMimeType = "image/jpeg";
+		} else if (saveFullRes) {
+			savedBuffer = buffer;
+			savedMimeType = captureMime;
+		} else {
+			savedBuffer = Buffer.from(resized.buffer);
+			savedMimeType = resized.mimeType;
+		}
 		const ext = savedMimeType === "image/webp" ? "webp" : savedMimeType === "image/jpeg" ? "jpg" : "png";
 		const dest =
 			explicitPath ??
@@ -472,8 +539,8 @@ export class CmuxTab {
 			dest,
 			mimeType: savedMimeType,
 			bytes: savedBuffer.length,
-			width: resized.width,
-			height: resized.height,
+			width: pathFormat === "webp" || pathFormat === "jpeg" ? resized.originalWidth : resized.width,
+			height: pathFormat === "webp" || pathFormat === "jpeg" ? resized.originalHeight : resized.height,
 		};
 		context.screenshots.push(info);
 		if (!opts.silent) {
@@ -572,9 +639,12 @@ export class CmuxTab {
 	}
 
 	async id(id: string): Promise<CmuxElementHandle> {
-		const ref = this.#elementRefs.get(id)?.ref ?? `@${id}`;
-		await this.#waitForSelector(ref, this.#runContext?.timeoutMs ?? 30_000);
-		return new CmuxElementHandle(this, ref);
+		const cached = this.#elementRefs.get(id);
+		if (!cached) {
+			throw new ToolError(`Unknown element id ${id}. Run tab.observe() to refresh the element list.`);
+		}
+		await this.#waitForSelector(cached.ref, this.#runContext?.timeoutMs ?? 30_000);
+		return new CmuxElementHandle(this, cached.ref);
 	}
 
 	ensureRuntime(session: SessionSnapshot): JsRuntime {
@@ -883,46 +953,7 @@ export class CmuxTab {
 	}
 
 	#selectorSpec(selector: string): SelectorSpec {
-		const raw = selector;
-		let normalized = selector;
-		// Translate Playwright engine= syntax to legacy slash forms that the
-		// existing #selectorSpec already handles. This keeps cmux's findElement
-		// and the rest of the selector pipeline unchanged.
-		const eqIdx = selector.indexOf("=");
-		if (
-			eqIdx > 0 &&
-			!selector.startsWith("aria/") &&
-			!selector.startsWith("text/") &&
-			!selector.startsWith("xpath/") &&
-			!selector.startsWith("pierce/")
-		) {
-			const prefix = selector.slice(0, eqIdx);
-			const value = selector.slice(eqIdx + 1);
-			if (prefix === "text") normalized = `text/${value}`;
-			else if (prefix === "xpath") normalized = `xpath/${value}`;
-			else if (prefix === "role") {
-				// role=button[name="Save"] → aria/Save (match by accessible name)
-				// role=button (no name) → not supported in slash form; fall through to CSS
-				const nameMatch = value.match(/\[\s*name\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\]]+))\s*\]/);
-				const name = nameMatch?.[1] ?? nameMatch?.[2] ?? nameMatch?.[3];
-				if (name) normalized = `aria/${name}`;
-			}
-		}
-		if (normalized.startsWith("p-text/")) normalized = `text/${normalized.slice("p-text/".length)}`;
-		else if (normalized.startsWith("p-aria/")) normalized = `aria/${normalized.slice("p-aria/".length)}`;
-		else if (normalized.startsWith("p-xpath/")) normalized = `xpath/${normalized.slice("p-xpath/".length)}`;
-		else if (normalized.startsWith("p-pierce/")) normalized = `pierce/${normalized.slice("p-pierce/".length)}`;
-		const ref = /^@?(e\d+)$/.exec(normalized);
-		if (ref) return { kind: "ref", value: ref[1]!, raw, ref: `@${ref[1]}` };
-		const slash = normalized.indexOf("/");
-		if (slash > 0) {
-			const prefix = normalized.slice(0, slash);
-			const value = normalized.slice(slash + 1);
-			if (prefix === "text" || prefix === "aria" || prefix === "xpath" || prefix === "pierce") {
-				return { kind: prefix, value, raw, name: prefix === "aria" ? value : undefined };
-			}
-		}
-		return { kind: "css", value: normalized, raw };
+		return cmuxSelectorSpec(selector);
 	}
 
 	#nativeSelector(spec: SelectorSpec): string | undefined {
@@ -1283,4 +1314,17 @@ function cloneSafe(value: unknown): unknown {
 
 function numberFrom(value: unknown, fallback: number): number {
 	return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+/** Map a save path's extension to an image format (default png), matching the headless worker. */
+function imageFormatForPath(filePath: string): "png" | "jpeg" | "webp" {
+	switch (path.extname(filePath).toLowerCase()) {
+		case ".webp":
+			return "webp";
+		case ".jpg":
+		case ".jpeg":
+			return "jpeg";
+		default:
+			return "png";
+	}
 }
