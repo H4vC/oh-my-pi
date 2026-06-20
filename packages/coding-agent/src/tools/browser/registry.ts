@@ -64,10 +64,16 @@ export interface AcquireBrowserOptions {
 
 /** Check if a Browser or BrowserServer is still alive. */
 function browserAlive(browser: Browser | BrowserServer): boolean {
-	// BrowserServer has no isConnected(); check process instead.
+	// Browser (connected): check isConnected().
 	if ("isConnected" in browser && typeof browser.isConnected === "function") return browser.isConnected();
+	// BrowserServer: check the child process. `killed` is only true if we sent a
+	// signal; a process that exited or crashed on its own has killed===false but
+	// a non-null exitCode or signalCode.
 	const proc = "process" in browser && typeof browser.process === "function" ? browser.process() : null;
-	return proc !== null && !proc.killed;
+	if (!proc) return false;
+	if (proc.killed) return false;
+	if (proc.exitCode !== null || proc.signalCode !== null) return false;
+	return true;
 }
 
 export async function acquireBrowser(kind: BrowserKind, opts: AcquireBrowserOptions): Promise<BrowserHandle> {

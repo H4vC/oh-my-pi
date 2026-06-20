@@ -37,6 +37,37 @@ let chromiumExecutablePromise: Promise<string | undefined> | undefined;
  * We still detect system Chrome for cases where the bundled browser hasn't been
  * downloaded yet or the user prefers their installed Chrome (better fingerprint).
  */
+/**
+ * Download Patchright's bundled Chromium. Tries multiple strategies so this
+ * works on npm installs (npx), standalone binaries (node + patchright CLI), and
+ * Bun-only hosts. Throws ToolError with an actionable message if all fail.
+ */
+async function installPatchrightChromium(): Promise<void> {
+	// Strategy 1: npx patchright install chromium (npm-based installs)
+	const child = Bun.spawn(["npx", "patchright", "install", "chromium"], {
+		stdout: "inherit",
+		stderr: "inherit",
+	});
+	const exitCode = await child.exited;
+	if (exitCode === 0) return;
+
+	// Strategy 2: node with patchright CLI module (binary installs where node exists)
+	try {
+		const child2 = Bun.spawn(
+			["node", "-e", "require('patchright/lib/program').program.parse(['node','patchright','install','chromium'])"],
+			{ stdout: "inherit", stderr: "inherit" },
+		);
+		const exit2 = await child2.exited;
+		if (exit2 === 0) return;
+	} catch {}
+
+	throw new ToolError(
+		"Failed to install Chromium for patchright. " +
+			"Set PUPPETEER_EXECUTABLE_PATH to use an existing Chrome/Chromium binary, " +
+			"or run `npx patchright install chromium` manually.",
+	);
+}
+
 async function ensureChromiumExecutable(): Promise<string | undefined> {
 	const sysChrome = resolveSystemChromium();
 	if (sysChrome) return sysChrome;
@@ -47,22 +78,13 @@ async function ensureChromiumExecutable(): Promise<string | undefined> {
 	chromiumExecutablePromise = (async () => {
 		const exe = chromium.executablePath();
 		if (fs.existsSync(exe)) return exe;
-		// Self-provision: download Chromium the same way the old @puppeteer/browsers
-		// path did on first use. patchright bundles its own installer.
+		// Self-provision: download Chromium on first use, matching the old
+		// @puppeteer/browsers behavior. Try multiple strategies so this works
+		// on npm installs, standalone binaries, and Bun-only hosts.
 		logger.warn("Patchright Chromium not found, downloading (first browser use)", {
 			expectedPath: exe,
 		});
-		const child = Bun.spawn(["npx", "patchright", "install", "chromium"], {
-			stdout: "inherit",
-			stderr: "inherit",
-		});
-		const exitCode = await child.exited;
-		if (exitCode !== 0) {
-			throw new ToolError(
-				`Failed to install Chromium for patchright (exit code ${exitCode}). ` +
-					"Set PUPPETEER_EXECUTABLE_PATH to use an existing Chrome/Chromium binary, or install one manually.",
-			);
-		}
+		await installPatchrightChromium();
 		if (!fs.existsSync(exe)) {
 			throw new ToolError(
 				`Chromium was installed but the executable is not at the expected path: ${exe}. ` +
