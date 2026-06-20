@@ -169,6 +169,7 @@ const findElement = spec => {
 		const role = spec.role || "";
 		return (
 			allElements().find(element => {
+				if (!isVisible(element)) return false;
 				if (role && element.getAttribute("role") !== role && implicitRole(element) !== role) return false;
 				if (!wanted) return true;
 				const name = accessibleName(element);

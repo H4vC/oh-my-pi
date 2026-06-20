@@ -72,7 +72,10 @@ async function installPatchrightChromium(): Promise<void> {
 			stdout: "pipe",
 			stderr: "pipe",
 		});
-		npxStderr = await new Response(child.stderr).text();
+		// Drain both stdout and stderr concurrently — if stdout fills the pipe
+		// buffer, the child blocks on write and never exits.
+		const [stderr] = await Promise.all([new Response(child.stderr).text(), new Response(child.stdout).text()]);
+		npxStderr = stderr;
 		const exitCode = await child.exited;
 		if (exitCode === 0) return;
 		logger.warn("npx patchright install failed", { exitCode, stderr: npxStderr.slice(-500) });
@@ -85,7 +88,8 @@ async function installPatchrightChromium(): Promise<void> {
 			["node", "-e", "require('patchright/lib/program').program.parse(['node','patchright','install','chromium'])"],
 			{ stdout: "pipe", stderr: "pipe" },
 		);
-		nodeStderr = await new Response(child2.stderr).text();
+		const [stderr2] = await Promise.all([new Response(child2.stderr).text(), new Response(child2.stdout).text()]);
+		nodeStderr = stderr2;
 		const exit2 = await child2.exited;
 		if (exit2 === 0) return;
 		logger.warn("node patchright install failed", { exitCode: exit2, stderr: nodeStderr.slice(-500) });

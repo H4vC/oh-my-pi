@@ -119,7 +119,9 @@ function normalizeSelector(selector: string): string {
 		// visible text, title). Use Playwright's role= engine with [name="..."] which
 		// also matches the accessible name. When no explicit role was given (aria/X
 		// with just a name), use a generic role=* match by omitting the role.
-		const roleMatch = rest.match(/^\s*(\w+)\s*(?:\[|$)/);
+		// Only infer a role when the syntax is `role[name="..."]` (word followed
+		// by `[`). A bare word like "Save" is the accessible name, not a role.
+		const roleMatch = rest.match(/^(\w+)\s*\[\s*name\s*=/);
 		const role = roleMatch?.[1];
 		if (role) {
 			return `role=${role}[name="${accessibleName}"]`;
