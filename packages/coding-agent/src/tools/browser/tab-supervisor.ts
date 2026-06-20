@@ -8,7 +8,7 @@ import { ToolAbortError, ToolError } from "../tool-errors";
 import { pickElectronTarget } from "./attach";
 import { CmuxTab, runCmuxCode } from "./cmux/cmux-tab";
 import { mapWaitUntil } from "./cmux/rpc";
-import { DEFAULT_VIEWPORT, pageTargetId } from "./launch";
+import { connectBrowser, DEFAULT_VIEWPORT, pageTargetId } from "./launch";
 import {
 	type BrowserHandle,
 	type BrowserKindTag,
@@ -631,18 +631,35 @@ async function waitForClosed(tab: WorkerTabSession): Promise<void> {
 }
 
 async function closeOrphanTarget(tab: WorkerTabSession): Promise<void> {
-	// In headless mode, browser is a BrowserServer (no contexts() method) — the server
-	// and all its pages will be killed by releaseBrowser's close(), so orphan cleanup
-	// is unnecessary. For attach mode (Browser), iterate pages to close the orphan.
+	// When a worker is force-killed, its page stays open as an untracked target
+	// on the browser server. For BrowserServer (headless mode), we connect via
+	// wsEndpoint() and close the orphaned page by targetId. For Browser (attach
+	// mode), we iterate contexts/pages. This prevents page leaks when multiple
+	// headless tabs share the same BrowserServer and one is killed.
 	try {
-		const browser = tab.browser.browser as Browser;
-		if (typeof browser.contexts !== "function") return;
-		const pages = browser.contexts().flatMap(ctx => ctx.pages());
-		for (const page of pages) {
-			const tid = await pageTargetId(page).catch(() => "");
-			if (tid !== tab.targetId) continue;
-			await page.close().catch(() => undefined);
-			return;
+		const browser = tab.browser.browser;
+		if (typeof (browser as Browser).contexts === "function") {
+			// Attach mode (Browser): iterate pages to find and close the orphan.
+			const pages = (browser as Browser).contexts().flatMap(ctx => ctx.pages());
+			for (const page of pages) {
+				const tid = await pageTargetId(page).catch(() => "");
+				if (tid !== tab.targetId) continue;
+				await page.close().catch(() => undefined);
+				return;
+			}
+		} else if (typeof (browser as BrowserServer).wsEndpoint === "function") {
+			// Headless mode (BrowserServer): connect via wsEndpoint and close by targetId.
+			// The orphaned page belongs to the killed worker's context, so it's not
+			// visible via contexts() on a new connection — we use CDP Target.closeTarget.
+			const ws = (browser as BrowserServer).wsEndpoint();
+			const conn = await connectBrowser(ws);
+			try {
+				const session = await conn.newBrowserCDPSession();
+				await session.send("Target.closeTarget", { targetId: tab.targetId });
+				await session.detach().catch(() => undefined);
+			} finally {
+				await conn.close().catch(() => undefined);
+			}
 		}
 	} catch {
 		// Never let orphan cleanup block releaseBrowser/tabs.delete.
