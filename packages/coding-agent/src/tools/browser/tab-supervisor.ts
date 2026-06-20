@@ -1,5 +1,5 @@
 import { getPuppeteerDir, logger, Snowflake, workerHostEntry } from "@oh-my-pi/pi-utils";
-import type { Page, Target } from "puppeteer-core";
+import type { Browser, BrowserServer } from "patchright";
 import { callSessionTool } from "../../eval/js/tool-bridge";
 import type { ToolSession } from "../../sdk";
 import { webpExclusionForModel } from "../../utils/image-loading";
@@ -8,7 +8,7 @@ import { ToolAbortError, ToolError } from "../tool-errors";
 import { pickElectronTarget } from "./attach";
 import { CmuxTab, runCmuxCode } from "./cmux/cmux-tab";
 import { mapWaitUntil } from "./cmux/rpc";
-import { DEFAULT_VIEWPORT } from "./launch";
+import { DEFAULT_VIEWPORT, pageTargetId } from "./launch";
 import {
 	type BrowserHandle,
 	type BrowserKindTag,
@@ -157,10 +157,15 @@ async function acquireTabImpl(
 			} else {
 				const reuseSteps: string[] = [];
 				if (opts.viewport && browser.kind.kind !== "cmux") {
-					const dsf = opts.viewport.deviceScaleFactor;
-					reuseSteps.push(
-						`await page.setViewport({ width: ${opts.viewport.width}, height: ${opts.viewport.height}, deviceScaleFactor: ${dsf === undefined ? "undefined" : String(dsf)} });`,
-					);
+					const vp = opts.viewport;
+					reuseSteps.push(`await page.setViewportSize({ width: ${vp.width}, height: ${vp.height} });`);
+					// Apply deviceScaleFactor via CDP to match the first-open path (applyViewport).
+					const dpr = vp.deviceScaleFactor ?? DEFAULT_VIEWPORT.deviceScaleFactor;
+					if (dpr !== 1) {
+						reuseSteps.push(
+							`{ const s = await page.context().newCDPSession(page); await s.send("Emulation.setDeviceMetricsOverride", { width: ${vp.width}, height: ${vp.height}, deviceScaleFactor: ${dpr}, mobile: false }); await s.detach(); }`,
+						);
+					}
 				}
 				if (opts.url) {
 					reuseSteps.push(
@@ -474,12 +479,14 @@ function isLastSurfaceCloseError(err: unknown): boolean {
 
 async function buildInitPayload(browser: PuppeteerBrowserHandle, opts: AcquireTabOptions): Promise<WorkerInitPayload> {
 	const safeDir = getPuppeteerDir();
-	const browserWSEndpoint = browser.browser.wsEndpoint();
-	if (!browserWSEndpoint) throw new ToolError("Browser websocket endpoint is unavailable");
 	if (browser.kind.kind === "headless") {
+		// BrowserServer exposes wsEndpoint(); Browser doesn't.
+		const server = browser.browser as BrowserServer;
+		const endpoint = server.wsEndpoint();
+		if (!endpoint) throw new ToolError("Browser websocket endpoint is unavailable");
 		return {
 			mode: "headless",
-			browserWSEndpoint,
+			endpoint,
 			safeDir,
 			viewport: opts.viewport,
 			dialogs: opts.dialogs,
@@ -488,11 +495,14 @@ async function buildInitPayload(browser: PuppeteerBrowserHandle, opts: AcquireTa
 			timeoutMs: opts.timeoutMs,
 		};
 	}
-	const page = await pickElectronTarget(browser.browser, opts.target);
-	const targetId = await targetIdForPage(page);
+	// For attach (connected/spawned), pass the CDP URL so the worker can connectOverCDP.
+	const cdpUrl = browser.cdpUrl;
+	if (!cdpUrl) throw new ToolError("CDP URL is unavailable for attach mode");
+	const page = await pickElectronTarget(browser.browser as Browser, opts.target);
+	const targetId = await pageTargetId(page);
 	return {
 		mode: "attach",
-		browserWSEndpoint,
+		endpoint: cdpUrl,
 		safeDir,
 		targetId,
 		dialogs: opts.dialogs,
@@ -601,13 +611,9 @@ async function forceKillTab(name: string, reason: string): Promise<void> {
 	tabs.delete(name);
 }
 
-async function closeOrphanTarget(tab: WorkerTabSession): Promise<void> {
-	for (const target of tab.browser.browser.targets()) {
-		if ((await targetIdForTarget(target).catch(() => "")) !== tab.targetId) continue;
-		const page = await target.page().catch(() => null);
-		await page?.close().catch(() => undefined);
-		return;
-	}
+function expandBrowserScreenshotDir(session: ToolSession): string | undefined {
+	const value = session.settings.get("browser.screenshotDir") as string | undefined;
+	return value ? expandPath(value) : undefined;
 }
 
 async function waitForClosed(tab: WorkerTabSession): Promise<void> {
@@ -622,25 +628,15 @@ async function waitForClosed(tab: WorkerTabSession): Promise<void> {
 	}
 }
 
-function expandBrowserScreenshotDir(session: ToolSession): string | undefined {
-	const value = session.settings.get("browser.screenshotDir") as string | undefined;
-	return value ? expandPath(value) : undefined;
-}
-
-async function targetIdForPage(page: Page): Promise<string> {
-	return await targetIdForTarget(page.target());
-}
-
-async function targetIdForTarget(target: Target): Promise<string> {
-	const raw = target as unknown as { _targetId?: unknown };
-	if (typeof raw._targetId === "string") return raw._targetId;
-	const session = await target.createCDPSession();
-	try {
-		const info = (await session.send("Target.getTargetInfo")) as { targetInfo?: { targetId?: string } };
-		if (info.targetInfo?.targetId) return info.targetInfo.targetId;
-		throw new ToolError("Target id unavailable from CDP target info");
-	} finally {
-		await session.detach().catch(() => undefined);
+async function closeOrphanTarget(tab: WorkerTabSession): Promise<void> {
+	// Playwright: iterate pages across all contexts instead of targets.
+	const browser = tab.browser.browser as Browser;
+	const pages = browser.contexts().flatMap(ctx => ctx.pages());
+	for (const page of pages) {
+		const tid = await pageTargetId(page).catch(() => "");
+		if (tid !== tab.targetId) continue;
+		await page.close().catch(() => undefined);
+		return;
 	}
 }
 

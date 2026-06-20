@@ -4,31 +4,14 @@ import * as path from "node:path";
 
 import { Snowflake, untilAborted } from "@oh-my-pi/pi-utils";
 import type { HTMLElement } from "linkedom";
-import type {
-	Browser,
-	Dialog,
-	ElementHandle,
-	ElementScreenshotOptions,
-	HTTPResponse,
-	ImageFormat,
-	KeyInput,
-	Page,
-	SerializedAXNode,
-	Target,
-} from "puppeteer-core";
+import type { Browser, CDPSession, Dialog, ElementHandle, Locator, Page, Response } from "patchright";
 import { JsRuntime, type RuntimeHooks } from "../../eval/js/shared/runtime";
 import type { JsDisplayOutput } from "../../eval/js/shared/types";
 import { resizeImage } from "../../utils/image-resize";
 import { resolveToCwd } from "../path-utils";
 import { formatScreenshot } from "../render-utils";
 import { ToolAbortError, ToolError, throwIfAborted } from "../tool-errors";
-import {
-	applyStealthPatches,
-	applyViewport,
-	BROWSER_PROTOCOL_TIMEOUT_MS,
-	DEFAULT_VIEWPORT,
-	loadPuppeteerInWorker,
-} from "./launch";
+import { applyViewport, connectBrowser, connectOverCDP, DEFAULT_VIEWPORT, pageTargetId } from "./launch";
 import { extractReadableFromHtml, type ReadableFormat } from "./readable";
 import type {
 	Observation,
@@ -53,26 +36,6 @@ declare global {
 		elementFromPoint(x: number, y: number): Element | null;
 	};
 }
-
-const INTERACTIVE_AX_ROLES = new Set([
-	"button",
-	"link",
-	"textbox",
-	"combobox",
-	"listbox",
-	"option",
-	"checkbox",
-	"radio",
-	"switch",
-	"tab",
-	"menuitem",
-	"menuitemcheckbox",
-	"menuitemradio",
-	"slider",
-	"spinbutton",
-	"searchbox",
-	"treeitem",
-]);
 
 const LEGACY_SELECTOR_PREFIXES = ["p-aria/", "p-text/", "p-xpath/", "p-pierce/"] as const;
 
@@ -111,7 +74,7 @@ interface TabApi {
 	click(selector: string): Promise<void>;
 	type(selector: string, text: string): Promise<void>;
 	fill(selector: string, value: string): Promise<void>;
-	press(key: KeyInput, opts?: { selector?: string }): Promise<void>;
+	press(key: string, opts?: { selector?: string }): Promise<void>;
 	scroll(deltaX: number, deltaY: number): Promise<void>;
 	drag(from: DragTarget, to: DragTarget): Promise<void>;
 	waitFor(selector: string): Promise<ElementHandle>;
@@ -124,45 +87,41 @@ interface TabApi {
 	uploadFile(selector: string, ...filePaths: string[]): Promise<void>;
 	waitForUrl(pattern: string | RegExp, opts?: { timeout?: number }): Promise<string>;
 	waitForResponse(
-		pattern: string | RegExp | ((response: HTTPResponse) => boolean | Promise<boolean>),
+		pattern: string | RegExp | ((response: Response) => boolean | Promise<boolean>),
 		opts?: { timeout?: number },
-	): Promise<HTTPResponse>;
-	id(n: number): Promise<ElementHandle>;
+	): Promise<Response>;
+	id(n: string): Promise<Locator>;
 }
 
 function normalizeSelector(selector: string): string {
 	if (!selector) return selector;
+	// Reject unknown p- prefixes (only the documented legacy ones are translated).
 	if (selector.startsWith("p-") && !LEGACY_SELECTOR_PREFIXES.some(prefix => selector.startsWith(prefix))) {
 		throw new ToolError(
-			`Unsupported selector prefix. Use CSS or puppeteer query handlers (aria/, text/, xpath/, pierce/). Got: ${selector}`,
+			`Unsupported selector prefix. Use CSS or query handlers (aria/, text/, xpath/, pierce/). Got: ${selector}`,
 		);
 	}
-	if (selector.startsWith("p-text/")) return `text/${selector.slice("p-text/".length)}`;
-	if (selector.startsWith("p-xpath/")) return `xpath/${selector.slice("p-xpath/".length)}`;
-	if (selector.startsWith("p-pierce/")) return `pierce/${selector.slice("p-pierce/".length)}`;
-	if (selector.startsWith("p-aria/")) {
-		const rest = selector.slice("p-aria/".length);
+	// Translate Puppeteer-style query-handler selectors to Playwright equivalents.
+	// Puppeteer used slash syntax (aria/X, text/X); Playwright uses engine=value (text=X, xpath=X)
+	// and pierces shadow DOM by default (no pierce/ prefix needed).
+	if (selector.startsWith("p-text/")) return `text=${selector.slice("p-text/".length)}`;
+	if (selector.startsWith("text/")) return `text=${selector.slice("text/".length)}`;
+	if (selector.startsWith("p-xpath/")) return `xpath=${selector.slice("p-xpath/".length)}`;
+	if (selector.startsWith("xpath/")) return `xpath=${selector.slice("xpath/".length)}`;
+	if (selector.startsWith("p-pierce/")) return selector.slice("p-pierce/".length);
+	if (selector.startsWith("pierce/")) return selector.slice("pierce/".length);
+	if (selector.startsWith("p-aria/") || selector.startsWith("aria/")) {
+		const rest = selector.startsWith("p-aria/") ? selector.slice("p-aria/".length) : selector.slice("aria/".length);
 		const nameMatch = rest.match(/\[\s*name\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\]]+))\s*\]/);
 		const name = nameMatch?.[1] ?? nameMatch?.[2] ?? nameMatch?.[3];
-		if (name) return `aria/${name.trim()}`;
-		return `aria/${rest}`;
+		const accessibleName = (name ?? rest).trim();
+		// The aria/ handler matched by accessible name (aria-label, visible text, title).
+		// Use [aria-label="..."] CSS to match icon-only controls whose name comes from
+		// aria-label. For visible-text controls, agents should use text= selectors instead.
+		// This avoids the :has-text() ancestor-matching problem that causes strict-mode violations.
+		return `[aria-label="${accessibleName}"]`;
 	}
 	return selector;
-}
-
-function isInteractiveNode(node: SerializedAXNode): boolean {
-	if (INTERACTIVE_AX_ROLES.has(node.role)) return true;
-	return (
-		node.checked !== undefined ||
-		node.pressed !== undefined ||
-		node.selected !== undefined ||
-		node.expanded !== undefined ||
-		node.focused === true
-	);
-}
-
-function asElementHandle(handle: unknown): ElementHandle | null {
-	return handle ? (handle as ElementHandle) : null;
 }
 
 function cloneSafe(value: unknown): unknown {
@@ -230,74 +189,6 @@ function replyError(payload: RunErrorPayload): Error {
 	return err;
 }
 
-async function targetIdForTarget(target: Target): Promise<string> {
-	const raw = target as unknown as { _targetId?: unknown };
-	if (typeof raw._targetId === "string") return raw._targetId;
-	const session = await target.createCDPSession();
-	try {
-		const info = (await session.send("Target.getTargetInfo")) as { targetInfo?: { targetId?: string } };
-		if (info.targetInfo?.targetId) return info.targetInfo.targetId;
-		throw new ToolError("Target id unavailable from CDP target info");
-	} finally {
-		await session.detach().catch(() => undefined);
-	}
-}
-
-async function targetIdForPage(page: Page): Promise<string> {
-	return await targetIdForTarget(page.target());
-}
-
-async function collectObservationEntries(
-	core: WorkerCore,
-	node: SerializedAXNode,
-	entries: ObservationEntry[],
-	options: { viewportOnly: boolean; includeAll: boolean },
-): Promise<void> {
-	if (options.includeAll || isInteractiveNode(node)) {
-		const handle = await node.elementHandle();
-		if (handle) {
-			let inViewport = true;
-			if (options.viewportOnly) {
-				try {
-					inViewport = await handle.isIntersectingViewport();
-				} catch {
-					inViewport = false;
-				}
-			}
-			if (inViewport) {
-				const id = core.nextElementId();
-				const states: string[] = [];
-				if (node.disabled) states.push("disabled");
-				if (node.checked !== undefined) states.push(`checked=${String(node.checked)}`);
-				if (node.pressed !== undefined) states.push(`pressed=${String(node.pressed)}`);
-				if (node.selected !== undefined) states.push(`selected=${String(node.selected)}`);
-				if (node.expanded !== undefined) states.push(`expanded=${String(node.expanded)}`);
-				if (node.required) states.push("required");
-				if (node.readonly) states.push("readonly");
-				if (node.multiselectable) states.push("multiselectable");
-				if (node.multiline) states.push("multiline");
-				if (node.modal) states.push("modal");
-				if (node.focused) states.push("focused");
-				core.cacheElement(id, handle as ElementHandle);
-				entries.push({
-					id,
-					role: node.role,
-					name: node.name,
-					value: node.value,
-					description: node.description,
-					keyshortcuts: node.keyshortcuts,
-					states,
-				});
-			} else {
-				await handle.dispose();
-			}
-		}
-	}
-	for (const child of node.children ?? []) {
-		await collectObservationEntries(core, child, entries, options);
-	}
-}
-
 async function resolveActionableQueryHandlerClickTarget(handles: ElementHandle[]): Promise<ElementHandle | null> {
 	const candidates: Array<{
 		handle: ElementHandle;
@@ -315,11 +206,11 @@ async function resolveActionableQueryHandlerClickTarget(handles: ElementHandle[]
 					) ?? el;
 				return target;
 			});
-			clickableProxy = asElementHandle(proxy.asElement());
+			clickableProxy = proxy.asElement() as ElementHandle | null;
 			if (clickableProxy) clickable = clickableProxy;
 		} catch {}
 		try {
-			const intersecting = await clickable.isIntersectingViewport();
+			const intersecting = await clickable.isVisible();
 			if (!intersecting) continue;
 			const rect = (await clickable.evaluate(el => {
 				const r = (el as Element).getBoundingClientRect();
@@ -382,7 +273,9 @@ async function clickQueryHandlerText(
 	let lastReason: string | null = null;
 	while (Date.now() - start < timeoutMs) {
 		throwIfAborted(clickSignal);
-		const handles = (await untilAborted(clickSignal, () => page.$$(selector))) as ElementHandle[];
+		const handles = (await untilAborted(clickSignal, () =>
+			page.locator(selector).elementHandles(),
+		)) as ElementHandle[];
 		try {
 			lastSeen = handles.length;
 			const target = await resolveActionableQueryHandlerClickTarget(handles);
@@ -414,6 +307,217 @@ async function clickQueryHandlerText(
 	);
 }
 
+/** Roles considered interactive for aria-snapshot filtering when includeAll is false. */
+const INTERACTIVE_ROLES = new Set([
+	"button",
+	"link",
+	"textbox",
+	"combobox",
+	"listbox",
+	"option",
+	"checkbox",
+	"radio",
+	"switch",
+	"tab",
+	"menuitem",
+	"menuitemcheckbox",
+	"menuitemradio",
+	"slider",
+	"spinbutton",
+	"searchbox",
+	"treeitem",
+]);
+
+/** State attributes to extract from aria-snapshot [attr=val] tokens. */
+const STATE_ATTRS = new Set([
+	"checked",
+	"pressed",
+	"selected",
+	"expanded",
+	"disabled",
+	"readonly",
+	"required",
+	"modal",
+	"focused",
+	"multiline",
+	"multiselectable",
+]);
+
+interface ParsedAriaNode {
+	role: string;
+	name?: string;
+	value?: string;
+	ref?: string;
+	box?: { x: number; y: number; w: number; h: number };
+	states: string[];
+}
+
+/**
+ * Parse the YAML-like output of `page.ariaSnapshot({ mode: "ai", boxes: true })` into
+ * `ObservationEntry[]`. Each line looks like:
+ *   `- role "name" [ref=eN] [box=x,y,w,h] [checked=true] [disabled] ...`
+ * Indentation encodes nesting; we only need flat per-line data.
+ */
+function parseAriaSnapshot(
+	snapshot: string,
+	options: { includeAll: boolean; viewportOnly: boolean; viewportWidth: number; viewportHeight: number },
+): ObservationEntry[] {
+	const entries: ObservationEntry[] = [];
+	const lines = snapshot.split("\n");
+	for (const line of lines) {
+		const trimmed = line.trim();
+		if (!trimmed.startsWith("- ")) continue;
+		const node = parseAriaLine(trimmed);
+		if (!node?.ref) continue;
+		// Match old isInteractiveNode: role-based OR has stateful attributes.
+		const hasState = node.states.length > 0;
+		if (!options.includeAll && !INTERACTIVE_ROLES.has(node.role) && !hasState) continue;
+		if (options.viewportOnly && node.box) {
+			// Box is [x,y,w,h] relative to viewport. Skip elements fully outside viewport.
+			const fullyLeft = node.box.x + node.box.w < 0;
+			const fullyAbove = node.box.y + node.box.h < 0;
+			const fullyRight = node.box.x > options.viewportWidth;
+			const fullyBelow = node.box.y > options.viewportHeight;
+			if (fullyLeft || fullyAbove || fullyRight || fullyBelow) continue;
+		}
+		entries.push({
+			id: node.ref,
+			role: node.role,
+			name: node.name,
+			value: node.value,
+			states: node.states.slice(),
+		});
+	}
+	return entries;
+}
+
+/** Parse a single aria-snapshot line: `- role "name" [ref=eN] [box=x,y,w,h] [state...]: value` */
+function parseAriaLine(line: string): ParsedAriaNode | null {
+	// Strip leading "- "
+	const rest = line.slice(2).trim();
+	if (!rest) return null;
+
+	// Extract bracketed attributes first: [ref=eN], [box=x,y,w,h], [checked=true], etc.
+	const attrs: string[] = [];
+	let attrStart = -1;
+	for (let i = 0; i < rest.length; i++) {
+		if (rest[i] === "[") attrStart = i;
+		else if (rest[i] === "]" && attrStart >= 0) {
+			attrs.push(rest.slice(attrStart + 1, i));
+			attrStart = -1;
+		}
+	}
+
+	// Trailing text after the last `]` is the element value (e.g. textbox content).
+	const lastBracket = rest.lastIndexOf("]");
+	const trailingText = lastBracket >= 0 ? rest.slice(lastBracket + 1).trim() : "";
+	const value = trailingText.startsWith(":") ? trailingText.slice(1).trim() : trailingText || undefined;
+
+	// The role + optional "name" portion is everything before the first [
+	const firstBracket = rest.indexOf("[");
+	const roleAndName = (firstBracket >= 0 ? rest.slice(0, firstBracket) : rest).trim();
+
+	// Role is the first token; name is a quoted string after it (if present)
+	let role = roleAndName;
+	let name: string | undefined;
+	const nameMatch = roleAndName.match(/^(\S+)\s+"(.*)"$/);
+	if (nameMatch) {
+		role = nameMatch[1]!;
+		name = nameMatch[2];
+	} else {
+		// Could be `role "name with 'single' quotes"` or just `role:`
+		role = roleAndName.replace(/:$/, "").trim();
+	}
+
+	let ref: string | undefined;
+	let box: { x: number; y: number; w: number; h: number } | undefined;
+	const states: string[] = [];
+
+	for (const attr of attrs) {
+		const eqIdx = attr.indexOf("=");
+		const key = eqIdx >= 0 ? attr.slice(0, eqIdx).trim() : attr.trim();
+		const val = eqIdx >= 0 ? attr.slice(eqIdx + 1).trim() : "";
+		if (key === "ref") {
+			ref = val;
+		} else if (key === "box") {
+			const parts = val.split(",").map(n => Number.parseFloat(n));
+			if (parts.length === 4 && parts.every(n => !Number.isNaN(n))) {
+				box = { x: parts[0]!, y: parts[1]!, w: parts[2]!, h: parts[3]! };
+			}
+		} else if (STATE_ATTRS.has(key)) {
+			states.push(val ? `${key}=${val}` : key);
+		}
+	}
+
+	return { role, name, value, ref, box, states };
+}
+
+/**
+ * Enrich observation entries with metadata not available in ariaSnapshot:
+ * `description` (aria-description) and `keyshortcuts` (aria-keyshortcuts).
+ *
+ * Uses CDP `Accessibility.getFullAXTree` to fetch the full AX tree, then matches
+ * CDP nodes to parsed entries by (role, name) in DOM order. Both ariaSnapshot
+ * and the CDP tree traverse in DOM order, so a sequential match is reliable
+ * even with duplicate elements. Stealth-safe: does not trigger Runtime.enable.
+ *
+ * Fails silently — if the CDP call fails, entries are returned unchanged.
+ */
+async function enrichWithCdpAxMetadata(page: Page, entries: ObservationEntry[]): Promise<void> {
+	if (!entries.length) return;
+	let session: CDPSession;
+	try {
+		session = await page.context().newCDPSession(page);
+	} catch {
+		return;
+	}
+	try {
+		const result = (await session.send("Accessibility.getFullAXTree")) as {
+			nodes?: Array<{
+				role?: { value?: string };
+				name?: { value?: string };
+				description?: { value?: string };
+				properties?: Array<{ name: string; value?: { value?: unknown } }>;
+			}>;
+		};
+		const cdpQueue: Array<{ role: string; name: string; description?: string; keyshortcuts?: string }> = [];
+		for (const node of result.nodes ?? []) {
+			const role = node.role?.value;
+			if (
+				!role ||
+				role === "RootWebArea" ||
+				role === "none" ||
+				role === "generic" ||
+				role === "StaticText" ||
+				role === "InlineTextBox"
+			)
+				continue;
+			const name = node.name?.value ?? "";
+			const description = node.description?.value;
+			const keyshortcuts = node.properties?.find(p => p.name === "keyshortcuts")?.value?.value as string | undefined;
+			if (description || keyshortcuts) {
+				cdpQueue.push({ role, name, description, keyshortcuts });
+			}
+		}
+		let cdpIdx = 0;
+		for (const entry of entries) {
+			while (cdpIdx < cdpQueue.length) {
+				const cdp = cdpQueue[cdpIdx]!;
+				if (cdp.role === entry.role && cdp.name === (entry.name ?? "")) {
+					if (cdp.description) entry.description = cdp.description;
+					if (cdp.keyshortcuts) entry.keyshortcuts = cdp.keyshortcuts;
+					cdpIdx++;
+					break;
+				}
+				cdpIdx++;
+			}
+		}
+	} catch {
+		// CDP Accessibility domain may not be available — silently skip.
+	} finally {
+		await session.detach().catch(() => undefined);
+	}
+}
 export interface InflightOp {
 	label: string;
 	startedAt: number;
@@ -438,7 +542,7 @@ export function describeScreenshot(opts?: ScreenshotOptions): string {
 }
 
 /** Map an explicit save path's extension to a puppeteer capture format (default png). */
-export function imageFormatForPath(filePath: string): ImageFormat {
+export function imageFormatForPath(filePath: string): "png" | "jpeg" | "webp" {
 	switch (path.extname(filePath).toLowerCase()) {
 		case ".webp":
 			return "webp";
@@ -464,8 +568,7 @@ export class WorkerCore {
 	#browser?: Browser;
 	#page?: Page;
 	#targetId?: string;
-	#elementCache = new Map<number, ElementHandle>();
-	#elementCounter = 0;
+	#validRefs = new Set<string>();
 	#active: ActiveRun | null = null;
 	#runtime: JsRuntime | null = null;
 	#unsub: () => void;
@@ -478,15 +581,6 @@ export class WorkerCore {
 		this.#unsub = this.#transport.onMessage(msg => {
 			void this.#handleMessage(msg as WorkerInbound);
 		});
-	}
-
-	nextElementId(): number {
-		this.#elementCounter += 1;
-		return this.#elementCounter;
-	}
-
-	cacheElement(id: number, handle: ElementHandle): void {
-		this.#elementCache.set(id, handle);
 	}
 
 	async #handleMessage(msg: WorkerInbound): Promise<void> {
@@ -512,29 +606,27 @@ export class WorkerCore {
 	async #init(payload: WorkerInitPayload): Promise<void> {
 		try {
 			this.#mode = payload.mode;
-			const puppeteer = await loadPuppeteerInWorker(payload.safeDir);
-			this.#browser = await puppeteer.connect({
-				browserWSEndpoint: payload.browserWSEndpoint,
-				defaultViewport: null,
-				protocolTimeout: BROWSER_PROTOCOL_TIMEOUT_MS,
-			});
 			if (payload.mode === "headless") {
+				this.#browser = await connectBrowser(payload.endpoint);
 				this.#page = await this.#browser.newPage();
-				await applyStealthPatches(this.#browser, this.#page, { browserSession: null, override: null });
 				await applyViewport(this.#page, payload.viewport);
 				if (payload.dialogs) this.#applyDialogPolicy(payload.dialogs);
 				if (payload.url) {
+					const rawWaitUntil = payload.waitUntil ?? "load";
+					const waitUntil =
+						rawWaitUntil === "networkidle0" || rawWaitUntil === "networkidle2" ? "networkidle" : rawWaitUntil;
 					await this.#page.goto(payload.url, {
 						// Default to "load" because dev servers with HMR/WS never reach networkidle.
-						waitUntil: payload.waitUntil ?? "load",
+						waitUntil,
 						timeout: payload.timeoutMs,
 					});
 				}
 			} else {
+				this.#browser = await connectOverCDP(payload.endpoint);
 				this.#page = await this.#findAttachedPage(payload.targetId);
 				if (payload.dialogs) this.#applyDialogPolicy(payload.dialogs);
 			}
-			this.#targetId = await targetIdForPage(this.#page);
+			this.#targetId = await pageTargetId(this.#page);
 			this.#transport.send({ type: "ready", info: await this.#currentReadyInfo() });
 		} catch (error) {
 			this.#transport.send({ type: "init-failed", error: errorPayload(error) });
@@ -543,23 +635,22 @@ export class WorkerCore {
 
 	async #findAttachedPage(targetId: string): Promise<Page> {
 		if (!this.#browser) throw new ToolError("Browser is not connected");
-		for (const target of this.#browser.targets()) {
-			if ((await targetIdForTarget(target).catch(() => "")) !== targetId) continue;
-			const page = await target.page();
-			if (!page) break;
-			return page;
+		const pages = this.#browser.contexts().flatMap(ctx => ctx.pages());
+		for (const page of pages) {
+			const tid = await pageTargetId(page).catch(() => "");
+			if (tid === targetId) return page;
 		}
 		throw new ToolError(`Target ${targetId} is no longer available on the attached browser`);
 	}
 
 	async #currentReadyInfo(): Promise<ReadyInfo> {
 		const page = this.#requirePage();
-		const targetId = this.#targetId ?? (await targetIdForPage(page));
+		const targetId = this.#targetId ?? (await pageTargetId(page));
 		this.#targetId = targetId;
 		return {
 			url: redactUrlCredentials(page.url()),
 			title: await page.title().catch(() => undefined),
-			viewport: page.viewport() ?? DEFAULT_VIEWPORT,
+			viewport: page.viewportSize() ?? { width: DEFAULT_VIEWPORT.width, height: DEFAULT_VIEWPORT.height },
 			targetId,
 		};
 	}
@@ -786,10 +877,10 @@ export class WorkerCore {
 			goto: (url, opts) =>
 				op(`tab.goto(${JSON.stringify(url)})`, INF, async sig => {
 					this.#clearElementCache();
-					// Default to "load" because dev servers with HMR/WS never reach networkidle.
-					await untilAborted(sig, () =>
-						page.goto(url, { waitUntil: opts?.waitUntil ?? "load", timeout: timeoutMs }),
-					);
+					const waitUntil = opts?.waitUntil ?? "load";
+					// Map puppeteer waitUntil values to Playwright equivalents.
+					const mapped = waitUntil === "networkidle0" || waitUntil === "networkidle2" ? "networkidle" : waitUntil;
+					await untilAborted(sig, () => page.goto(url, { waitUntil: mapped, timeout: timeoutMs }));
 				}),
 			observe: opts => op("tab.observe()", quickOpMs, sig => this.#collectObservation({ ...opts, signal: sig })),
 			screenshot: opts =>
@@ -816,13 +907,13 @@ export class WorkerCore {
 			click: selector =>
 				op(`tab.click(${JSON.stringify(selector)})`, INF, async sig => {
 					const resolved = normalizeSelector(selector);
-					if (resolved.startsWith("text/")) await clickQueryHandlerText(page, resolved, timeoutMs, sig);
-					else await untilAborted(sig, () => page.locator(resolved).setTimeout(timeoutMs).click());
+					if (resolved.startsWith("text=")) await clickQueryHandlerText(page, resolved, timeoutMs, sig);
+					else await untilAborted(sig, () => page.locator(resolved).click({ timeout: timeoutMs }));
 				}),
 			type: (selector, text) =>
 				op(`tab.type(${JSON.stringify(selector)})`, INF, async sig => {
 					const handle = (await untilAborted(sig, () =>
-						page.locator(normalizeSelector(selector)).setTimeout(timeoutMs).waitHandle(),
+						page.locator(normalizeSelector(selector)).elementHandle({ timeout: timeoutMs }),
 					)) as ElementHandle;
 					try {
 						await untilAborted(sig, () => handle.type(text, { delay: 0 }));
@@ -832,7 +923,7 @@ export class WorkerCore {
 				}),
 			fill: (selector, value) =>
 				op(`tab.fill(${JSON.stringify(selector)})`, INF, sig =>
-					untilAborted(sig, () => page.locator(normalizeSelector(selector)).setTimeout(timeoutMs).fill(value)),
+					untilAborted(sig, () => page.locator(normalizeSelector(selector)).fill(value, { timeout: timeoutMs })),
 				),
 			press: (key, opts) =>
 				op(`tab.press(${JSON.stringify(key)})`, INF, async sig => {
@@ -841,7 +932,7 @@ export class WorkerCore {
 					await untilAborted(sig, () => page.keyboard.press(key));
 				}),
 			scroll: (deltaX, deltaY) =>
-				op("tab.scroll()", INF, sig => untilAborted(sig, () => page.mouse.wheel({ deltaX, deltaY }))),
+				op("tab.scroll()", INF, sig => untilAborted(sig, () => page.mouse.wheel(deltaX, deltaY))),
 			drag: (from, to) => op("tab.drag()", INF, sig => this.#drag(from, to, sig)),
 			waitFor: selector =>
 				op(
@@ -849,7 +940,7 @@ export class WorkerCore {
 					INF,
 					async sig =>
 						(await untilAborted(sig, () =>
-							page.locator(normalizeSelector(selector)).setTimeout(timeoutMs).waitHandle(),
+							page.locator(normalizeSelector(selector)).elementHandle({ timeout: timeoutMs }),
 						)) as ElementHandle,
 				),
 			evaluate: (fn, ...args) =>
@@ -863,7 +954,7 @@ export class WorkerCore {
 			scrollIntoView: selector =>
 				op(`tab.scrollIntoView(${JSON.stringify(selector)})`, INF, async sig => {
 					const handle = (await untilAborted(sig, () =>
-						page.locator(normalizeSelector(selector)).setTimeout(timeoutMs).waitHandle(),
+						page.locator(normalizeSelector(selector)).elementHandle({ timeout: timeoutMs }),
 					)) as ElementHandle;
 					try {
 						await untilAborted(sig, () =>
@@ -901,12 +992,20 @@ export class WorkerCore {
 		this.#clearElementCache();
 		const includeAll = options.includeAll ?? false;
 		const viewportOnly = options.viewportOnly ?? false;
-		const snapshot = (await untilAborted(options.signal, () =>
-			page.accessibility.snapshot({ interestingOnly: !includeAll }),
-		)) as SerializedAXNode | null;
-		if (!snapshot) throw new ToolError("Accessibility snapshot unavailable");
-		const entries: ObservationEntry[] = [];
-		await collectObservationEntries(this, snapshot, entries, { includeAll, viewportOnly });
+		// Use Playwright's ariaSnapshot (mode: "ai" includes [ref=eN] element references + [box=x,y,w,h])
+		const snapshot = await untilAborted(options.signal, () => page.ariaSnapshot({ mode: "ai", boxes: true }));
+		const vp = page.viewportSize() ?? { width: DEFAULT_VIEWPORT.width, height: DEFAULT_VIEWPORT.height };
+		const entries = parseAriaSnapshot(snapshot, {
+			includeAll,
+			viewportOnly,
+			viewportWidth: vp.width,
+			viewportHeight: vp.height,
+		});
+		// Cache the refs for tab.id() validation
+		for (const entry of entries) this.#validRefs.add(entry.id);
+		// Enrich with CDP AX metadata (description, keyshortcuts) not available in ariaSnapshot.
+		// Stealth-safe: Accessibility.getFullAXTree does not trigger Runtime.enable.
+		await untilAborted(options.signal, () => enrichWithCdpAxMetadata(page, entries));
 		const scroll = (await untilAborted(options.signal, () =>
 			page.evaluate(() => {
 				const win = globalThis as unknown as {
@@ -930,7 +1029,7 @@ export class WorkerCore {
 		return {
 			url: page.url(),
 			title: (await untilAborted(options.signal, () => page.title())) as string,
-			viewport: page.viewport() ?? DEFAULT_VIEWPORT,
+			viewport: vp,
 			scroll,
 			elements: entries,
 		};
@@ -945,22 +1044,19 @@ export class WorkerCore {
 	): Promise<ScreenshotResult> {
 		const page = this.#requirePage();
 		const fullPage = opts.selector ? false : (opts.fullPage ?? false);
-		// An explicit save path picks the full-res capture format: puppeteer encodes
-		// png/jpeg/webp natively, so `save: "shot.webp"` gets real WebP bytes instead
-		// of PNG bytes hiding behind a .webp name. Unknown/missing extensions stay PNG.
 		const explicitPath = opts.save ? resolveToCwd(opts.save, session.cwd) : undefined;
-		const captureType = explicitPath ? imageFormatForPath(explicitPath) : "png";
+		// Playwright only supports png/jpeg screenshot types (no webp). When a .webp
+		// save path is requested, capture as png and let resizeImage handle webp encoding.
+		const pathFormat = explicitPath ? imageFormatForPath(explicitPath) : "png";
+		const captureType: "png" | "jpeg" = pathFormat === "jpeg" ? "jpeg" : "png";
 		const captureMime = `image/${captureType}` as const;
 		let buffer: Buffer;
 		if (opts.selector) {
 			const handle = (await untilAborted(signal, () =>
-				page.$(normalizeSelector(opts.selector!)),
+				page.locator(normalizeSelector(opts.selector!)).elementHandle({ timeout: QUICK_OP_TIMEOUT_MS }),
 			)) as ElementHandle | null;
 			if (!handle) throw new ToolError("Screenshot selector did not resolve to an element");
 			try {
-				// Bring the element into view with a single instant scroll instead of puppeteer's
-				// scrollIntoViewIfNeeded(), whose IntersectionObserver promise can stall indefinitely
-				// on continuously-animating pages (WebGL / backdrop-filter "glass" effects). Best-effort.
 				await untilAborted(signal, () =>
 					handle.evaluate(el => {
 						const target = el as unknown as {
@@ -969,23 +1065,27 @@ export class WorkerCore {
 						target.scrollIntoView({ behavior: "instant", block: "center", inline: "center" });
 					}),
 				).catch(() => undefined);
-				// scrollIntoView:false skips the same IntersectionObserver check inside screenshot();
-				// captureBeyondViewport (puppeteer's default) still renders the clipped region.
-				const shotOpts: ElementScreenshotOptions = { type: captureType, scrollIntoView: false };
-				buffer = (await untilAborted(signal, () => handle.screenshot(shotOpts))) as Buffer;
+				buffer = (await untilAborted(signal, () => handle.screenshot({ type: captureType }))) as Buffer;
 			} finally {
 				await handle.dispose().catch(() => undefined);
 			}
 		} else {
 			buffer = (await untilAborted(signal, () => page.screenshot({ type: captureType, fullPage }))) as Buffer;
 		}
+		// When saving to .webp, force WebP encoding even if excludeWebP is set for the model.
+		// excludeWebP controls what format is sent to the model for display, not what is saved to disk.
+		const resizeExcludeWebP = pathFormat === "webp" ? false : session.excludeWebP;
 		const resized = await resizeImage(
 			{ type: "image", data: buffer.toBase64(), mimeType: captureMime },
-			{ maxWidth: 1024, maxHeight: 1024, maxBytes: 150 * 1024, jpegQuality: 70, excludeWebP: session.excludeWebP },
+			{ maxWidth: 1024, maxHeight: 1024, maxBytes: 150 * 1024, jpegQuality: 70, excludeWebP: resizeExcludeWebP },
 		);
 		const saveFullRes = !!(explicitPath || session.browserScreenshotDir);
-		const savedBuffer = saveFullRes ? buffer : resized.buffer;
-		const savedMimeType = saveFullRes ? captureMime : resized.mimeType;
+		// Playwright can't capture webp natively. When a .webp save is requested, use
+		// the resized buffer (which resizeImage encodes as webp) even for full-res saves,
+		// so the file bytes match the extension.
+		const useResizedForSave = pathFormat === "webp";
+		const savedBuffer = saveFullRes && !useResizedForSave ? buffer : resized.buffer;
+		const savedMimeType = saveFullRes && !useResizedForSave ? captureMime : resized.mimeType;
 		// Names must match the bytes we actually write: full-res follows the capture
 		// format, the resized buffer is whichever of PNG/JPEG/WebP encoded smallest.
 		const ext = savedMimeType === "image/webp" ? "webp" : savedMimeType === "image/jpeg" ? "jpg" : "png";
@@ -1029,7 +1129,7 @@ export class WorkerCore {
 		): Promise<{ x: number; y: number; handle?: ElementHandle }> => {
 			if (typeof target === "string") {
 				const handle = (await untilAborted(signal, () =>
-					page.$(normalizeSelector(target)),
+					page.locator(normalizeSelector(target)).elementHandle({ timeout: QUICK_OP_TIMEOUT_MS }),
 				)) as ElementHandle | null;
 				if (!handle) throw new ToolError(`Drag ${role} selector did not resolve: ${target}`);
 				const box = (await untilAborted(signal, () => handle.boundingBox())) as {
@@ -1073,7 +1173,7 @@ export class WorkerCore {
 	async #select(selector: string, values: string[], timeoutMs: number, signal: AbortSignal): Promise<string[]> {
 		const page = this.#requirePage();
 		const handle = (await untilAborted(signal, () =>
-			page.locator(normalizeSelector(selector)).setTimeout(timeoutMs).waitHandle(),
+			page.locator(normalizeSelector(selector)).elementHandle({ timeout: timeoutMs }),
 		)) as ElementHandle;
 		try {
 			return (await untilAborted(signal, () =>
@@ -1119,11 +1219,10 @@ export class WorkerCore {
 		if (!filePaths.length) throw new ToolError("tab.uploadFile() requires at least one file path");
 		const page = this.#requirePage();
 		const handle = (await untilAborted(signal, () =>
-			page.locator(normalizeSelector(selector)).setTimeout(timeoutMs).waitHandle(),
+			page.locator(normalizeSelector(selector)).elementHandle({ timeout: timeoutMs }),
 		)) as ElementHandle;
 		try {
 			const absolute = filePaths.map(filePath => resolveToCwd(filePath, session.cwd));
-			const upload = handle as unknown as { uploadFile: (...paths: string[]) => Promise<void> };
 			const tagName = (await untilAborted(signal, () =>
 				handle.evaluate(el => (el as unknown as { tagName: string }).tagName),
 			)) as string;
@@ -1131,7 +1230,7 @@ export class WorkerCore {
 				throw new ToolError(
 					`tab.uploadFile() requires an <input type="file"> element (got <${tagName.toLowerCase()}>)`,
 				);
-			await untilAborted(signal, () => upload.uploadFile(...absolute));
+			await untilAborted(signal, () => handle.setInputFiles(absolute));
 		} finally {
 			await handle.dispose().catch(() => undefined);
 		}
@@ -1144,59 +1243,39 @@ export class WorkerCore {
 		const flags = isRegex ? pattern.flags : "";
 		await untilAborted(signal, () =>
 			page.waitForFunction(
-				(m: string, isRe: boolean, fl: string) => {
+				(args: { m: string; isRe: boolean; fl: string }) => {
 					const url = (globalThis as unknown as { location: { href: string } }).location.href;
-					return isRe ? new RegExp(m, fl).test(url) : url.includes(m);
+					return args.isRe ? new RegExp(args.m, args.fl).test(url) : url.includes(args.m);
 				},
+				{ m: matcher, isRe: isRegex, fl: flags },
 				{ timeout, polling: 200 },
-				matcher,
-				isRegex,
-				flags,
 			),
 		);
 		return page.url();
 	}
 
 	async #waitForResponse(
-		pattern: string | RegExp | ((response: HTTPResponse) => boolean | Promise<boolean>),
+		pattern: string | RegExp | ((response: Response) => boolean | Promise<boolean>),
 		timeout: number,
 		signal: AbortSignal,
-	): Promise<HTTPResponse> {
+	): Promise<Response> {
 		const page = this.#requirePage();
-		const predicate: (response: HTTPResponse) => boolean | Promise<boolean> =
+		const predicate: (response: Response) => boolean | Promise<boolean> =
 			typeof pattern === "function"
 				? pattern
 				: pattern instanceof RegExp
 					? response => pattern.test(response.url())
 					: response => response.url().includes(pattern);
-		return (await untilAborted(signal, () => page.waitForResponse(predicate, { timeout }))) as HTTPResponse;
+		return (await untilAborted(signal, () => page.waitForResponse(predicate, { timeout }))) as Response;
 	}
 
-	async #resolveCachedHandle(id: number): Promise<ElementHandle> {
-		const handle = this.#elementCache.get(id);
-		if (!handle) throw new ToolError(`Unknown element id ${id}. Run tab.observe() to refresh the element list.`);
-		try {
-			const isConnected = (await handle.evaluate(el => el.isConnected)) as boolean;
-			if (!isConnected) {
-				this.#clearElementCache();
-				throw new ToolError(`Element id ${id} is stale. Run tab.observe() again.`);
-			}
-		} catch (err) {
-			if (err instanceof ToolError) throw err;
-			this.#clearElementCache();
-			throw new ToolError(`Element id ${id} is stale. Run tab.observe() again.`);
-		}
-		return handle;
+	async #resolveCachedHandle(id: string): Promise<Locator> {
+		if (!this.#validRefs.has(id))
+			throw new ToolError(`Unknown element id ${id}. Run tab.observe() to refresh the element list.`);
+		return this.#requirePage().locator(`aria-ref=${id}`);
 	}
 	#clearElementCache(): void {
-		if (this.#elementCache.size === 0) {
-			this.#elementCounter = 0;
-			return;
-		}
-		const handles = [...this.#elementCache.values()];
-		this.#elementCache.clear();
-		this.#elementCounter = 0;
-		for (const handle of handles) void handle.dispose().catch(() => undefined);
+		this.#validRefs.clear();
 	}
 
 	async #close(): Promise<void> {
@@ -1205,7 +1284,7 @@ export class WorkerCore {
 		const page = this.#page;
 		if (this.#dialogHandler && page && !page.isClosed()) page.off("dialog", this.#dialogHandler);
 		if (this.#mode === "headless" && page && !page.isClosed()) await page.close().catch(() => undefined);
-		if (this.#browser?.connected) this.#browser.disconnect();
+		if (this.#browser?.isConnected()) await this.#browser.close().catch(() => undefined);
 		this.#transport.send({ type: "closed" });
 		this.#transport.close();
 	}

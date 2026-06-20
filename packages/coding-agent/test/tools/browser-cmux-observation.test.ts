@@ -12,7 +12,7 @@ describe("cmux browser observation mapping", () => {
 				},
 				page: { url: "https://x/", title: "X" },
 			},
-			{ width: 800, height: 600, deviceScaleFactor: 2 },
+			{ width: 800, height: 600 },
 			{
 				innerWidth: 800,
 				innerHeight: 600,
@@ -26,7 +26,7 @@ describe("cmux browser observation mapping", () => {
 
 		expect(observation.url).toBe("https://x/");
 		expect(observation.title).toBe("X");
-		expect(observation.viewport).toEqual({ width: 800, height: 600, deviceScaleFactor: 2 });
+		expect(observation.viewport).toEqual({ width: 800, height: 600 });
 		expect(observation.scroll).toEqual({
 			x: 10,
 			y: 20,
@@ -36,8 +36,8 @@ describe("cmux browser observation mapping", () => {
 			scrollHeight: 1800,
 		});
 		expect(observation.elements).toEqual([
-			{ id: 1, role: "button", name: undefined, states: [] },
-			{ id: 2, role: "link", name: "Home", states: [] },
+			{ id: "e1", role: "button", name: undefined, states: [] },
+			{ id: "e2", role: "link", name: "Home", states: [] },
 		]);
 	});
 
@@ -48,7 +48,7 @@ describe("cmux browser observation mapping", () => {
 				title: "Top",
 				page: { url: "https://page/", title: "Page" },
 			},
-			{ width: 1, height: 2, deviceScaleFactor: 1 },
+			{ width: 1, height: 2 },
 			{
 				innerWidth: 1,
 				innerHeight: 2,

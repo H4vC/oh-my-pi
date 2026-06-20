@@ -27,7 +27,7 @@ Drives real Chromium tab; full puppeteer access via JS.
   - `tab.evaluate(fn, …args)` — `page.evaluate` for ad-hoc DOM reads.
   - `tab.screenshot({ selector?, fullPage?, save?, silent? })` — capture + attach for viewing (`silent: true` skips). Pass `save` only when a later step needs the file.
   - `tab.extract(format = "markdown")` — readable page content (`"markdown"` | `"text"`); throws when nothing readable.
-- Selectors: CSS + puppeteer handlers `aria/Sign in`, `text/Continue`, `xpath/…`, `pierce/…`; also Playwright-style `p-aria/…`, `p-text/…`.
+- Selectors: CSS + Playwright engines `text=Sign in`, `xpath=//a`, `role=button`; legacy `aria/X`, `text/X`, `xpath/X`, `pierce/X`, `p-aria/X`, `p-text/X` auto-translated.
 </instruction>
 
 <critical>

@@ -246,7 +246,7 @@ export class CmuxTab {
 	#lastViewport: ReadyInfo["viewport"] = DEFAULT_VIEWPORT;
 	#runContext: RunContext | undefined;
 	#runtime: JsRuntime | undefined;
-	readonly #elementRefs = new Map<number, CachedElementRef>();
+	readonly #elementRefs = new Map<string, CachedElementRef>();
 	#pageFacade: CmuxPageFacade | undefined;
 	#browserFacade: CmuxBrowserFacade | undefined;
 	constructor(opts: { client: CmuxSocketClient; surfaceId: string; url?: string; title?: string }) {
@@ -278,7 +278,6 @@ export class CmuxTab {
 		this.#lastViewport = {
 			width: viewport.width,
 			height: viewport.height,
-			deviceScaleFactor: viewport.deviceScaleFactor,
 		};
 	}
 
@@ -298,9 +297,7 @@ export class CmuxTab {
 			this.#lastUrl = urlResult.url;
 		}
 		const geometry = await this.#readGeometry().catch(() => undefined);
-		this.#lastViewport = geometry
-			? { width: geometry.innerWidth, height: geometry.innerHeight, deviceScaleFactor: geometry.dpr }
-			: viewport;
+		this.#lastViewport = geometry ? { width: geometry.innerWidth, height: geometry.innerHeight } : viewport;
 		await this.title().catch(() => "");
 		return {
 			url: this.#lastUrl,
@@ -342,7 +339,6 @@ export class CmuxTab {
 		const viewport = {
 			width: geometry.innerWidth,
 			height: geometry.innerHeight,
-			deviceScaleFactor: geometry.dpr,
 		};
 		this.#lastViewport = viewport;
 		const observation = cmuxSnapshotToObservation(snapshot as CmuxSnapshotResult, viewport, geometry);
@@ -575,8 +571,8 @@ export class CmuxTab {
 		throw new ToolError(`tab.waitForResponse() timed out after ${timeoutMs}ms`);
 	}
 
-	async id(id: number): Promise<CmuxElementHandle> {
-		const ref = this.#elementRefs.get(id)?.ref ?? `@e${id}`;
+	async id(id: string): Promise<CmuxElementHandle> {
+		const ref = this.#elementRefs.get(id)?.ref ?? `@${id}`;
 		await this.#waitForSelector(ref, this.#runContext?.timeoutMs ?? 30_000);
 		return new CmuxElementHandle(this, ref);
 	}
@@ -808,7 +804,7 @@ export class CmuxTab {
 	}
 
 	async #selectorExists(spec: SelectorSpec): Promise<boolean> {
-		if (spec.kind === "ref") return this.#elementRefs.has(Number(spec.value));
+		if (spec.kind === "ref") return this.#elementRefs.has(spec.value);
 		const script = `(() => {
 			const spec = ${JSON.stringify(spec)};
 			${PAGE_SELECTOR_HELPERS}
@@ -893,8 +889,8 @@ export class CmuxTab {
 		else if (normalized.startsWith("p-aria/")) normalized = `aria/${normalized.slice("p-aria/".length)}`;
 		else if (normalized.startsWith("p-xpath/")) normalized = `xpath/${normalized.slice("p-xpath/".length)}`;
 		else if (normalized.startsWith("p-pierce/")) normalized = `pierce/${normalized.slice("p-pierce/".length)}`;
-		const ref = /^@?e(\d+)$/.exec(normalized);
-		if (ref) return { kind: "ref", value: ref[1]!, raw, ref: `@e${ref[1]}` };
+		const ref = /^@?(e\d+)$/.exec(normalized);
+		if (ref) return { kind: "ref", value: ref[1]!, raw, ref: `@${ref[1]}` };
 		const slash = normalized.indexOf("/");
 		if (slash > 0) {
 			const prefix = normalized.slice(0, slash);
@@ -916,7 +912,7 @@ export class CmuxTab {
 		this.#elementRefs.clear();
 		for (const element of observation.elements) {
 			this.#elementRefs.set(element.id, {
-				ref: `@e${element.id}`,
+				ref: `@${element.id}`,
 				name: element.name,
 				role: element.role,
 			});

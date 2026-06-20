@@ -82,13 +82,18 @@ export function cmuxSnapshotToObservation(
 	for (const ref in refs) {
 		const value = refs[ref];
 		if (!value) continue;
-		const id = Number.parseInt(ref.replace(/^@?e/, ""), 10);
-		if (Number.isNaN(id)) continue;
+		// Keep the full ref string (e.g. "e2") as the element ID for aria-ref selectors.
+		const normalizedRef = ref.startsWith("@") ? ref.slice(1) : ref;
+		if (!normalizedRef.startsWith("e")) continue;
 		const role = typeof value.role === "string" && value.role.length > 0 ? value.role : "generic";
 		const name = typeof value.name === "string" && value.name.length > 0 ? value.name : undefined;
-		elements.push({ id, role, name, states: [] });
+		elements.push({ id: normalizedRef, role, name, states: [] });
 	}
-	elements.sort((a, b) => a.id - b.id);
+	elements.sort((a, b) => {
+		const aNum = Number.parseInt(a.id.replace(/^e/, ""), 10) || 0;
+		const bNum = Number.parseInt(b.id.replace(/^e/, ""), 10) || 0;
+		return aNum - bNum;
+	});
 
 	const url =
 		(typeof result.url === "string" && result.url.length > 0 ? result.url : undefined) ??
