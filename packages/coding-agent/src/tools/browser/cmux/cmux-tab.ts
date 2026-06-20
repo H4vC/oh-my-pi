@@ -121,38 +121,6 @@ const accessibleName = element =>
 		element.getAttribute("title") ||
 		textOf(element)
 	).trim();
-// Map common HTML elements to their implicit ARIA roles for role= matching.
-// Not exhaustive — covers the elements most likely to be targeted via role= selectors.
-const implicitRole = element => {
-	const tag = element.tagName.toLowerCase();
-	if (tag === "button") return "button";
-	if (tag === "a" && element.hasAttribute("href")) return "link";
-	if (tag === "input") {
-		const type = (element.getAttribute("type") || "text").toLowerCase();
-		if (type === "button" || type === "submit" || type === "reset") return "button";
-		if (type === "checkbox") return "checkbox";
-		if (type === "radio") return "radio";
-		if (type === "range") return "slider";
-		return "textbox";
-	}
-	if (tag === "select") return "listbox";
-	if (tag === "textarea") return "textbox";
-	if (tag === "nav") return "navigation";
-	if (tag === "main") return "main";
-	if (tag === "header") return "banner";
-	if (tag === "footer") return "contentinfo";
-	if (tag === "h1" || tag === "h2" || tag === "h3" || tag === "h4" || tag === "h5" || tag === "h6") return "heading";
-	if (tag === "img") return "img";
-	if (tag === "table") return "table";
-	if (tag === "form") return "form";
-	if (tag === "ul" || tag === "ol") return "list";
-	if (tag === "li") return "listitem";
-	if (tag === "dialog") return "dialog";
-	if (tag === "progress") return "progressbar";
-	if (tag === "details") return "group";
-	if (tag === "summary") return "button";
-	return "";
-};
 const findElement = spec => {
 	if (spec.kind === "css") return document.querySelector(spec.value);
 	if (spec.kind === "pierce") return pierceQuery(document, spec.value);
@@ -165,13 +133,12 @@ const findElement = spec => {
 		return allElements().find(element => isVisible(element) && textOf(element).includes(wanted)) || null;
 	}
 	if (spec.kind === "aria" || spec.kind === "ax") {
-		const wanted = (spec.name || "").trim();
+		const wanted = (spec.name || spec.value).trim();
 		const role = spec.role || "";
 		return (
 			allElements().find(element => {
 				if (!isVisible(element)) return false;
-				if (role && element.getAttribute("role") !== role && implicitRole(element) !== role) return false;
-				if (!wanted) return true;
+				if (role && element.getAttribute("role") !== role) return false;
 				const name = accessibleName(element);
 				return name === wanted || name.includes(wanted);
 			}) || null
@@ -918,6 +885,29 @@ export class CmuxTab {
 	#selectorSpec(selector: string): SelectorSpec {
 		const raw = selector;
 		let normalized = selector;
+		// Translate Playwright engine= syntax to legacy slash forms that the
+		// existing #selectorSpec already handles. This keeps cmux's findElement
+		// and the rest of the selector pipeline unchanged.
+		const eqIdx = selector.indexOf("=");
+		if (
+			eqIdx > 0 &&
+			!selector.startsWith("aria/") &&
+			!selector.startsWith("text/") &&
+			!selector.startsWith("xpath/") &&
+			!selector.startsWith("pierce/")
+		) {
+			const prefix = selector.slice(0, eqIdx);
+			const value = selector.slice(eqIdx + 1);
+			if (prefix === "text") normalized = `text/${value}`;
+			else if (prefix === "xpath") normalized = `xpath/${value}`;
+			else if (prefix === "role") {
+				// role=button[name="Save"] → aria/Save (match by accessible name)
+				// role=button (no name) → not supported in slash form; fall through to CSS
+				const nameMatch = value.match(/\[\s*name\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\]]+))\s*\]/);
+				const name = nameMatch?.[1] ?? nameMatch?.[2] ?? nameMatch?.[3];
+				if (name) normalized = `aria/${name}`;
+			}
+		}
 		if (normalized.startsWith("p-text/")) normalized = `text/${normalized.slice("p-text/".length)}`;
 		else if (normalized.startsWith("p-aria/")) normalized = `aria/${normalized.slice("p-aria/".length)}`;
 		else if (normalized.startsWith("p-xpath/")) normalized = `xpath/${normalized.slice("p-xpath/".length)}`;
@@ -930,23 +920,6 @@ export class CmuxTab {
 			const value = normalized.slice(slash + 1);
 			if (prefix === "text" || prefix === "aria" || prefix === "xpath" || prefix === "pierce") {
 				return { kind: prefix, value, raw, name: prefix === "aria" ? value : undefined };
-			}
-		}
-		// Playwright engine= syntax (text=X, xpath=X, role=button[name="..."])
-		const eqIdx = normalized.indexOf("=");
-		if (eqIdx > 0) {
-			const prefix = normalized.slice(0, eqIdx);
-			const value = normalized.slice(eqIdx + 1);
-			if (prefix === "text") return { kind: "text", value, raw };
-			if (prefix === "xpath") return { kind: "xpath", value, raw };
-			if (prefix === "role") {
-				// role=button[name="Save"] → kind:"aria" with role and accessible name.
-				// role=button (no name) → kind:"aria" with role only (matches any
-				// element with that role). The findElement helper checks spec.role.
-				const nameMatch = value.match(/\[\s*name\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\]]+))\s*\]/);
-				const name = nameMatch?.[1] ?? nameMatch?.[2] ?? nameMatch?.[3];
-				const role = name ? value.slice(0, value.indexOf("[")) : value;
-				return { kind: "aria", value: name ?? role, raw, name: name?.trim(), role: role.trim() };
 			}
 		}
 		return { kind: "css", value: normalized, raw };
@@ -1103,7 +1076,7 @@ class CmuxPageFacade {
 	readonly #tab: CmuxTab;
 	readonly keyboard: { press: (key: string) => Promise<void> };
 	readonly mouse: {
-		wheel: (delta: { deltaX?: number; deltaY?: number }) => Promise<void>;
+		wheel: (deltaXOrObj?: number | { deltaX?: number; deltaY?: number }, deltaY?: number) => Promise<void>;
 		move: (x: number, y: number) => Promise<void>;
 		down: () => Promise<void>;
 		up: () => Promise<void>;
@@ -1115,7 +1088,10 @@ class CmuxPageFacade {
 		let lastPoint = { x: 0, y: 0 };
 		let dragStart: { x: number; y: number } | undefined;
 		this.mouse = {
-			wheel: delta => this.#tab.scroll(delta.deltaX ?? 0, delta.deltaY ?? 0),
+			wheel: (deltaXOrObj?: number | { deltaX?: number; deltaY?: number }, deltaY?: number) => {
+				if (typeof deltaXOrObj === "number") return this.#tab.scroll(deltaXOrObj, deltaY ?? 0);
+				return this.#tab.scroll(deltaXOrObj?.deltaX ?? 0, deltaXOrObj?.deltaY ?? 0);
+			},
 			move: (x, y) => {
 				lastPoint = { x, y };
 				return Promise.resolve();
