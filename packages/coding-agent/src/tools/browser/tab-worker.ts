@@ -397,37 +397,47 @@ function parseAriaLine(line: string): ParsedAriaNode | null {
 	const rest = line.slice(2).trim();
 	if (!rest) return null;
 
-	// Extract bracketed attributes first: [ref=eN], [box=x,y,w,h], [checked=true], etc.
+	// Extract the role and optional quoted name first, then parse attributes
+	// from the remaining text. This prevents brackets inside quoted names
+	// (e.g. "Docs [beta]") from being mis-parsed as attributes or truncating
+	// the role/name portion.
+	let role: string;
+	let name: string | undefined;
+	let afterName: string;
+
+	// Match: `role "quoted name" rest...` or `role [attr=val] rest...` (no name)
+	const nameMatch = rest.match(/^(\S+)\s+"((?:[^"\\]|\\.)*)"\s*(.*)$/);
+	if (nameMatch) {
+		role = nameMatch[1]!.replace(/:$/, "");
+		name = nameMatch[2];
+		afterName = nameMatch[3] ?? "";
+	} else {
+		// No quoted name — role is the first token, attributes follow in afterName
+		const firstSpace = rest.search(/\s/);
+		if (firstSpace >= 0) {
+			role = rest.slice(0, firstSpace).replace(/:$/, "");
+			afterName = rest.slice(firstSpace + 1);
+		} else {
+			role = rest.replace(/:$/, "").trim();
+			afterName = "";
+		}
+	}
+
+	// Extract bracketed attributes from the text after the name: [ref=eN], [box=x,y,w,h], etc.
 	const attrs: string[] = [];
 	let attrStart = -1;
-	for (let i = 0; i < rest.length; i++) {
-		if (rest[i] === "[") attrStart = i;
-		else if (rest[i] === "]" && attrStart >= 0) {
-			attrs.push(rest.slice(attrStart + 1, i));
+	for (let i = 0; i < afterName.length; i++) {
+		if (afterName[i] === "[") attrStart = i;
+		else if (afterName[i] === "]" && attrStart >= 0) {
+			attrs.push(afterName.slice(attrStart + 1, i));
 			attrStart = -1;
 		}
 	}
 
 	// Trailing text after the last `]` is the element value (e.g. textbox content).
-	const lastBracket = rest.lastIndexOf("]");
-	const trailingText = lastBracket >= 0 ? rest.slice(lastBracket + 1).trim() : "";
+	const lastBracket = afterName.lastIndexOf("]");
+	const trailingText = lastBracket >= 0 ? afterName.slice(lastBracket + 1).trim() : afterName.trim();
 	const value = trailingText.startsWith(":") ? trailingText.slice(1).trim() : trailingText || undefined;
-
-	// The role + optional "name" portion is everything before the first [
-	const firstBracket = rest.indexOf("[");
-	const roleAndName = (firstBracket >= 0 ? rest.slice(0, firstBracket) : rest).trim();
-
-	// Role is the first token; name is a quoted string after it (if present)
-	let role = roleAndName;
-	let name: string | undefined;
-	const nameMatch = roleAndName.match(/^(\S+)\s+"(.*)"$/);
-	if (nameMatch) {
-		role = nameMatch[1]!;
-		name = nameMatch[2];
-	} else {
-		// Could be `role "name with 'single' quotes"` or just `role:`
-		role = roleAndName.replace(/:$/, "").trim();
-	}
 
 	let ref: string | undefined;
 	let box: { x: number; y: number; w: number; h: number } | undefined;
@@ -1097,7 +1107,10 @@ export class WorkerCore {
 		if (pathFormat === "webp") {
 			// Explicit WebP encode for .webp save paths — don't let resizeImage's
 			// "pick smallest" fallback write PNG/JPEG bytes to a .webp file.
-			const webpBytes = await new Bun.Image(buffer).resize(1024, 1024).webp({ quality: 80 }).bytes();
+			// Encode at the original dimensions (like the non-webp full-res path)
+			// to preserve aspect ratio — resize(1024, 1024) would squash non-square
+			// screenshots.
+			const webpBytes = await new Bun.Image(buffer).webp({ quality: 80 }).bytes();
 			savedBuffer = Buffer.from(webpBytes);
 			savedMimeType = "image/webp";
 		} else if (saveFullRes) {
@@ -1123,8 +1136,8 @@ export class WorkerCore {
 			dest,
 			mimeType: savedMimeType,
 			bytes: savedBuffer.length,
-			width: resized.width,
-			height: resized.height,
+			width: pathFormat === "webp" ? resized.originalWidth : resized.width,
+			height: pathFormat === "webp" ? resized.originalHeight : resized.height,
 		};
 		screenshots.push(info);
 		if (!opts.silent) {
