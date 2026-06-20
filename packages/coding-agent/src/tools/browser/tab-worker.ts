@@ -1083,22 +1083,31 @@ export class WorkerCore {
 		} else {
 			buffer = (await untilAborted(signal, () => page.screenshot({ type: captureType, fullPage }))) as Buffer;
 		}
-		// When saving to .webp, force WebP encoding even if excludeWebP is set for the model.
-		// excludeWebP controls what format is sent to the model for display, not what is saved to disk.
-		const resizeExcludeWebP = pathFormat === "webp" ? false : session.excludeWebP;
+		// resizeImage picks the smallest of PNG/JPEG/WebP and can fast-path the
+		// original PNG, so it does NOT guarantee WebP output. When saving to a
+		// .webp path, explicitly encode the saved buffer as WebP via Bun.Image so
+		// the file bytes match the extension.
 		const resized = await resizeImage(
 			{ type: "image", data: buffer.toBase64(), mimeType: captureMime },
-			{ maxWidth: 1024, maxHeight: 1024, maxBytes: 150 * 1024, jpegQuality: 70, excludeWebP: resizeExcludeWebP },
+			{ maxWidth: 1024, maxHeight: 1024, maxBytes: 150 * 1024, jpegQuality: 70, excludeWebP: session.excludeWebP },
 		);
 		const saveFullRes = !!(explicitPath || session.browserScreenshotDir);
-		// Playwright can't capture webp natively. When a .webp save is requested, use
-		// the resized buffer (which resizeImage encodes as webp) even for full-res saves,
-		// so the file bytes match the extension.
-		const useResizedForSave = pathFormat === "webp";
-		const savedBuffer = saveFullRes && !useResizedForSave ? buffer : resized.buffer;
-		const savedMimeType = saveFullRes && !useResizedForSave ? captureMime : resized.mimeType;
-		// Names must match the bytes we actually write: full-res follows the capture
-		// format, the resized buffer is whichever of PNG/JPEG/WebP encoded smallest.
+		let savedBuffer: Buffer;
+		let savedMimeType: string;
+		if (pathFormat === "webp") {
+			// Explicit WebP encode for .webp save paths — don't let resizeImage's
+			// "pick smallest" fallback write PNG/JPEG bytes to a .webp file.
+			const webpBytes = await new Bun.Image(buffer).resize(1024, 1024).webp({ quality: 80 }).bytes();
+			savedBuffer = Buffer.from(webpBytes);
+			savedMimeType = "image/webp";
+		} else if (saveFullRes) {
+			savedBuffer = buffer;
+			savedMimeType = captureMime;
+		} else {
+			savedBuffer = resized.buffer as Buffer;
+			savedMimeType = resized.mimeType;
+		}
+		// Names must match the bytes we actually write.
 		const ext = savedMimeType === "image/webp" ? "webp" : savedMimeType === "image/jpeg" ? "jpg" : "png";
 		const dest =
 			explicitPath ??
@@ -1295,7 +1304,13 @@ export class WorkerCore {
 		const page = this.#page;
 		if (this.#dialogHandler && page && !page.isClosed()) page.off("dialog", this.#dialogHandler);
 		if (this.#mode === "headless" && page && !page.isClosed()) await page.close().catch(() => undefined);
-		if (this.#browser?.isConnected()) await this.#browser.close().catch(() => undefined);
+		// For headless mode, close the wsEndpoint connection (disconnects from the
+		// launchServer without killing it — pages created via this connection are
+		// closed). For attach mode (connectOverCDP), skip browser.close() entirely:
+		// Playwright's Browser has no disconnect(), and close() can tear down
+		// contexts/pages on the user's attached app. The CDP connection is cleaned
+		// up when the worker process exits.
+		if (this.#mode === "headless" && this.#browser?.isConnected()) await this.#browser.close().catch(() => undefined);
 		this.#transport.send({ type: "closed" });
 		this.#transport.close();
 	}

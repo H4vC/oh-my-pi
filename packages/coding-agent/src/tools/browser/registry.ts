@@ -223,21 +223,13 @@ async function disposeBrowserHandle(handle: BrowserHandle, opts: { kill: boolean
 		return;
 	}
 	if (handle.kind.kind === "connected") {
-		if (browserAlive(handle.browser)) {
-			try {
-				await (handle.browser as Browser).close();
-			} catch (err) {
-				logger.debug("Failed to disconnect from remote browser", { error: (err as Error).message });
-			}
-		}
+		// CDP-attached browser: do NOT call browser.close() — Playwright's
+		// Browser has no disconnect(), and close() can tear down contexts/pages
+		// on the user's attached app. The CDP connection drops when the worker
+		// exits or the socket closes.
 		return;
 	}
-	if (browserAlive(handle.browser)) {
-		try {
-			await (handle.browser as Browser).close();
-		} catch (err) {
-			logger.debug("Failed to disconnect from spawned browser", { error: (err as Error).message });
-		}
-	}
+	// Spawned (app.path): same as connected — don't close the user's app.
+	// If kill is requested, gracefulKillTreeOnce below handles process cleanup.
 	if (opts.kill && handle.pid !== undefined) await gracefulKillTreeOnce(handle.pid);
 }
