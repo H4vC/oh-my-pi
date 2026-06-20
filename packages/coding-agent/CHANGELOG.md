@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Migrated browser tool from `puppeteer-core` to `patchright` (undetected Playwright drop-in). Removes all 14 custom stealth injection scripts; stealth is now built-in to patchright (Runtime.enable leak avoidance, Console.enable disable, command-flag leak fixes). `ariaSnapshot` replaces the removed `page.accessibility.snapshot()` for `tab.observe()`. Element IDs in observation output changed from `number` to `string` (aria-ref format like `"e2"`). `tab.id(ref)` returns a Playwright `Locator` instead of a Puppeteer `ElementHandle`. `tab.waitForResponse()` returns a Playwright `Response`. Legacy `aria/X`, `text/X`, `xpath/X`, `pierce/X` selectors are auto-translated to Playwright `text=X`, `xpath=X`, `role=` equivalents. `patchright` is lazy-loaded — the heavy `patchright-core` bundle no longer executes at `omp` startup. Chromium provisioning uses `npx patchright install chromium` with a `node` CLI fallback.
+
 ## [16.1.7] - 2026-06-20
 
 ### Fixed

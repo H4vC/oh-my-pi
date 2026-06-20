@@ -2,24 +2,27 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { $which, logger } from "@oh-my-pi/pi-utils";
-import type { Browser, BrowserServer, CDPSession, Page } from "patchright";
+import type { Browser, BrowserServer, BrowserType, CDPSession, Page } from "patchright";
 import { ToolError } from "../tool-errors";
 
 export type { Browser, BrowserServer, CDPSession, Page };
 
 /**
- * Lazy access to patchright's `chromium` browser type. The patchright package
- * (→ patchright-core) runs a Node-version guard and loads the heavy coreBundle
- * (which conditionally `require`s chromium-bidi) as a module side effect, so
- * importing it at top level would execute Patchright during `omp` startup —
- * before the browser tool is ever used. That conflicts with the packaging
- * contract (bundle-dist.ts) that treats patchright/patchright-core/chromium-bidi
- * as runtime externals: a missing or broken Patchright subtree in an npm or
- * compiled-binary install would crash `omp` at startup instead of producing a
- * browser-tool error on first use. Load it lazily, only inside launch/connect.
+ * Lazy access to patchright's `chromium` browser instance. The patchright
+ * package (→ patchright-core) runs a Node-version guard and loads the heavy
+ * coreBundle (which conditionally `require`s chromium-bidi) as a module side
+ * effect, so importing it at top level would execute Patchright during `omp`
+ * startup — before the browser tool is ever used. That conflicts with the
+ * packaging contract (bundle-dist.ts) that treats patchright/patchright-core/
+ * chromium-bidi as runtime externals: a missing or broken Patchright subtree
+ * in an npm or compiled-binary install would crash `omp` at startup instead
+ * of producing a browser-tool error on first use. Load it lazily via
+ * require() inside launch/connect paths only.
+ * // Exception to ts-no-dynamic-import: static import would trigger the
+ * // heavy module side effect we explicitly need to defer.
  */
-let _chromium: typeof import("patchright").chromium | undefined;
-function chromium(): typeof import("patchright").chromium {
+let _chromium: BrowserType | undefined;
+function chromium(): BrowserType {
 	if (!_chromium) _chromium = require("patchright").chromium;
 	return _chromium!;
 }
@@ -63,29 +66,37 @@ async function installPatchrightChromium(): Promise<void> {
 	// Strategy 1: npx patchright install chromium (npm-based installs).
 	// Bun.spawn throws synchronously if npx is not on PATH, so catch and
 	// fall through to the node strategy instead of crashing.
+	let npxStderr = "";
 	try {
 		const child = Bun.spawn(["npx", "patchright", "install", "chromium"], {
-			stdout: "inherit",
-			stderr: "inherit",
+			stdout: "pipe",
+			stderr: "pipe",
 		});
+		npxStderr = await new Response(child.stderr).text();
 		const exitCode = await child.exited;
 		if (exitCode === 0) return;
+		logger.warn("npx patchright install failed", { exitCode, stderr: npxStderr.slice(-500) });
 	} catch {}
 
 	// Strategy 2: node with patchright CLI module (binary installs where node exists)
+	let nodeStderr = "";
 	try {
 		const child2 = Bun.spawn(
 			["node", "-e", "require('patchright/lib/program').program.parse(['node','patchright','install','chromium'])"],
-			{ stdout: "inherit", stderr: "inherit" },
+			{ stdout: "pipe", stderr: "pipe" },
 		);
+		nodeStderr = await new Response(child2.stderr).text();
 		const exit2 = await child2.exited;
 		if (exit2 === 0) return;
+		logger.warn("node patchright install failed", { exitCode: exit2, stderr: nodeStderr.slice(-500) });
 	} catch {}
 
 	throw new ToolError(
 		"Failed to install Chromium for patchright. " +
 			"Set PUPPETEER_EXECUTABLE_PATH to use an existing Chrome/Chromium binary, " +
-			"or run `npx patchright install chromium` manually.",
+			"or run `npx patchright install chromium` manually." +
+			(npxStderr ? `\nnpx stderr: ${npxStderr.slice(-300)}` : "") +
+			(nodeStderr ? `\nnode stderr: ${nodeStderr.slice(-300)}` : ""),
 	);
 }
 

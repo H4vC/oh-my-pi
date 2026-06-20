@@ -115,11 +115,17 @@ function normalizeSelector(selector: string): string {
 		const nameMatch = rest.match(/\[\s*name\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\]]+))\s*\]/);
 		const name = nameMatch?.[1] ?? nameMatch?.[2] ?? nameMatch?.[3];
 		const accessibleName = (name ?? rest).trim();
-		// The aria/ handler matched by accessible name (aria-label, visible text, title).
-		// Use [aria-label="..."] CSS to match icon-only controls whose name comes from
-		// aria-label. For visible-text controls, agents should use text= selectors instead.
-		// This avoids the :has-text() ancestor-matching problem that causes strict-mode violations.
-		return `[aria-label="${accessibleName}"]`;
+		// Puppeteer's aria/ handler matched the computed accessible name (aria-label,
+		// visible text, title). Use Playwright's role= engine with [name="..."] which
+		// also matches the accessible name. When no explicit role was given (aria/X
+		// with just a name), use a generic role=* match by omitting the role.
+		const roleMatch = rest.match(/^\s*(\w+)\s*(?:\[|$)/);
+		const role = roleMatch?.[1];
+		if (role) {
+			return `role=${role}[name="${accessibleName}"]`;
+		}
+		// No role prefix — just match by accessible name via text= as a fallback.
+		return `text=${accessibleName}`;
 	}
 	return selector;
 }

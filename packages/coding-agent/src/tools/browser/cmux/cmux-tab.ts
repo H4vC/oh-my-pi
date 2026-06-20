@@ -121,6 +121,38 @@ const accessibleName = element =>
 		element.getAttribute("title") ||
 		textOf(element)
 	).trim();
+// Map common HTML elements to their implicit ARIA roles for role= matching.
+// Not exhaustive — covers the elements most likely to be targeted via role= selectors.
+const implicitRole = element => {
+	const tag = element.tagName.toLowerCase();
+	if (tag === "button") return "button";
+	if (tag === "a" && element.hasAttribute("href")) return "link";
+	if (tag === "input") {
+		const type = (element.getAttribute("type") || "text").toLowerCase();
+		if (type === "button" || type === "submit" || type === "reset") return "button";
+		if (type === "checkbox") return "checkbox";
+		if (type === "radio") return "radio";
+		if (type === "range") return "slider";
+		return "textbox";
+	}
+	if (tag === "select") return "listbox";
+	if (tag === "textarea") return "textbox";
+	if (tag === "nav") return "navigation";
+	if (tag === "main") return "main";
+	if (tag === "header") return "banner";
+	if (tag === "footer") return "contentinfo";
+	if (tag === "h1" || tag === "h2" || tag === "h3" || tag === "h4" || tag === "h5" || tag === "h6") return "heading";
+	if (tag === "img") return "img";
+	if (tag === "table") return "table";
+	if (tag === "form") return "form";
+	if (tag === "ul" || tag === "ol") return "list";
+	if (tag === "li") return "listitem";
+	if (tag === "dialog") return "dialog";
+	if (tag === "progress") return "progressbar";
+	if (tag === "details") return "group";
+	if (tag === "summary") return "button";
+	return "";
+};
 const findElement = spec => {
 	if (spec.kind === "css") return document.querySelector(spec.value);
 	if (spec.kind === "pierce") return pierceQuery(document, spec.value);
@@ -133,12 +165,12 @@ const findElement = spec => {
 		return allElements().find(element => isVisible(element) && textOf(element).includes(wanted)) || null;
 	}
 	if (spec.kind === "aria" || spec.kind === "ax") {
-		const wanted = (spec.name || spec.value).trim();
+		const wanted = (spec.name || "").trim();
 		const role = spec.role || "";
 		return (
 			allElements().find(element => {
-				if (!isVisible(element)) return false;
-				if (role && element.getAttribute("role") !== role) return false;
+				if (role && element.getAttribute("role") !== role && implicitRole(element) !== role) return false;
+				if (!wanted) return true;
 				const name = accessibleName(element);
 				return name === wanted || name.includes(wanted);
 			}) || null
@@ -907,10 +939,13 @@ export class CmuxTab {
 			if (prefix === "text") return { kind: "text", value, raw };
 			if (prefix === "xpath") return { kind: "xpath", value, raw };
 			if (prefix === "role") {
-				// role=button[name="Save"] → extract accessible name if present
+				// role=button[name="Save"] → kind:"aria" with role and accessible name.
+				// role=button (no name) → kind:"aria" with role only (matches any
+				// element with that role). The findElement helper checks spec.role.
 				const nameMatch = value.match(/\[\s*name\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\]]+))\s*\]/);
 				const name = nameMatch?.[1] ?? nameMatch?.[2] ?? nameMatch?.[3];
-				return { kind: "aria", value: (name ?? value).trim(), raw, name: (name ?? value).trim() };
+				const role = name ? value.slice(0, value.indexOf("[")) : value;
+				return { kind: "aria", value: name ?? role, raw, name: name?.trim(), role: role.trim() };
 			}
 		}
 		return { kind: "css", value: normalized, raw };
