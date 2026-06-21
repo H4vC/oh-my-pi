@@ -42,9 +42,16 @@ fn validate_patchright_launch(options: &PatchrightPipeSpawnOptions) -> Result<()
 			| "chromium-browser"
 			| "google-chrome"
 			| "google-chrome-stable"
+			| "google-chrome-beta"
+			| "google-chrome-canary"
 			| "microsoft-edge"
 			| "msedge"
 			| "headless_shell"
+			// macOS app-bundle executables (basename after the last /)
+			| "google chrome"
+			| "google chrome beta"
+			| "google chrome canary"
+			| "microsoft edge"
 	) || command.contains("\\patchright\\")
 		|| command.contains("/patchright/")
 		|| command.contains("ms-playwright");

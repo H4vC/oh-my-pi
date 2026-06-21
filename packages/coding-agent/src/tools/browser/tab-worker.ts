@@ -443,21 +443,24 @@ function parseAriaLine(line: string): ParsedAriaNode | null {
 		}
 	}
 
-	// Extract bracketed attributes from the text after the name: [ref=eN], [box=x,y,w,h], etc.
+	// The value (if any) starts at ": " after the attribute block. Parse
+	// attributes only from the text before the value separator so brackets
+	// inside the value (e.g. `textbox "Title" [ref=e1]: Docs [beta]`) are
+	// not treated as attributes and the value is preserved.
+	const valueSepIdx = afterName.indexOf(": ");
+	const attrPart = valueSepIdx >= 0 ? afterName.slice(0, valueSepIdx) : afterName;
+	const valuePart = valueSepIdx >= 0 ? afterName.slice(valueSepIdx + 2) : "";
+	const value = valuePart.trim() || undefined;
+
 	const attrs: string[] = [];
 	let attrStart = -1;
-	for (let i = 0; i < afterName.length; i++) {
-		if (afterName[i] === "[") attrStart = i;
-		else if (afterName[i] === "]" && attrStart >= 0) {
-			attrs.push(afterName.slice(attrStart + 1, i));
+	for (let i = 0; i < attrPart.length; i++) {
+		if (attrPart[i] === "[") attrStart = i;
+		else if (attrPart[i] === "]" && attrStart >= 0) {
+			attrs.push(attrPart.slice(attrStart + 1, i));
 			attrStart = -1;
 		}
 	}
-
-	// Trailing text after the last `]` is the element value (e.g. textbox content).
-	const lastBracket = afterName.lastIndexOf("]");
-	const trailingText = lastBracket >= 0 ? afterName.slice(lastBracket + 1).trim() : afterName.trim();
-	const value = trailingText.startsWith(":") ? trailingText.slice(1).trim() : trailingText || undefined;
 
 	let ref: string | undefined;
 	let box: { x: number; y: number; w: number; h: number } | undefined;
