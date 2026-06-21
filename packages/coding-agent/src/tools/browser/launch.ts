@@ -30,7 +30,8 @@ function chromium(): BrowserType {
  * Puppeteer ARIA query behavior for icon buttons and labelled controls.
  */
 export const ARIA_SELECTOR_ENGINE_SOURCE = `({queryAll(root,selector){
-function txt(el){return((el&&el.textContent)||"").trim()}
+function norm(v){return((v||"")+"").replace(/\\s+/g," ").trim()}
+function txt(el){return norm(el&&el.textContent)}
 function byIds(doc,ids){var out=[];ids.split(/\\s+/).forEach(function(id){var e=doc.getElementById(id);var t=txt(e);if(t)out.push(t)});return out.join(" ")}
 function esc(v){return typeof CSS!=="undefined"&&CSS.escape?CSS.escape(v):v.replace(/(["\\\\])/g,"\\\\$1")}
 function labels(el,doc){var out=[];if(el.labels){for(var i=0;i<el.labels.length;i++){var t=txt(el.labels[i]);if(t)out.push(t)}}else{var id=el.getAttribute&&el.getAttribute("id");if(id){doc.querySelectorAll('label[for="'+esc(id)+'"]').forEach(function(l){var t=txt(l);if(t)out.push(t)})}var p=el.closest&&el.closest("label");if(p){var pt=txt(p);if(pt)out.push(pt)}}return out.join(" ")}
@@ -38,8 +39,8 @@ function role(el){var x=(el.getAttribute&&el.getAttribute("role")||"").trim();if
 function vis(el){if(el.tagName==="TEMPLATE"||(el.closest&&el.closest("template,[hidden],[aria-hidden='true']")))return false;var s=typeof getComputedStyle==="function"&&getComputedStyle(el);if(s&&(s.visibility==="hidden"||s.display==="none"))return false;var r=el.getClientRects&&el.getClientRects();return !r||r.length>0}
 function named(el){return !!(el.getAttribute&&(el.getAttribute("aria-label")||el.getAttribute("aria-labelledby")||el.getAttribute("title")||el.getAttribute("alt"))||el.labels&&el.labels.length)}
 function cand(el){if(el.tagName==="LABEL"&&(el.control||el.htmlFor||el.getAttribute("for")||el.querySelector("input,textarea,select,button")))return false;return vis(el)&&(!!role(el)||named(el)||el.isContentEditable||el.hasAttribute&&el.hasAttribute("tabindex"))}
-function gan(el,doc){var lb=el.getAttribute&&el.getAttribute("aria-labelledby");if(lb){var lbt=byIds(doc,lb);if(lbt)return lbt}var al=el.getAttribute&&el.getAttribute("aria-label");if(al)return al;var lt=labels(el,doc);if(lt)return lt;var alt=el.getAttribute&&el.getAttribute("alt");if(alt)return alt;var t=el.getAttribute&&el.getAttribute("title");if(t)return t;var tx=txt(el);if(tx)return tx;if(el.tagName==="INPUT"&&el.value)return el.value;return""}
-var n=selector.trim();var r=[];var doc=root.ownerDocument||root;var a=root.querySelectorAll("*");
+function gan(el,doc){var lb=el.getAttribute&&el.getAttribute("aria-labelledby");if(lb){var lbt=byIds(doc,lb);if(lbt)return lbt}var al=norm(el.getAttribute&&el.getAttribute("aria-label"));if(al)return al;var lt=labels(el,doc);if(lt)return lt;var alt=norm(el.getAttribute&&el.getAttribute("alt"));if(alt)return alt;var t=norm(el.getAttribute&&el.getAttribute("title"));if(t)return t;var tx=txt(el);if(tx)return tx;if(el.tagName==="INPUT"&&el.value)return norm(el.value);return""}
+var n=norm(selector);var r=[];var doc=root.ownerDocument||root;var a=root.querySelectorAll("*");
 for(var i=0;i<a.length;i++){var el=a[i];if(cand(el)&&gan(el,doc)===n)r.push(el)}return r}})`;
 
 let _ariaEngineRegistered = false;

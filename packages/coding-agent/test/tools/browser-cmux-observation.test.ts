@@ -137,6 +137,13 @@ describe("cmux selector evaluation", () => {
 		await expect(tab.elementExists("aria/Save")).resolves.toBe(true);
 		await expect(tab.elementExists('role=button[name="Save"]')).resolves.toBe(true);
 	});
+
+	it("collapses whitespace in accessible-name matches", async () => {
+		const tab = cmuxTabForHtml("<body><button>Save\n <span>draft</span></button></body>");
+
+		await expect(tab.elementExists("aria/Save draft")).resolves.toBe(true);
+		await expect(tab.elementExists('role=button[name="Save draft"]')).resolves.toBe(true);
+	});
 });
 
 describe("browser aria selector engine", () => {
@@ -168,6 +175,15 @@ describe("browser aria selector engine", () => {
 		};
 
 		expect(engine.queryAll(document, "Dark mode").map(element => element.getAttribute("role"))).toEqual(["switch"]);
+	});
+
+	it("collapses whitespace in DOM text and labels before matching names", () => {
+		const { document } = parseHTML('<label>Save\n <span>draft</span><button id="draft"></button></label>');
+		const engine = new Function(`return ${ARIA_SELECTOR_ENGINE_SOURCE}`)() as {
+			queryAll(root: TestDocument, selector: string): TestElement[];
+		};
+
+		expect(engine.queryAll(document, "Save draft").map(element => element.getAttribute("id"))).toEqual(["draft"]);
 	});
 });
 

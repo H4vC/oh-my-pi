@@ -82,7 +82,8 @@ const isVisible = element => {
 	const rect = element.getBoundingClientRect();
 	return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
 };
-const textOf = element => (element.innerText || element.textContent || "").trim();
+const normalizeText = value => String(value || "").replace(/\\s+/g, " ").trim();
+const textOf = element => normalizeText(element.innerText || element.textContent);
 const allElements = () => Array.from(document.querySelectorAll("body *"));
 const pierceQuery = (root, selector) => {
 	const direct = root.querySelector?.(selector);
@@ -109,7 +110,7 @@ const accessibleName = element => {
 			.trim();
 		if (text) return text;
 	}
-	const label = (element.getAttribute("aria-label") || "").trim();
+	const label = normalizeText(element.getAttribute("aria-label"));
 	if (label) return label;
 	const labels = [];
 	if (element.labels) {
@@ -131,12 +132,12 @@ const accessibleName = element => {
 			if (text) labels.push(text);
 		}
 	}
-	if (labels.length) return labels.join(" ");
+	if (labels.length) return normalizeText(labels.join(" "));
 	if (element.tagName === "INPUT" && /^(button|submit|reset|image)$/i.test(element.type || "")) {
-		const value = (element.value || "").trim();
+		const value = normalizeText(element.value);
 		if (value) return value;
 	}
-	return (element.getAttribute("alt") || element.getAttribute("title") || textOf(element)).trim();
+	return normalizeText(element.getAttribute("alt") || element.getAttribute("title") || textOf(element));
 };
 const IMPLICIT_INPUT_ROLES = {
 	button: "button",
