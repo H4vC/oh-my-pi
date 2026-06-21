@@ -14,6 +14,7 @@
 - Fixed `tab.goto()` to clear cached element references upon navigation
 - Ensured `role=button` selectors resolve correctly via ARIA roles rather than failing as selectors
 - cmux browser backend now matches the headless patchright surface: `role=`/`aria/` selectors resolve by ARIA role (including implicit roles like `<button>`, `<a href>`, form inputs) plus accessible name (now honoring `aria-labelledby`) instead of dropping the role or forwarding an invalid CSS selector; `tab.goto()` invalidates the prior snapshot's aria-refs so a stale `tab.id(...)` rejects with a re-observe hint instead of resolving a different element that reused the ref; and explicit `.webp`/`.jpg` `tab.screenshot({ save })` paths re-encode to the requested format instead of writing PNG bytes under a mismatched extension. The agent prompt now flags that cmux `page`/`browser` are a limited facade (prefer `tab.*`) and that `tab.screenshot` `fullPage` / `tab.observe` `viewportOnly` are cmux no-ops.
+- Fixed the browser tool on Bun after the Patchright migration by using a Patchright-specific native fd3/fd4 pipe spawner for Patchright's Chromium transport and falling back to an inline direct-browser headless path where Bun cannot host Patchright's launch-server websocket reliably.
 
 ## [16.1.7] - 2026-06-20
 

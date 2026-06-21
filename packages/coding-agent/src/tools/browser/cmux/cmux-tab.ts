@@ -19,11 +19,11 @@ import {
 	type CmuxScreenshotResult,
 	type CmuxSnapshotResult,
 	type CmuxUrlGetResult,
-	type SelectorSpec,
 	cmuxSelectorSpec,
 	cmuxSnapshotToObservation,
 	GEOMETRY_SCRIPT,
 	mapWaitUntil,
+	type SelectorSpec,
 	serializeEval,
 } from "./rpc";
 import type { CmuxSocketClient } from "./socket-client";

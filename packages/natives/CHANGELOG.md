@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added a Patchright-specific native helper that spawns Chromium-style fd3/fd4 pipe transports for Bun callers, bypassing Bun's broken extra-stdio pipe plumbing without exposing a general process-spawn escape hatch.
+
 ## [16.0.11] - 2026-06-19
 
 ### Fixed

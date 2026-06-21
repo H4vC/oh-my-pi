@@ -1,5 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { cmuxSelectorSpec, cmuxSnapshotToObservation, mapWaitUntil, serializeEval } from "@oh-my-pi/pi-coding-agent/tools/browser";
+import {
+	cmuxSelectorSpec,
+	cmuxSnapshotToObservation,
+	mapWaitUntil,
+	serializeEval,
+} from "@oh-my-pi/pi-coding-agent/tools/browser";
 
 describe("cmux browser observation mapping", () => {
 	it("maps refs in numeric order with viewport, scroll, url, and title", () => {

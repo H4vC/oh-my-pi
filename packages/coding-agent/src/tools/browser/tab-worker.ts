@@ -644,8 +644,8 @@ export class WorkerCore {
 	async #init(payload: WorkerInitPayload): Promise<void> {
 		try {
 			this.#mode = payload.mode;
-			if (payload.mode === "headless") {
-				this.#browser = await connectBrowser(payload.endpoint);
+			if (payload.mode === "headless" || payload.mode === "headlessDirect") {
+				this.#browser = payload.mode === "headless" ? await connectBrowser(payload.endpoint) : payload.browser;
 				this.#page = await this.#browser.newPage();
 				await applyViewport(this.#page, payload.viewport);
 				if (payload.dialogs) this.#applyDialogPolicy(payload.dialogs);
@@ -904,8 +904,15 @@ export class WorkerCore {
 		const page = this.#requirePage();
 		const quickOpMs = Math.min(timeoutMs, QUICK_OP_TIMEOUT_MS);
 		const INF = Number.POSITIVE_INFINITY;
-		const op = <T>(label: string, perOpMs: number, fn: (sig: AbortSignal) => Promise<T>): Promise<T> =>
-			this.#runOp(active, label, signal, perOpMs, fn);
+		const op = <T>(label: string, perOpMs: number, fn: (sig: AbortSignal) => Promise<T>): Promise<T> => {
+			const promise = this.#runOp(active, label, signal, perOpMs, fn);
+			// User code may intentionally fire-and-forget wait helpers. In worker mode an
+			// unhandled rejection only kills the isolated worker; in Bun inline mode it can
+			// terminate the dev process. Mark helper promises handled while returning the
+			// original promise so `await tab.*` still observes failures.
+			void promise.catch(() => undefined);
+			return promise;
+		};
 		return {
 			name,
 			page,
@@ -1341,13 +1348,13 @@ export class WorkerCore {
 		this.#clearElementCache();
 		const page = this.#page;
 		if (this.#dialogHandler && page && !page.isClosed()) page.off("dialog", this.#dialogHandler);
-		if (this.#mode === "headless" && page && !page.isClosed()) await page.close().catch(() => undefined);
-		// For headless mode, close the wsEndpoint connection (disconnects from the
-		// launchServer without killing it — pages created via this connection are
-		// closed). For attach mode (connectOverCDP), skip browser.close() entirely:
-		// Playwright's Browser has no disconnect(), and close() can tear down
-		// contexts/pages on the user's attached app. The CDP connection is cleaned
-		// up when the worker process exits.
+		if ((this.#mode === "headless" || this.#mode === "headlessDirect") && page && !page.isClosed()) {
+			await page.close().catch(() => undefined);
+		}
+		// For BrowserServer headless mode, close the wsEndpoint connection (disconnects from the
+		// launchServer without killing it — pages created via this connection are closed).
+		// For direct headless mode and attach mode, keep the shared Browser alive; registry release
+		// owns browser lifetime. CDP connection cleanup happens when the worker process exits.
 		if (this.#mode === "headless" && this.#browser?.isConnected()) await this.#browser.close().catch(() => undefined);
 		this.#transport.send({ type: "closed" });
 		this.#transport.close();

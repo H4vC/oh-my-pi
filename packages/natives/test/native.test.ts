@@ -19,6 +19,7 @@ import {
 	listWorkspace,
 	MacOSPowerAssertion,
 	matchesKey,
+	PatchrightPipeProcess,
 	PtySession,
 	parseKey,
 	summarizeCode,
@@ -81,6 +82,14 @@ async function createFifo(fifoPath: string) {
 	}
 
 	throw new Error(await new Response(process.stderr).text());
+}
+
+function cleanProcessEnv(): Record<string, string> {
+	const env: Record<string, string> = {};
+	for (const [key, value] of Object.entries(process.env)) {
+		if (typeof value === "string") env[key] = value;
+	}
+	return env;
 }
 
 describe("pi-natives", () => {
@@ -793,6 +802,19 @@ describe("pi-natives", () => {
 
 		it("rejects an empty language", async () => {
 			await expect(astMatch({ source: "const a = 1;", lang: "  ", patterns: ["const $A = $B"] })).rejects.toThrow();
+		});
+	});
+
+	describe("PatchrightPipeProcess", () => {
+		it("rejects non-Patchright process spawning", () => {
+			expect(() =>
+				PatchrightPipeProcess.spawn({
+					command: process.execPath,
+					args: [],
+					env: cleanProcessEnv(),
+					windowsHide: true,
+				}),
+			).toThrow("only supports Patchright Chromium launches with --remote-debugging-pipe");
 		});
 	});
 });

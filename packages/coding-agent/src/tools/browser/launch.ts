@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { $which, logger } from "@oh-my-pi/pi-utils";
 import type { Browser, BrowserServer, BrowserType, CDPSession, Page } from "patchright";
 import { ToolError } from "../tool-errors";
+import { installPatchrightBunPipeSpawnPatch } from "./patchright-bun-pipe";
 
 export type { Browser, BrowserServer, CDPSession, Page };
 
@@ -23,6 +24,7 @@ export type { Browser, BrowserServer, CDPSession, Page };
  */
 let _chromium: BrowserType | undefined;
 function chromium(): BrowserType {
+	installPatchrightBunPipeSpawnPatch();
 	if (!_chromium) _chromium = require("patchright").chromium;
 	return _chromium!;
 }
@@ -241,7 +243,7 @@ export interface LaunchHeadlessOptions {
  * is available (better fingerprint than Chromium), and fall back to the bundled
  * Chromium otherwise.
  */
-export async function launchHeadlessBrowser(opts: LaunchHeadlessOptions): Promise<BrowserServer> {
+export async function launchHeadlessBrowser(opts: LaunchHeadlessOptions): Promise<BrowserServer | Browser> {
 	const vp = opts.viewport ?? DEFAULT_VIEWPORT;
 	const executablePath = await ensureChromiumExecutable();
 	const launchArgs = ["--no-sandbox", "--disable-setuid-sandbox", `--window-size=${vp.width},${vp.height}`];
@@ -262,9 +264,7 @@ export async function launchHeadlessBrowser(opts: LaunchHeadlessOptions): Promis
 	}
 
 	const sysChrome = resolveSystemChromium();
-	// Use launchServer so the worker can connect via chromium.connect(wsEndpoint).
-	// Playwright's Browser (from launch()) doesn't expose wsEndpoint(); BrowserServer does.
-	return await chromium().launchServer({
+	const launchOptions = {
 		headless: opts.headless,
 		// When using a system Chrome, use channel "chrome" for the best fingerprint.
 		// Otherwise let patchright use its bundled Chromium.
@@ -272,7 +272,13 @@ export async function launchHeadlessBrowser(opts: LaunchHeadlessOptions): Promis
 		executablePath,
 		args: launchArgs,
 		timeout: BROWSER_PROTOCOL_TIMEOUT_MS,
-	});
+	};
+	if (process.versions.bun) {
+		return await chromium().launch(launchOptions);
+	}
+	// Use launchServer where reliable so isolated tab workers can connect via chromium.connect(wsEndpoint).
+	// Playwright's Browser (from launch()) doesn't expose wsEndpoint(); BrowserServer does.
+	return await chromium().launchServer(launchOptions);
 }
 
 /**

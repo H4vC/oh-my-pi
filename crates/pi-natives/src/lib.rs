@@ -25,6 +25,7 @@
 pub mod appearance;
 pub mod ast;
 pub mod block;
+pub mod browser_pipe;
 pub mod clipboard;
 pub mod crash_handler;
 pub mod fd;
