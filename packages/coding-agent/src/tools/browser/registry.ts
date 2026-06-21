@@ -211,20 +211,27 @@ async function disposeBrowserHandle(handle: BrowserHandle, opts: { kill: boolean
 		handle.client.close();
 		return;
 	}
-	const closeIfAlive = async (label: string): Promise<void> => {
+	const disconnectIfAlive = async (label: string): Promise<void> => {
 		if (!browserAlive(handle.browser)) return;
 		try {
-			await (handle.browser as Browser | BrowserServer).close();
+			if (handle.kind.kind === "headless") await (handle.browser as BrowserServer).close();
+			else disconnectBrowser(handle.browser as Browser);
 		} catch (err) {
 			logger.debug(`Failed to ${label}`, { error: (err as Error).message });
 		}
 	};
 	if (handle.kind.kind === "headless") {
-		await closeIfAlive("close headless browser server");
+		await disconnectIfAlive("close headless browser server");
 		return;
 	}
-	await closeIfAlive(
+	await disconnectIfAlive(
 		handle.kind.kind === "connected" ? "disconnect from CDP-attached browser" : "disconnect from spawned browser",
 	);
 	if (handle.kind.kind === "spawned" && opts.kill && handle.pid !== undefined) await gracefulKillTreeOnce(handle.pid);
+}
+
+function disconnectBrowser(browser: Browser): void {
+	const disconnect = (browser as Browser & { disconnect?: () => void }).disconnect;
+	if (disconnect) disconnect.call(browser);
+	else (browser as Browser & { _connection: { close: () => void } })._connection.close();
 }

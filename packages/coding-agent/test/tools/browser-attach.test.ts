@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { pickElectronTarget } from "@oh-my-pi/pi-coding-agent/tools/browser/attach";
-import { normalizeConnectedCdpUrl } from "@oh-my-pi/pi-coding-agent/tools/browser/registry";
+import {
+	normalizeConnectedCdpUrl,
+	type PuppeteerBrowserHandle,
+	releaseBrowser,
+} from "@oh-my-pi/pi-coding-agent/tools/browser/registry";
 import type { Browser, BrowserContext, Page } from "patchright";
 
 interface FakePageOptions {
@@ -20,6 +24,10 @@ function fakeBrowser(pages: Page[]): Browser {
 	return {
 		contexts: () => [ctx],
 	} as unknown as Browser;
+}
+
+function browserHandle(kind: PuppeteerBrowserHandle["kind"], browser: Browser): PuppeteerBrowserHandle {
+	return { key: "test", kind, browser, refCount: 1 };
 }
 
 describe("pickElectronTarget", () => {
@@ -65,5 +73,24 @@ describe("pickElectronTarget", () => {
 			"browser app.cdp_url must be the HTTP CDP discovery endpoint",
 		);
 		expect(normalizeConnectedCdpUrl("http://127.0.0.1:9222/")).toBe("http://127.0.0.1:9222");
+	});
+});
+
+describe("releaseBrowser", () => {
+	test("disconnects attached CDP browsers without closing pages", async () => {
+		let disconnected = 0;
+		let closed = 0;
+		const browser = {
+			isConnected: () => true,
+			disconnect: () => disconnected++,
+			close: async () => closed++,
+		} as unknown as Browser;
+
+		await releaseBrowser(browserHandle({ kind: "connected", cdpUrl: "http://127.0.0.1:9222" }, browser), {
+			kill: false,
+		});
+
+		expect(disconnected).toBe(1);
+		expect(closed).toBe(0);
 	});
 });
