@@ -71,6 +71,11 @@ fn validate_patchright_launch(options: &PatchrightPipeSpawnOptions) -> Result<()
 
 #[cfg(target_os = "windows")]
 mod platform {
+	#![allow(
+		clippy::undocumented_unsafe_blocks,
+		reason = "Windows handle inheritance requires direct FFI; safety invariants live beside \
+		          each wrapper"
+	)]
 	use std::{
 		collections::HashMap,
 		ffi::c_void,
@@ -131,10 +136,13 @@ mod platform {
 		}
 
 		pub fn close_cdp(&self) -> Result<()> {
-			if let Ok(mut guard) = self.cdp_write.lock() {
-				if let Some(handle) = guard.take() {
-					unsafe { CloseHandle(handle) };
-				}
+			let handle = self
+				.cdp_write
+				.lock()
+				.map_err(|_| Error::from_reason("cdp_write lock poisoned"))?
+				.take();
+			if let Some(handle) = handle {
+				unsafe { CloseHandle(handle) };
 			}
 			Ok(())
 		}
@@ -335,14 +343,14 @@ mod platform {
 	}
 
 	fn create_nul_handle(access: u32) -> Result<HANDLE> {
-		let mut sa = inheritable_sa();
+		let sa = inheritable_sa();
 		let path = wide_null("NUL");
 		let handle = unsafe {
 			CreateFileW(
 				path.as_ptr(),
 				access,
 				FILE_SHARE_READ | FILE_SHARE_WRITE,
-				&mut sa,
+				&sa,
 				OPEN_EXISTING,
 				FILE_ATTRIBUTE_NORMAL,
 				null_mut(),
@@ -356,10 +364,10 @@ mod platform {
 	}
 
 	fn create_child_output_pipe() -> Result<(HANDLE, HANDLE)> {
-		let mut sa = inheritable_sa();
+		let sa = inheritable_sa();
 		let mut read = null_mut();
 		let mut write = null_mut();
-		if unsafe { CreatePipe(&mut read, &mut write, &mut sa, 0) } == 0 {
+		if unsafe { CreatePipe(&mut read, &mut write, &sa, 0) } == 0 {
 			return Err(last_error("CreatePipe"));
 		}
 		if unsafe { SetHandleInformation(read, HANDLE_FLAG_INHERIT, 0) } == 0 {
@@ -370,10 +378,10 @@ mod platform {
 	}
 
 	fn create_child_input_pipe() -> Result<(HANDLE, HANDLE)> {
-		let mut sa = inheritable_sa();
+		let sa = inheritable_sa();
 		let mut read = null_mut();
 		let mut write = null_mut();
-		if unsafe { CreatePipe(&mut read, &mut write, &mut sa, 0) } == 0 {
+		if unsafe { CreatePipe(&mut read, &mut write, &sa, 0) } == 0 {
 			return Err(last_error("CreatePipe"));
 		}
 		if unsafe { SetHandleInformation(write, HANDLE_FLAG_INHERIT, 0) } == 0 {
@@ -403,7 +411,7 @@ mod platform {
 	fn build_stdio_buffer(handles: &[HANDLE]) -> Vec<u8> {
 		let count = handles.len();
 		let handle_size = size_of::<HANDLE>();
-		let mut buf = vec![0u8; size_of::<u32>() + count + handle_size * count];
+		let mut buf = vec![0u8; size_of::<u32>() + count + std::mem::size_of_val(handles)];
 		buf[..4].copy_from_slice(&(count as u32).to_ne_bytes());
 		for i in 0..count {
 			buf[4 + i] = if i == 0 { FOPEN | FDEV } else { FOPEN | FPIPE };
@@ -457,7 +465,7 @@ mod platform {
 
 	fn build_env_block(env: &HashMap<String, String>) -> Vec<u16> {
 		let mut entries: Vec<_> = env.iter().collect();
-		entries.sort_by(|a, b| a.0.to_ascii_uppercase().cmp(&b.0.to_ascii_uppercase()));
+		entries.sort_by_key(|entry| entry.0.to_ascii_uppercase());
 		let mut out = Vec::new();
 		for (key, value) in entries {
 			out.extend(format!("{key}={value}").encode_utf16());

@@ -165,6 +165,10 @@ impl Process {
 	}
 
 	/// Process group id for this process, when supported by the platform.
+	#[allow(
+		clippy::missing_const_for_fn,
+		reason = "napi-exported methods cannot be const without changing macro expansion"
+	)]
 	#[napi]
 	pub fn group_id(&self) -> Option<i32> {
 		self.inner.group_id()
