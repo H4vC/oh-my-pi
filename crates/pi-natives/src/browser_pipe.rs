@@ -54,6 +54,7 @@ fn validate_patchright_launch(options: &PatchrightPipeSpawnOptions) -> Result<()
 			| "google chrome beta"
 			| "google chrome canary"
 			| "google chrome dev"
+			| "microsoft edge"
 	) || command.contains("\\patchright\\")
 		|| command.contains("/patchright/")
 		|| command.contains("ms-playwright");
@@ -69,6 +70,29 @@ fn validate_patchright_launch(options: &PatchrightPipeSpawnOptions) -> Result<()
 		));
 	}
 	Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+	use super::{PatchrightPipeSpawnOptions, validate_patchright_launch};
+
+	fn pipe_options(command: &str) -> PatchrightPipeSpawnOptions {
+		PatchrightPipeSpawnOptions {
+			command:      command.to_string(),
+			args:         vec!["--remote-debugging-pipe".to_string()],
+			cwd:          None,
+			env:          None,
+			windows_hide: None,
+		}
+	}
+
+	#[test]
+	fn allows_macos_microsoft_edge_app_bundle() {
+		validate_patchright_launch(&pipe_options(
+			"/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+		))
+		.expect("macOS Microsoft Edge app bundle should pass Chromium validation");
+	}
 }
 
 #[cfg(target_os = "windows")]
