@@ -9,18 +9,10 @@ import { installPatchrightBunPipeSpawnPatch } from "./patchright-bun-pipe";
 export type { Browser, BrowserServer, CDPSession, Page };
 
 /**
- * Lazy access to patchright's `chromium` browser instance. The patchright
- * package (→ patchright-core) runs a Node-version guard and loads the heavy
- * coreBundle (which conditionally `require`s chromium-bidi) as a module side
- * effect, so importing it at top level would execute Patchright during `omp`
- * startup — before the browser tool is ever used. That conflicts with the
- * packaging contract (bundle-dist.ts) that treats patchright/patchright-core/
- * chromium-bidi as runtime externals: a missing or broken Patchright subtree
- * in an npm or compiled-binary install would crash `omp` at startup instead
- * of producing a browser-tool error on first use. Load it lazily via
- * require() inside launch/connect paths only.
- * // Exception to ts-no-dynamic-import: static import would trigger the
- * // heavy module side effect we explicitly need to defer.
+ * Lazy access to patchright's `chromium`. Top-level import would execute
+ * patchright-core (Node-version guard + heavy coreBundle with chromium-bidi)
+ * at startup. Must defer to avoid crashing omp before the browser tool is used.
+ * Exception to ts-no-dynamic-import: static import triggers the side effect we defer.
  */
 let _chromium: BrowserType | undefined;
 function chromium(): BrowserType {
@@ -264,13 +256,7 @@ export async function launchHeadlessBrowser(opts: LaunchHeadlessOptions): Promis
 	}
 
 	const sysChrome = resolveSystemChromium();
-	// Always use launchServer so isolated tab workers can connect via
-	// chromium.connect(wsEndpoint()). Using launch() under Bun was a workaround
-	// for the pipe transport issue, but it returns a Browser without wsEndpoint(),
-	// forcing the inline worker path (headlessDirect) which runs user JS on the
-	// main thread — a synchronous loop or CPU-bound snippet can't be interrupted
-	// by the browser timeout and hangs the whole agent/TUI. The native pipe patch
-	// (patchright-bun-pipe.ts) handles the pipe transport issue under Bun now.
+	// Always launchServer so workers connect via wsEndpoint() in an isolated thread.
 	return await chromium().launchServer({
 		headless: opts.headless,
 		// When using a system Chrome, use channel "chrome" for the best fingerprint.

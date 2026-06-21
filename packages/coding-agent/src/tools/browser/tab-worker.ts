@@ -101,9 +101,7 @@ function normalizeSelector(selector: string): string {
 			`Unsupported selector prefix. Use CSS or query handlers (aria/, text/, xpath/, pierce/). Got: ${selector}`,
 		);
 	}
-	// Translate Puppeteer-style query-handler selectors to Playwright equivalents.
-	// Puppeteer used slash syntax (aria/X, text/X); Playwright uses engine=value (text=X, xpath=X)
-	// and pierces shadow DOM by default (no pierce/ prefix needed).
+	// Translate legacy slash selectors to Playwright engine= syntax.
 	if (selector.startsWith("p-text/")) return `text=${selector.slice("p-text/".length)}`;
 	if (selector.startsWith("text/")) return `text=${selector.slice("text/".length)}`;
 	if (selector.startsWith("p-xpath/")) return `xpath=${selector.slice("p-xpath/".length)}`;
@@ -115,12 +113,7 @@ function normalizeSelector(selector: string): string {
 		const nameMatch = rest.match(/\[\s*name\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\]]+))\s*\]/);
 		const name = nameMatch?.[1] ?? nameMatch?.[2] ?? nameMatch?.[3];
 		const accessibleName = (name ?? rest).trim();
-		// Puppeteer's aria/ handler matched the computed accessible name (aria-label,
-		// visible text, title). Use Playwright's role= engine with [name="..."] which
-		// also matches the accessible name. When no explicit role was given (aria/X
-		// with just a name), use a generic role=* match by omitting the role.
-		// Only infer a role when the syntax is `role[name="..."]` (word followed
-		// by `[`). A bare word like "Save" is the accessible name, not a role.
+		// Only infer role when followed by [name= (not a bare word like "Save").
 		const roleMatch = rest.match(/^(\w+)\s*\[\s*name\s*=/);
 		const role = roleMatch?.[1];
 		if (role) {
@@ -234,10 +227,7 @@ async function resolveActionableQueryHandlerClickTarget(handles: ElementHandle[]
 				};
 			})) as { x: number; y: number; w: number; h: number; inViewport: boolean };
 			if (rect.w < 1 || rect.h < 1) continue;
-			// Filter out off-viewport elements before sorting — isVisible() only
-			// checks CSS visibility, not viewport intersection. Without this, an
-			// off-screen element with a lower y position wins the sort, and
-			// isClickActionable rejects it as off-viewport every retry until timeout.
+			// isVisible() doesn't check viewport intersection; filter before sorting.
 			if (!rect.inViewport) continue;
 			candidates.push({ handle: clickable, rect, ownedProxy: clickableProxy ?? undefined });
 		} catch {
@@ -487,17 +477,7 @@ function parseAriaLine(line: string): ParsedAriaNode | null {
 	return { role, name, value, ref, box, states };
 }
 
-/**
- * Enrich observation entries with metadata not available in ariaSnapshot:
- * `description` (aria-description) and `keyshortcuts` (aria-keyshortcuts).
- *
- * Uses CDP `Accessibility.getFullAXTree` to fetch the full AX tree, then matches
- * CDP nodes to parsed entries by (role, name) in DOM order. Both ariaSnapshot
- * and the CDP tree traverse in DOM order, so a sequential match is reliable
- * even with duplicate elements. Stealth-safe: does not trigger Runtime.enable.
- *
- * Fails silently — if the CDP call fails, entries are returned unchanged.
- */
+/** Enrich entries with `description`/`keyshortcuts` via CDP getFullAXTree (stealth-safe, fails silently). */
 async function enrichWithCdpAxMetadata(page: Page, entries: ObservationEntry[]): Promise<void> {
 	if (!entries.length) return;
 	let session: CDPSession;
@@ -515,10 +495,7 @@ async function enrichWithCdpAxMetadata(page: Page, entries: ObservationEntry[]):
 				properties?: Array<{ name: string; value?: { value?: unknown } }>;
 			}>;
 		};
-		// Build a queue of ALL CDP nodes (not just those with metadata) so the
-		// sequential matcher preserves DOM order across duplicates. If we only
-		// queued nodes with description/keyshortcuts, a later duplicate's metadata
-		// could be applied to an earlier entry with the same role/name.
+		// Queue ALL CDP nodes to preserve DOM order across duplicates.
 		const cdpQueue: Array<{
 			role: string;
 			name: string;
@@ -994,10 +971,7 @@ export class WorkerCore {
 				op("tab.evaluate()", INF, sig =>
 					untilAborted(sig, () => {
 						if (typeof fn === "string") return page.evaluate(fn);
-						// Playwright's page.evaluate forwards only one optional arg, not variadic
-						// args like Puppeteer's. For 0-1 args, pass directly. For 2+ args, pack
-						// into an array and use Function.toString() + eval to reconstruct the
-						// callback inside the page (functions aren't serializable as arg values).
+						// Playwright evaluate takes 1 arg; for 2+ args, reconstruct via Function.toString().
 						const pageFn = fn as (...a: unknown[]) => unknown;
 						if (args.length <= 1) return page.evaluate(pageFn as never, args[0] as never);
 						return page.evaluate(
@@ -1103,8 +1077,7 @@ export class WorkerCore {
 		const page = this.#requirePage();
 		const fullPage = opts.selector ? false : (opts.fullPage ?? false);
 		const explicitPath = opts.save ? resolveToCwd(opts.save, session.cwd) : undefined;
-		// Playwright only supports png/jpeg screenshot types (no webp). When a .webp
-		// save path is requested, capture as png and let resizeImage handle webp encoding.
+		// Playwright: png/jpeg only; .webp saves get re-encoded via Bun.Image below.
 		const pathFormat = explicitPath ? imageFormatForPath(explicitPath) : "png";
 		const captureType: "png" | "jpeg" = pathFormat === "jpeg" ? "jpeg" : "png";
 		const captureMime = `image/${captureType}` as const;
@@ -1130,10 +1103,7 @@ export class WorkerCore {
 		} else {
 			buffer = (await untilAborted(signal, () => page.screenshot({ type: captureType, fullPage }))) as Buffer;
 		}
-		// resizeImage picks the smallest of PNG/JPEG/WebP and can fast-path the
-		// original PNG, so it does NOT guarantee WebP output. When saving to a
-		// .webp path, explicitly encode the saved buffer as WebP via Bun.Image so
-		// the file bytes match the extension.
+		// resizeImage may pick PNG/JPEG; explicitly encode WebP for .webp saves.
 		const resized = await resizeImage(
 			{ type: "image", data: buffer.toBase64(), mimeType: captureMime },
 			{ maxWidth: 1024, maxHeight: 1024, maxBytes: 150 * 1024, jpegQuality: 70, excludeWebP: session.excludeWebP },
@@ -1142,11 +1112,7 @@ export class WorkerCore {
 		let savedBuffer: Buffer;
 		let savedMimeType: string;
 		if (pathFormat === "webp") {
-			// Explicit WebP encode for .webp save paths — don't let resizeImage's
-			// "pick smallest" fallback write PNG/JPEG bytes to a .webp file.
-			// Encode at the original dimensions (like the non-webp full-res path)
-			// to preserve aspect ratio — resize(1024, 1024) would squash non-square
-			// screenshots.
+			// Encode at original dimensions to preserve aspect ratio.
 			const webpBytes = await new Bun.Image(buffer).webp({ quality: 80 }).bytes();
 			savedBuffer = Buffer.from(webpBytes);
 			savedMimeType = "image/webp";
@@ -1356,12 +1322,7 @@ export class WorkerCore {
 		if (this.#mode === "headless" && page && !page.isClosed()) {
 			await page.close().catch(() => undefined);
 		}
-		// For headless mode, close the wsEndpoint connection (disconnects from the
-		// launchServer without killing it — pages created via this connection are
-		// closed). For attach mode, skip browser.close() entirely: Playwright's
-		// Browser has no disconnect(), and close() can tear down contexts/pages
-		// on the user's attached app. The CDP connection is cleaned up when the
-		// worker process exits.
+		// Headless: disconnect from launchServer. Attach: skip — close() can tear down the user's app.
 		if (this.#mode === "headless" && this.#browser?.isConnected()) await this.#browser.close().catch(() => undefined);
 		this.#transport.send({ type: "closed" });
 		this.#transport.close();
