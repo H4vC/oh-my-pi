@@ -77,10 +77,7 @@ mod platform {
 		io,
 		mem::{size_of, zeroed},
 		ptr::{null, null_mut},
-		sync::{
-			Arc, Mutex,
-			atomic::{AtomicBool, Ordering},
-		},
+		sync::{Arc, Mutex},
 	};
 
 	use napi::bindgen_prelude::*;
@@ -121,16 +118,18 @@ mod platform {
 		pub process:     HANDLE,
 		pub main_thread: HANDLE,
 		pub cdp_write:   Mutex<Option<HANDLE>>,
-		pub killed:      AtomicBool,
 	}
 
 	impl Inner {
 		pub fn write_cdp(&self, bytes: &[u8]) -> Result<()> {
-			let guard = self.cdp_write.lock()
+			let guard = self
+				.cdp_write
+				.lock()
 				.map_err(|_| Error::from_reason("cdp_write lock poisoned"))?;
 			let handle = guard.ok_or_else(|| Error::from_reason("cdp_write is closed"))?;
 			write_all(handle, bytes)
 		}
+
 		pub fn close_cdp(&self) -> Result<()> {
 			if let Ok(mut guard) = self.cdp_write.lock() {
 				if let Some(handle) = guard.take() {
@@ -268,7 +267,6 @@ mod platform {
 			process:     process_info.hProcess,
 			main_thread: process_info.hThread,
 			cdp_write:   Mutex::new(Some(cdp_write_parent)),
-			killed:      AtomicBool::new(false),
 		});
 		Ok((inner, stdout_read, stderr_read, cdp_read_parent))
 	}
@@ -301,7 +299,6 @@ mod platform {
 	}
 
 	pub fn kill(inner: &Inner) -> Result<()> {
-		inner.killed.store(true, Ordering::SeqCst);
 		let ok = unsafe { TerminateProcess(inner.process, 1) };
 		if ok == 0 {
 			return Err(last_error("TerminateProcess"));
@@ -499,11 +496,16 @@ mod platform {
 
 	impl Inner {
 		pub fn write_cdp(&self, bytes: &[u8]) -> Result<()> {
-			let guard = self.cdp_write.lock()
+			let guard = self
+				.cdp_write
+				.lock()
 				.map_err(|_| Error::from_reason("cdp_write lock poisoned"))?;
-			let handle = guard.as_ref().ok_or_else(|| Error::from_reason("cdp_write is closed"))?;
+			let handle = guard
+				.as_ref()
+				.ok_or_else(|| Error::from_reason("cdp_write is closed"))?;
 			write_all(handle, bytes)
 		}
+
 		pub fn close_cdp(&self) -> Result<()> {
 			if let Ok(mut guard) = self.cdp_write.lock() {
 				guard.take();
@@ -652,6 +654,7 @@ mod platform {
 		pub fn write_cdp(&self, _bytes: &[u8]) -> Result<()> {
 			Err(Error::from_reason("unsupported platform"))
 		}
+
 		pub fn close_cdp(&self) -> Result<()> {
 			Err(Error::from_reason("unsupported platform"))
 		}

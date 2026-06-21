@@ -24,28 +24,26 @@ function chromium(): BrowserType {
 
 /**
  * Register a custom `aria=` selector engine that matches by computed accessible
- * name (aria-label, aria-labelledby, title, visible text, input value), replicating
- * Puppeteer's aria query handler. Playwright's built-in `role=` engine requires a
- * role; `text=` only matches visible text, not aria-label. This engine is needed so
- * bare `aria/Name` selectors match icon buttons whose accessible name comes from
- * aria-label rather than text content.
+ * name, including associated form labels (`label[for]` and wrapper labels).
+ * Playwright's built-in `role=` engine requires a role; `text=` only matches
+ * visible text. This keeps bare `aria/Name` selectors compatible with the old
+ * Puppeteer ARIA query behavior for icon buttons and labelled controls.
  */
+export const ARIA_SELECTOR_ENGINE_SOURCE = `({queryAll(root,selector){
+function txt(el){return((el&&el.textContent)||"").trim()}
+function byIds(doc,ids){var out=[];ids.split(/\\s+/).forEach(function(id){var e=doc.getElementById(id);var t=txt(e);if(t)out.push(t)});return out.join(" ")}
+function esc(v){return typeof CSS!=="undefined"&&CSS.escape?CSS.escape(v):v.replace(/(["\\\\])/g,"\\\\$1")}
+function labels(el,doc){var out=[];if(el.labels){for(var i=0;i<el.labels.length;i++){var t=txt(el.labels[i]);if(t)out.push(t)}}else{var id=el.getAttribute&&el.getAttribute("id");if(id){doc.querySelectorAll('label[for="'+esc(id)+'"]').forEach(function(l){var t=txt(l);if(t)out.push(t)})}var p=el.closest&&el.closest("label");if(p){var pt=txt(p);if(pt)out.push(pt)}}return out.join(" ")}
+function gan(el,doc){var lb=el.getAttribute&&el.getAttribute("aria-labelledby");if(lb){var lbt=byIds(doc,lb);if(lbt)return lbt}var al=el.getAttribute&&el.getAttribute("aria-label");if(al)return al;var lt=labels(el,doc);if(lt)return lt;var t=el.getAttribute&&el.getAttribute("title");if(t)return t;var tx=txt(el);if(tx)return tx;if(el.tagName==="INPUT"&&el.value)return el.value;return""}
+var n=selector.trim();var r=[];var doc=root.ownerDocument||root;var a=root.querySelectorAll("*");
+for(var i=0;i<a.length;i++){var el=a[i];if(el.tagName==="LABEL"&&(el.control||el.htmlFor||el.getAttribute("for")||el.querySelector("input,textarea,select,button")))continue;if(gan(el,doc)===n)r.push(el)}return r}})`;
+
 let _ariaEngineRegistered = false;
 function registerAriaSelectorEngine(): void {
 	if (_ariaEngineRegistered || !_chromium) return;
 	_ariaEngineRegistered = true;
 	const { selectors } = require("patchright") as typeof import("patchright");
-	const source = `({queryAll(root,selector){
-function gan(el){
-var al=el.getAttribute&&el.getAttribute("aria-label");if(al)return al;
-var lb=el.getAttribute&&el.getAttribute("aria-labelledby");
-if(lb){var p=lb.split(/\\s+/).map(function(id){var e=document.getElementById(id);return e&&e.textContent&&e.textContent.trim()}).filter(Boolean);if(p.length)return p.join(" ")}
-var t=el.getAttribute&&el.getAttribute("title");if(t)return t;
-var tx=el.textContent&&el.textContent.trim();if(tx)return tx;
-if(el.tagName==="INPUT"&&el.value)return el.value;return""}
-var n=selector.trim();var r=[];var a=root.querySelectorAll("*");
-for(var i=0;i<a.length;i++){if(gan(a[i])===n)r.push(a[i])}return r}})`;
-	void selectors.register("aria", source, { contentScript: true }).catch(err => {
+	void selectors.register("aria", ARIA_SELECTOR_ENGINE_SOURCE, { contentScript: true }).catch(err => {
 		logger.warn("Failed to register aria selector engine", { error: (err as Error).message });
 	});
 }

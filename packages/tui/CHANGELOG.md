@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed Ctrl+Enter on Windows Terminal inserting a newline instead of submitting. Windows Terminal sends bare `\n` (LF) for Ctrl+Enter, which was misidentified as iTerm2's Shift+Enter newline mapping. The editor now distinguishes the two by checking `WT_SESSION`: on Windows Terminal without Kitty keyboard protocol, `\n` falls through to submit (where the app's `ctrl+enter` custom handler intercepts it as a follow-up) instead of being consumed as a newline.
+
 ## [16.1.7] - 2026-06-20
 
 ### Fixed

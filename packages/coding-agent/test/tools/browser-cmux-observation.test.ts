@@ -5,6 +5,18 @@ import {
 	mapWaitUntil,
 	serializeEval,
 } from "@oh-my-pi/pi-coding-agent/tools/browser";
+import { ARIA_SELECTOR_ENGINE_SOURCE } from "@oh-my-pi/pi-coding-agent/tools/browser/launch";
+import { parseHTML } from "linkedom";
+
+interface TestElement {
+	tagName: string;
+	getAttribute(name: string): string | null;
+}
+
+interface TestDocument {
+	querySelectorAll(selector: string): TestElement[];
+	getElementById(id: string): TestElement | null;
+}
 
 describe("cmux browser observation mapping", () => {
 	it("maps refs in numeric order with viewport, scroll, url, and title", () => {
@@ -84,6 +96,20 @@ describe("cmux browser RPC helpers", () => {
 		expect(mapWaitUntil("networkidle0")).toBe("complete");
 		expect(mapWaitUntil("networkidle2")).toBe("complete");
 		expect(mapWaitUntil(undefined)).toBe("complete");
+	});
+});
+
+describe("browser aria selector engine", () => {
+	it("matches form controls by associated labels instead of returning the label", () => {
+		const { document } = parseHTML(
+			'<label for="email">Email</label><input id="email"><label>Name <input id="name"></label>',
+		);
+		const engine = new Function(`return ${ARIA_SELECTOR_ENGINE_SOURCE}`)() as {
+			queryAll(root: TestDocument, selector: string): TestElement[];
+		};
+
+		expect(engine.queryAll(document, "Email").map(element => element.tagName)).toEqual(["INPUT"]);
+		expect(engine.queryAll(document, "Name").map(element => element.getAttribute("id"))).toEqual(["name"]);
 	});
 });
 

@@ -87,11 +87,7 @@ function buildGeneratedBlock(dts: string): string {
 	if (classes.length > 0) {
 		lines.push("// classes");
 		for (const name of classes) {
-			const bindingExpr =
-				name === "PatchrightPipeProcess"
-					? "nativeBindings.PatchrightPipeProcess ?? nativeBindings.PatchrightWindowsPipeProcess"
-					: `nativeBindings.${name}`;
-			lines.push(`export const ${name} = ${bindingExpr};`);
+			lines.push(`export const ${name} = nativeBindings.${name};`);
 		}
 	}
 	if (functions.length > 0) {

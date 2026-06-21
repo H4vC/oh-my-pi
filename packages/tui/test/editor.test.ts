@@ -442,6 +442,49 @@ describe("Editor component", () => {
 			}
 		});
 
+		it("submits on bare \\n (Ctrl+Enter) when on Windows Terminal without Kitty protocol", () => {
+			// Windows Terminal sends bare \n (LF) for Ctrl+Enter and \r (CR) for plain
+			// Enter. Without Kitty protocol, \n must not be treated as a newline
+			// (Shift+Enter from iTerm2) — it should submit so the app's ctrl+enter
+			// custom handler can intercept it as a follow-up.
+			const savedWt = process.env.WT_SESSION;
+			process.env.WT_SESSION = "test-session";
+			setKittyProtocolActive(false);
+			try {
+				const editor = new Editor(defaultEditorTheme);
+				let submitted = "";
+				editor.onSubmit = text => {
+					submitted = text;
+				};
+				editor.handleInput("hello");
+				editor.handleInput("\n"); // Ctrl+Enter on Windows Terminal
+				expect(submitted).toBe("hello");
+				expect(editor.getText()).toBe("");
+			} finally {
+				if (savedWt === undefined) delete process.env.WT_SESSION;
+				else process.env.WT_SESSION = savedWt;
+				setKittyProtocolActive(false);
+			}
+		});
+
+		it("inserts a newline on bare \\n when not on Windows Terminal (iTerm2 Shift+Enter)", () => {
+			// On non-Windows terminals, bare \n is Shift+Enter from iTerm2 and
+			// should insert a newline, not submit.
+			const savedWt = process.env.WT_SESSION;
+			delete process.env.WT_SESSION;
+			setKittyProtocolActive(false);
+			try {
+				const editor = new Editor(defaultEditorTheme);
+				editor.handleInput("a");
+				editor.handleInput("\n"); // Shift+Enter from iTerm2
+				editor.handleInput("b");
+				expect(editor.getText()).toBe("a\nb");
+			} finally {
+				if (savedWt !== undefined) process.env.WT_SESSION = savedWt;
+				setKittyProtocolActive(false);
+			}
+		});
+
 		it("deletes single-code-unit unicode characters (umlauts) with Backspace", () => {
 			const editor = new Editor(defaultEditorTheme);
 
@@ -513,7 +556,7 @@ describe("Editor component", () => {
 			editor.handleInput("ä");
 			editor.handleInput("ö");
 			editor.handleInput("ü");
-			editor.handleInput("\n"); // new line
+			editor.insertText("\n"); // new line
 			editor.handleInput("Ä");
 			editor.handleInput("Ö");
 			editor.handleInput("Ü");

@@ -48,4 +48,12 @@ describe("issue #1150 — release/dev builds route workers through the CLI entry
 			expect(devSource).not.toContain(`"${entry}"`);
 		}
 	});
+
+	it("release/dev build scripts both externalize chromium-bidi for patchright binaries", async () => {
+		const releaseSource = await Bun.file(ciScriptPath).text();
+		const devSource = await Bun.file(devScriptPath).text();
+
+		expect(releaseSource).toContain('"chromium-bidi"');
+		expect(devSource).toContain('"chromium-bidi"');
+	});
 });

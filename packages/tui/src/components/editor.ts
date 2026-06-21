@@ -6,7 +6,7 @@ import {
 } from "../autocomplete";
 import { BracketedPasteHandler, decodeReencodedPasteControls } from "../bracketed-paste";
 import { getKeybindings, type KeybindingsManager } from "../keybindings";
-import { extractPrintableText, matchesKey } from "../keys";
+import { extractPrintableText, isKittyProtocolActive, isWindowsTerminalSession, matchesKey } from "../keys";
 import { KillRing } from "../kill-ring";
 import type { SymbolTheme } from "../symbols";
 import { type Component, CURSOR_MARKER, type Focusable } from "../tui";
@@ -1247,7 +1247,10 @@ export class Editor implements Component, Focusable {
 			data === "\x1b[13;2~" || // Shift+Enter in some terminals (legacy format)
 			kb.matches(data, "tui.input.newLine") || // Shift+Enter (Kitty protocol, handles lock bits)
 			(data.length > 1 && data.includes("\x1b") && data.includes("\r")) ||
-			(data === "\n" && data.length === 1) // Shift+Enter from iTerm2 mapping
+			// Shift+Enter from iTerm2 sends bare \n. On Windows Terminal, bare \n is
+			// Ctrl+Enter (not Shift+Enter) — exclude it here so it falls through to
+			// submit, where the app's ctrl+enter custom handler can intercept it.
+			(data === "\n" && data.length === 1 && !(isWindowsTerminalSession() && !isKittyProtocolActive()))
 		) {
 			if (this.#shouldSubmitOnBackslashEnter(data, kb)) {
 				this.#handleBackspace();

@@ -1,4 +1,13 @@
-import { addKeyAliases, canonicalKeyId, Editor, type KeyId, parseKey, parseKittySequence } from "@oh-my-pi/pi-tui";
+import {
+	addKeyAliases,
+	canonicalKeyId,
+	Editor,
+	isKittyProtocolActive,
+	isWindowsTerminalSession,
+	type KeyId,
+	parseKey,
+	parseKittySequence,
+} from "@oh-my-pi/pi-tui";
 import type { AppKeybinding } from "../../config/keybindings";
 import { isSettingsInitialized, settings } from "../../config/settings";
 import { imageReferenceHyperlink, PLACEHOLDER_REGEX, renderPlaceholders } from "../image-references";
@@ -462,7 +471,14 @@ export class CustomEditor extends Editor {
 		}
 
 		const parsedKey = parseKey(data);
-		const canonical = parsedKey !== undefined ? canonicalKeyId(parsedKey) : undefined;
+		let canonical = parsedKey !== undefined ? canonicalKeyId(parsedKey) : undefined;
+		// Windows Terminal sends bare \n (LF) for Ctrl+Enter when Kitty keyboard
+		// protocol is not active. parseKey resolves \n to "enter", so the
+		// ctrl+enter custom handler would never fire. Remap to "ctrl+enter" so
+		// app.message.followUp intercepts it before submit.
+		if (canonical === "enter" && data === "\n" && isWindowsTerminalSession() && !isKittyProtocolActive()) {
+			canonical = "ctrl+enter";
+		}
 
 		// Left-arrow on an empty editor: surface for the agent-hub double-tap
 		// gesture. Plain "left" only — modified arrows and any in-text cursor

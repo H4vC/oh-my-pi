@@ -1,6 +1,5 @@
 import type { ImageContent, TextContent } from "@oh-my-pi/pi-ai";
 
-
 export type Transferable = Bun.Transferable;
 
 export interface ObservationEntry {
@@ -55,7 +54,6 @@ export type WorkerInitPayload =
 			waitUntil?: "load" | "domcontentloaded" | "networkidle0" | "networkidle2";
 			timeoutMs: number;
 	  }
-
 	| {
 			mode: "attach";
 			/** CDP URL (http://host:port) for connectOverCDP */

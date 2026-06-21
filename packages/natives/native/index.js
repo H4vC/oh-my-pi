@@ -18,7 +18,7 @@ const nativeBindings = loadNative();
 // classes
 export const MacAppearanceObserver = nativeBindings.MacAppearanceObserver;
 export const MacOSPowerAssertion = nativeBindings.MacOSPowerAssertion;
-export const PatchrightPipeProcess = nativeBindings.PatchrightPipeProcess ?? nativeBindings.PatchrightWindowsPipeProcess;
+export const PatchrightPipeProcess = nativeBindings.PatchrightPipeProcess;
 export const Process = nativeBindings.Process;
 export const PtySession = nativeBindings.PtySession;
 export const Shell = nativeBindings.Shell;

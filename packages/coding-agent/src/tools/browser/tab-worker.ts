@@ -1,15 +1,8 @@
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
-
-import { Snowflake, untilAborted } from "@oh-my-pi/pi-utils";
+import { untilAborted } from "@oh-my-pi/pi-utils";
 import type { HTMLElement } from "linkedom";
 import type { Browser, CDPSession, Dialog, ElementHandle, Locator, Page, Response } from "patchright";
 import { JsRuntime, type RuntimeHooks } from "../../eval/js/shared/runtime";
-import type { JsDisplayOutput } from "../../eval/js/shared/types";
-import { resizeImage } from "../../utils/image-resize";
 import { resolveToCwd } from "../path-utils";
-import { formatScreenshot } from "../render-utils";
 import { ToolAbortError, ToolError, throwIfAborted } from "../tool-errors";
 import { applyViewport, connectBrowser, connectOverCDP, DEFAULT_VIEWPORT, pageTargetId } from "./launch";
 import { extractReadableFromHtml, type ReadableFormat } from "./readable";
@@ -26,6 +19,9 @@ import type {
 	WorkerInbound,
 	WorkerInitPayload,
 } from "./tab-protocol";
+import { cloneSafe, imageFormatForPath, pushDisplay, saveBrowserScreenshot } from "./utils";
+
+export { imageFormatForPath };
 
 declare global {
 	interface Element extends HTMLElement {}
@@ -127,18 +123,6 @@ function normalizeSelector(selector: string): string {
 	return selector;
 }
 
-function cloneSafe(value: unknown): unknown {
-	if (value === undefined) return undefined;
-	try {
-		structuredClone(value);
-		return value;
-	} catch {}
-	try {
-		return JSON.parse(JSON.stringify(value)) as unknown;
-	} catch {}
-	return String(value);
-}
-
 /**
  * Strip `user:pass@` from a URL before surfacing it in tool outputs / details
  * so Basic Auth credentials don't leak into transcripts. Returns the original
@@ -169,14 +153,6 @@ function errorPayload(error: unknown): RunErrorPayload {
 		return { name: error.name, message: error.message, stack: error.stack, isToolError: false, isAbort: false };
 	}
 	return { name: "Error", message: String(error), isToolError: false, isAbort: false };
-}
-
-function safeJsonStringify(value: unknown): string {
-	try {
-		return JSON.stringify(value, null, 2);
-	} catch {
-		return String(value);
-	}
 }
 
 function replyError(payload: RunErrorPayload): Error {
@@ -556,19 +532,6 @@ export function describeScreenshot(opts?: ScreenshotOptions): string {
 	return "tab.screenshot()";
 }
 
-/** Map an explicit save path's extension to a puppeteer capture format (default png). */
-export function imageFormatForPath(filePath: string): "png" | "jpeg" | "webp" {
-	switch (path.extname(filePath).toLowerCase()) {
-		case ".webp":
-			return "webp";
-		case ".jpg":
-		case ".jpeg":
-			return "jpeg";
-		default:
-			return "png";
-	}
-}
-
 /** Summarize still-running helpers (oldest first) so a cell timeout names what stalled. */
 export function describeInflight(inflight: Map<number, InflightOp>): string {
 	const now = Date.now();
@@ -799,23 +762,9 @@ export class WorkerCore {
 			// console.* output stays on the supervisor log channel — matches pre-runtime behavior
 			// where browser cells didn't surface `console.log` to the model.
 			onText: chunk => this.#log("debug", chunk.replace(/\n$/, "")),
-			onDisplay: output => this.#pushDisplay(active.displays, output),
+			onDisplay: output => pushDisplay(active.displays, output),
 			callTool: (name, args) => this.#callTool(active, name, args),
 		};
-	}
-
-	#pushDisplay(displays: RunResultOk["displays"], output: JsDisplayOutput): void {
-		if (output.type === "image") {
-			displays.push({ type: "image", data: output.data, mimeType: output.mimeType });
-			return;
-		}
-		if (output.type === "json") {
-			displays.push({ type: "text", text: safeJsonStringify(output.data) });
-			return;
-		}
-		// status — surface as compact JSON so helper side effects (read/write/tree) appear in
-		// the cell result alongside explicit display() output.
-		displays.push({ type: "text", text: safeJsonStringify(output.event) });
 	}
 
 	async #callTool(active: ActiveRun, name: string, args: unknown): Promise<unknown> {
@@ -980,23 +929,11 @@ export class WorkerCore {
 					}),
 				) as never,
 			scrollIntoView: selector =>
-				op(`tab.scrollIntoView(${JSON.stringify(selector)})`, INF, async sig => {
-					const handle = (await untilAborted(sig, () =>
-						page.locator(normalizeSelector(selector)).elementHandle({ timeout: timeoutMs }),
-					)) as ElementHandle;
-					try {
-						await untilAborted(sig, () =>
-							handle.evaluate(el => {
-								const target = el as unknown as {
-									scrollIntoView: (opts: { behavior: string; block: string; inline: string }) => void;
-								};
-								target.scrollIntoView({ behavior: "instant", block: "center", inline: "center" });
-							}),
-						);
-					} finally {
-						await handle.dispose().catch(() => undefined);
-					}
-				}),
+				op(`tab.scrollIntoView(${JSON.stringify(selector)})`, INF, sig =>
+					untilAborted(sig, () =>
+						page.locator(normalizeSelector(selector)).scrollIntoViewIfNeeded({ timeout: timeoutMs }),
+					),
+				),
 			select: (selector, ...values) =>
 				op(`tab.select(${JSON.stringify(selector)})`, INF, sig => this.#select(selector, values, timeoutMs, sig)),
 			uploadFile: (selector, ...filePaths) =>
@@ -1079,78 +1016,24 @@ export class WorkerCore {
 		const captureMime = `image/${captureType}` as const;
 		let buffer: Buffer;
 		if (opts.selector) {
-			const handle = (await untilAborted(signal, () =>
-				page.locator(normalizeSelector(opts.selector!)).elementHandle({ timeout: QUICK_OP_TIMEOUT_MS }),
-			)) as ElementHandle | null;
-			if (!handle) throw new ToolError("Screenshot selector did not resolve to an element");
-			try {
-				await untilAborted(signal, () =>
-					handle.evaluate(el => {
-						const target = el as unknown as {
-							scrollIntoView: (opts: { behavior: string; block: string; inline: string }) => void;
-						};
-						target.scrollIntoView({ behavior: "instant", block: "center", inline: "center" });
-					}),
-				).catch(() => undefined);
-				buffer = (await untilAborted(signal, () => handle.screenshot({ type: captureType }))) as Buffer;
-			} finally {
-				await handle.dispose().catch(() => undefined);
-			}
+			const locator = page.locator(normalizeSelector(opts.selector));
+			await untilAborted(signal, () => locator.scrollIntoViewIfNeeded({ timeout: QUICK_OP_TIMEOUT_MS })).catch(
+				() => undefined,
+			);
+			buffer = (await untilAborted(signal, () => locator.screenshot({ type: captureType }))) as Buffer;
 		} else {
 			buffer = (await untilAborted(signal, () => page.screenshot({ type: captureType, fullPage }))) as Buffer;
 		}
-		// resizeImage may pick PNG/JPEG; explicitly encode WebP for .webp saves.
-		const resized = await resizeImage(
-			{ type: "image", data: buffer.toBase64(), mimeType: captureMime },
-			{ maxWidth: 1024, maxHeight: 1024, maxBytes: 150 * 1024, jpegQuality: 70, excludeWebP: session.excludeWebP },
-		);
-		const saveFullRes = !!(explicitPath || session.browserScreenshotDir);
-		let savedBuffer: Buffer;
-		let savedMimeType: string;
-		if (pathFormat === "webp") {
-			// Encode at original dimensions to preserve aspect ratio.
-			const webpBytes = await new Bun.Image(buffer).webp({ quality: 80 }).bytes();
-			savedBuffer = Buffer.from(webpBytes);
-			savedMimeType = "image/webp";
-		} else if (saveFullRes) {
-			savedBuffer = buffer;
-			savedMimeType = captureMime;
-		} else {
-			savedBuffer = resized.buffer as Buffer;
-			savedMimeType = resized.mimeType;
-		}
-		// Names must match the bytes we actually write.
-		const ext = savedMimeType === "image/webp" ? "webp" : savedMimeType === "image/jpeg" ? "jpg" : "png";
-		const dest =
-			explicitPath ??
-			(session.browserScreenshotDir
-				? path.join(
-						session.browserScreenshotDir,
-						`screenshot-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, -1)}.${ext}`,
-					)
-				: path.join(os.tmpdir(), `omp-sshots-${Snowflake.next()}.${ext}`));
-		await fs.promises.mkdir(path.dirname(dest), { recursive: true });
-		await Bun.write(dest, savedBuffer);
-		const info: ScreenshotResult = {
-			dest,
-			mimeType: savedMimeType,
-			bytes: savedBuffer.length,
-			width: pathFormat === "webp" ? resized.originalWidth : resized.width,
-			height: pathFormat === "webp" ? resized.originalHeight : resized.height,
-		};
-		screenshots.push(info);
-		if (!opts.silent) {
-			const lines = formatScreenshot({
-				saveFullRes,
-				savedMimeType,
-				savedByteLength: savedBuffer.length,
-				dest,
-				resized,
-			});
-			displays.push({ type: "text", text: lines.join("\n") });
-			displays.push({ type: "image", data: resized.data, mimeType: resized.mimeType });
-		}
-		return info;
+		return await saveBrowserScreenshot({
+			buffer,
+			captureMime,
+			session,
+			displays,
+			screenshots,
+			explicitPath,
+			silent: opts.silent,
+			fullDimensionFormats: ["webp"],
+		});
 	}
 
 	async #drag(from: DragTarget, to: DragTarget, signal: AbortSignal): Promise<void> {
@@ -1203,42 +1086,9 @@ export class WorkerCore {
 	}
 
 	async #select(selector: string, values: string[], timeoutMs: number, signal: AbortSignal): Promise<string[]> {
-		const page = this.#requirePage();
-		const handle = (await untilAborted(signal, () =>
-			page.locator(normalizeSelector(selector)).elementHandle({ timeout: timeoutMs }),
-		)) as ElementHandle;
-		try {
-			return (await untilAborted(signal, () =>
-				handle.evaluate((el, vals) => {
-					interface SelectOption {
-						value: string;
-						selected: boolean;
-					}
-					interface SelectLike {
-						tagName: string;
-						options: ArrayLike<SelectOption>;
-						dispatchEvent: (event: unknown) => boolean;
-					}
-					const select = el as unknown as SelectLike;
-					if (select?.tagName !== "SELECT") throw new Error("tab.select() requires a <select> element");
-					const EventCtor = (
-						globalThis as unknown as { Event: new (type: string, init?: { bubbles: boolean }) => unknown }
-					).Event;
-					const wanted = new Set(vals as string[]);
-					const selected: string[] = [];
-					for (let i = 0; i < select.options.length; i++) {
-						const opt = select.options[i] as SelectOption;
-						opt.selected = wanted.has(opt.value);
-						if (opt.selected) selected.push(opt.value);
-					}
-					select.dispatchEvent(new EventCtor("input", { bubbles: true }));
-					select.dispatchEvent(new EventCtor("change", { bubbles: true }));
-					return selected;
-				}, values),
-			)) as string[];
-		} finally {
-			await handle.dispose().catch(() => undefined);
-		}
+		return (await untilAborted(signal, () =>
+			this.#requirePage().locator(normalizeSelector(selector)).selectOption(values, { timeout: timeoutMs }),
+		)) as string[];
 	}
 
 	async #uploadFile(
@@ -1249,22 +1099,16 @@ export class WorkerCore {
 		session: SessionSnapshot,
 	): Promise<void> {
 		if (!filePaths.length) throw new ToolError("tab.uploadFile() requires at least one file path");
-		const page = this.#requirePage();
-		const handle = (await untilAborted(signal, () =>
-			page.locator(normalizeSelector(selector)).elementHandle({ timeout: timeoutMs }),
-		)) as ElementHandle;
+		const absolute = filePaths.map(filePath => resolveToCwd(filePath, session.cwd));
 		try {
-			const absolute = filePaths.map(filePath => resolveToCwd(filePath, session.cwd));
-			const tagName = (await untilAborted(signal, () =>
-				handle.evaluate(el => (el as unknown as { tagName: string }).tagName),
-			)) as string;
-			if (tagName !== "INPUT")
-				throw new ToolError(
-					`tab.uploadFile() requires an <input type="file"> element (got <${tagName.toLowerCase()}>)`,
-				);
-			await untilAborted(signal, () => handle.setInputFiles(absolute));
-		} finally {
-			await handle.dispose().catch(() => undefined);
+			await untilAborted(signal, () =>
+				this.#requirePage().locator(normalizeSelector(selector)).setInputFiles(absolute, { timeout: timeoutMs }),
+			);
+		} catch (err) {
+			if (err instanceof Error && /not an input/i.test(err.message)) {
+				throw new ToolError('tab.uploadFile() requires an <input type="file"> element');
+			}
+			throw err;
 		}
 	}
 

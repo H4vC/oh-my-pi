@@ -30,7 +30,6 @@ interface NativePatchrightPipeCtor {
 
 const patchrightPipeProcess = PatchrightPipeProcess as NativePatchrightPipeCtor;
 const patchedSpawnSymbol = Symbol.for("omp.patchrightBunPipeSpawn");
-const originalSpawnSymbol = Symbol.for("omp.patchrightBunPipeOriginalSpawn");
 
 type SpawnFunction = (
 	command: string,
@@ -40,7 +39,6 @@ type SpawnFunction = (
 type PatchedChildProcess = {
 	spawn: SpawnFunction;
 	[patchedSpawnSymbol]?: boolean;
-	[originalSpawnSymbol]?: SpawnFunction;
 };
 
 class NativePipeReadable extends Readable {
@@ -156,8 +154,7 @@ function isPatchrightChromiumPipeLaunch(
 	options: SpawnOptions | undefined,
 ): boolean {
 	return Boolean(
-		process.versions.bun &&
-			Array.isArray(options?.stdio) &&
+		Array.isArray(options?.stdio) &&
 			options.stdio.length >= 5 &&
 			options.stdio[3] === "pipe" &&
 			options.stdio[4] === "pipe" &&
@@ -173,9 +170,6 @@ function cleanEnv(env: NodeJS.ProcessEnv | undefined): Record<string, string> | 
 	}
 	return clean;
 }
-function isSpawnArgArray(value: readonly string[] | SpawnOptions | undefined): value is readonly string[] {
-	return Array.isArray(value);
-}
 
 export function installPatchrightBunPipeSpawnPatch(): void {
 	if (!process.versions.bun) return;
@@ -183,8 +177,9 @@ export function installPatchrightBunPipeSpawnPatch(): void {
 	if (target[patchedSpawnSymbol]) return;
 	const originalSpawn = target.spawn.bind(childProcess) as SpawnFunction;
 	const patchedSpawn = ((command: string, args?: readonly string[] | SpawnOptions, options?: SpawnOptions) => {
-		const normalizedArgs = isSpawnArgArray(args) ? [...args] : [];
-		const normalizedOptions = isSpawnArgArray(args) ? options : args;
+		const argsArray = Array.isArray(args) ? args : undefined;
+		const normalizedArgs = argsArray ? [...argsArray] : [];
+		const normalizedOptions = argsArray ? options : (args as SpawnOptions | undefined);
 		if (isPatchrightChromiumPipeLaunch(command, normalizedArgs, normalizedOptions)) {
 			const nativeProcess = patchrightPipeProcess.spawn({
 				command,
@@ -199,7 +194,6 @@ export function installPatchrightBunPipeSpawnPatch(): void {
 	}) as SpawnFunction;
 	Object.defineProperty(patchedSpawn, "name", { value: "ompPatchrightBunPipeSpawn" });
 	try {
-		target[originalSpawnSymbol] = originalSpawn;
 		target.spawn = patchedSpawn;
 		target[patchedSpawnSymbol] = true;
 	} catch {

@@ -1,18 +1,14 @@
-import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
-import { logger, Snowflake } from "@oh-my-pi/pi-utils";
+import { logger } from "@oh-my-pi/pi-utils";
 import { JsRuntime, type RuntimeHooks } from "../../../eval/js/shared/runtime";
-import type { JsDisplayOutput } from "../../../eval/js/shared/types";
 import { callSessionTool } from "../../../eval/js/tool-bridge";
 import type { ToolSession } from "../../../sdk";
-import { resizeImage } from "../../../utils/image-resize";
 import { resolveToCwd } from "../../path-utils";
-import { formatScreenshot } from "../../render-utils";
 import { ToolAbortError, ToolError } from "../../tool-errors";
 import { DEFAULT_VIEWPORT } from "../launch";
 import { extractReadableFromHtml, type ReadableFormat } from "../readable";
 import type { Observation, ReadyInfo, RunResultOk, ScreenshotResult, SessionSnapshot } from "../tab-protocol";
+import { cloneSafe, pushDisplay, saveBrowserScreenshot } from "../utils";
 import {
 	type CmuxEvalResult,
 	type CmuxGeometry,
@@ -107,8 +103,6 @@ const pierceQuery = (root, selector) => {
 	return null;
 };
 const accessibleName = element => {
-	const label = (element.getAttribute("aria-label") || "").trim();
-	if (label) return label;
 	const labelledby = element.getAttribute("aria-labelledby");
 	if (labelledby) {
 		const text = labelledby
@@ -121,6 +115,29 @@ const accessibleName = element => {
 			.trim();
 		if (text) return text;
 	}
+	const label = (element.getAttribute("aria-label") || "").trim();
+	if (label) return label;
+	const labels = [];
+	if (element.labels) {
+		for (const label of Array.from(element.labels)) {
+			const text = textOf(label);
+			if (text) labels.push(text);
+		}
+	} else {
+		const id = element.getAttribute("id");
+		if (id) {
+			document.querySelectorAll('label[for="' + CSS.escape(id) + '"]').forEach(label => {
+				const text = textOf(label);
+				if (text) labels.push(text);
+			});
+		}
+		const wrapped = element.closest("label");
+		if (wrapped) {
+			const text = textOf(wrapped);
+			if (text) labels.push(text);
+		}
+	}
+	if (labels.length) return labels.join(" ");
 	return (element.getAttribute("alt") || element.getAttribute("title") || textOf(element)).trim();
 };
 const IMPLICIT_INPUT_ROLES = {
@@ -181,6 +198,7 @@ const findElement = spec => {
 		const role = (spec.role || "").trim();
 		return (
 			allElements().find(element => {
+				if (element.tagName === "LABEL" && element.control) return false;
 				if (!isVisible(element)) return false;
 				if (role && !matchesRole(element, role)) return false;
 				if (!wanted) return true;
@@ -492,69 +510,19 @@ export class CmuxTab {
 		const result = await this.#captureScreenshotPng(context.timeoutMs);
 		const buffer = Buffer.from(result.png_base64, "base64");
 		const captureMime = "image/png";
-		const resized = await resizeImage(
-			{ type: "image", data: result.png_base64, mimeType: captureMime },
-			{
-				maxWidth: 1024,
-				maxHeight: 1024,
-				maxBytes: 150 * 1024,
-				jpegQuality: 70,
-				excludeWebP: context.session.excludeWebP,
-			},
-		);
 		const explicitPath = opts.save ? resolveToCwd(opts.save, context.session.cwd) : undefined;
 		const returnedPath = typeof result.path === "string" && result.path.length > 0 ? result.path : undefined;
-		const saveFullRes = !!(explicitPath || context.session.browserScreenshotDir || returnedPath);
-		// The cmux backend only returns PNG, so re-encode to JPEG/WebP when the save
-		// path's extension asks for one — never write PNG bytes to a .webp/.jpg file
-		// (matches the headless worker's save contract).
-		const pathFormat = explicitPath ? imageFormatForPath(explicitPath) : "png";
-		let savedBuffer: Buffer;
-		let savedMimeType: string;
-		if (pathFormat === "webp") {
-			savedBuffer = Buffer.from(await new Bun.Image(buffer).webp({ quality: 80 }).bytes());
-			savedMimeType = "image/webp";
-		} else if (pathFormat === "jpeg") {
-			savedBuffer = Buffer.from(await new Bun.Image(buffer).jpeg({ quality: 80 }).bytes());
-			savedMimeType = "image/jpeg";
-		} else if (saveFullRes) {
-			savedBuffer = buffer;
-			savedMimeType = captureMime;
-		} else {
-			savedBuffer = Buffer.from(resized.buffer);
-			savedMimeType = resized.mimeType;
-		}
-		const ext = savedMimeType === "image/webp" ? "webp" : savedMimeType === "image/jpeg" ? "jpg" : "png";
-		const dest =
-			explicitPath ??
-			(context.session.browserScreenshotDir
-				? path.join(
-						context.session.browserScreenshotDir,
-						`screenshot-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, -1)}.${ext}`,
-					)
-				: (returnedPath ?? path.join(os.tmpdir(), `omp-sshots-${Snowflake.next()}.${ext}`)));
-		await fs.promises.mkdir(path.dirname(dest), { recursive: true });
-		await Bun.write(dest, savedBuffer);
-		const info: ScreenshotResult = {
-			dest,
-			mimeType: savedMimeType,
-			bytes: savedBuffer.length,
-			width: pathFormat === "webp" || pathFormat === "jpeg" ? resized.originalWidth : resized.width,
-			height: pathFormat === "webp" || pathFormat === "jpeg" ? resized.originalHeight : resized.height,
-		};
-		context.screenshots.push(info);
-		if (!opts.silent) {
-			const lines = formatScreenshot({
-				saveFullRes,
-				savedMimeType,
-				savedByteLength: savedBuffer.length,
-				dest,
-				resized,
-			});
-			context.displays.push({ type: "text", text: lines.join("\n") });
-			context.displays.push({ type: "image", data: resized.data, mimeType: resized.mimeType });
-		}
-		return info;
+		return await saveBrowserScreenshot({
+			buffer,
+			captureMime,
+			session: context.session,
+			displays: context.displays,
+			screenshots: context.screenshots,
+			explicitPath,
+			returnedPath,
+			silent: opts.silent,
+			fullDimensionFormats: ["webp", "jpeg"],
+		});
 	}
 
 	async waitForUrl(pattern: string | RegExp, opts?: { timeout?: number }): Promise<string> {
@@ -1280,51 +1248,6 @@ export async function runCmuxCode(tab: CmuxTab, opts: RunCmuxCodeOptions): Promi
 	}
 }
 
-function pushDisplay(displays: RunResultOk["displays"], output: JsDisplayOutput): void {
-	if (output.type === "image") {
-		displays.push({ type: "image", data: output.data, mimeType: output.mimeType });
-		return;
-	}
-	if (output.type === "json") {
-		displays.push({ type: "text", text: safeJsonStringify(output.data) });
-		return;
-	}
-	displays.push({ type: "text", text: safeJsonStringify(output.event) });
-}
-
-function safeJsonStringify(value: unknown): string {
-	try {
-		return JSON.stringify(value, null, 2);
-	} catch {
-		return String(value);
-	}
-}
-
-function cloneSafe(value: unknown): unknown {
-	if (value === undefined) return undefined;
-	try {
-		structuredClone(value);
-		return value;
-	} catch {}
-	try {
-		return JSON.parse(JSON.stringify(value)) as unknown;
-	} catch {}
-	return String(value);
-}
-
 function numberFrom(value: unknown, fallback: number): number {
 	return typeof value === "number" && Number.isFinite(value) ? value : fallback;
-}
-
-/** Map a save path's extension to an image format (default png), matching the headless worker. */
-function imageFormatForPath(filePath: string): "png" | "jpeg" | "webp" {
-	switch (path.extname(filePath).toLowerCase()) {
-		case ".webp":
-			return "webp";
-		case ".jpg":
-		case ".jpeg":
-			return "jpeg";
-		default:
-			return "png";
-	}
 }
