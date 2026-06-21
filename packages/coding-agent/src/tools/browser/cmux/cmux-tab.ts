@@ -176,6 +176,21 @@ const matchesRole = (element, role) => {
 	if (explicit) return explicit.split(/\\s+/).includes(role);
 	return implicitRole(element) === role;
 };
+const isAriaCandidate = element => {
+	if (element.tagName === "LABEL" && element.control) return false;
+	if (!isVisible(element)) return false;
+	return !!(
+		implicitRole(element) ||
+		(element.getAttribute("role") || "").trim() ||
+		element.getAttribute("aria-label") ||
+		element.getAttribute("aria-labelledby") ||
+		element.getAttribute("title") ||
+		element.getAttribute("alt") ||
+		element.labels?.length ||
+		element.isContentEditable ||
+		element.hasAttribute("tabindex")
+	);
+};
 const findElement = spec => {
 	if (spec.kind === "css") return document.querySelector(spec.value);
 	if (spec.kind === "pierce") return pierceQuery(document, spec.value);
@@ -192,9 +207,7 @@ const findElement = spec => {
 		const role = (spec.role || "").trim();
 		return (
 			allElements().find(element => {
-				if (element.tagName === "LABEL" && element.control) return false;
-				if (!isVisible(element)) return false;
-				if (role && !matchesRole(element, role)) return false;
+				if (role ? !matchesRole(element, role) || !isVisible(element) : !isAriaCandidate(element)) return false;
 				if (!wanted) return true;
 				const name = accessibleName(element);
 				return name === wanted || name.includes(wanted);

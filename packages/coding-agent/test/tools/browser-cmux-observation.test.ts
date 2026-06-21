@@ -111,6 +111,15 @@ describe("browser aria selector engine", () => {
 		expect(engine.queryAll(document, "Email").map(element => element.tagName)).toEqual(["INPUT"]);
 		expect(engine.queryAll(document, "Name").map(element => element.getAttribute("id"))).toEqual(["name"]);
 	});
+
+	it("filters generic ancestors and hidden elements from bare aria matches", () => {
+		const { document } = parseHTML('<div><button hidden>Save</button><button id="save">Save</button></div>');
+		const engine = new Function(`return ${ARIA_SELECTOR_ENGINE_SOURCE}`)() as {
+			queryAll(root: TestDocument, selector: string): TestElement[];
+		};
+
+		expect(engine.queryAll(document, "Save").map(element => element.getAttribute("id"))).toEqual(["save"]);
+	});
 });
 
 describe("cmux selector spec", () => {
