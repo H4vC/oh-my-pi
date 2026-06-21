@@ -120,6 +120,15 @@ describe("browser aria selector engine", () => {
 
 		expect(engine.queryAll(document, "Save").map(element => element.getAttribute("id"))).toEqual(["save"]);
 	});
+
+	it("keeps explicit roles beginning with s as aria candidates", () => {
+		const { document } = parseHTML('<div role="switch">Dark mode</div>');
+		const engine = new Function(`return ${ARIA_SELECTOR_ENGINE_SOURCE}`)() as {
+			queryAll(root: TestDocument, selector: string): TestElement[];
+		};
+
+		expect(engine.queryAll(document, "Dark mode").map(element => element.getAttribute("role"))).toEqual(["switch"]);
+	});
 });
 
 describe("cmux selector spec", () => {
