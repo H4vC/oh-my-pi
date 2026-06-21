@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { $which, logger } from "@oh-my-pi/pi-utils";
+import type * as Patchright from "patchright";
 import type { Browser, BrowserServer, BrowserType, CDPSession, Page } from "patchright";
 import { ToolError } from "../tool-errors";
 import { installPatchrightBunPipeSpawnPatch } from "./patchright-bun-pipe";
@@ -39,7 +40,7 @@ function role(el){var x=(el.getAttribute&&el.getAttribute("role")||"").trim();if
 function vis(el){if(el.tagName==="TEMPLATE"||(el.closest&&el.closest("template,[hidden],[aria-hidden='true']")))return false;var s=typeof getComputedStyle==="function"&&getComputedStyle(el);if(s&&(s.visibility==="hidden"||s.display==="none"))return false;var r=el.getClientRects&&el.getClientRects();return !r||r.length>0}
 function named(el){return !!(el.getAttribute&&(el.getAttribute("aria-label")||el.getAttribute("aria-labelledby")||el.getAttribute("title")||el.getAttribute("alt"))||el.labels&&el.labels.length)}
 function cand(el){if(el.tagName==="LABEL"&&(el.control||el.htmlFor||el.getAttribute("for")||el.querySelector("input,textarea,select,button")))return false;return vis(el)&&(!!role(el)||named(el)||el.isContentEditable||el.hasAttribute&&el.hasAttribute("tabindex"))}
-function gan(el,doc){var lb=el.getAttribute&&el.getAttribute("aria-labelledby");if(lb){var lbt=byIds(doc,lb);if(lbt)return lbt}var al=norm(el.getAttribute&&el.getAttribute("aria-label"));if(al)return al;var lt=labels(el,doc);if(lt)return lt;var alt=norm(el.getAttribute&&el.getAttribute("alt"));if(alt)return alt;var t=norm(el.getAttribute&&el.getAttribute("title"));if(t)return t;var tx=txt(el);if(tx)return tx;if(el.tagName==="INPUT"&&el.value)return norm(el.value);return""}
+function gan(el,doc){var lb=el.getAttribute&&el.getAttribute("aria-labelledby");if(lb){var lbt=byIds(doc,lb);if(lbt)return lbt}var al=norm(el.getAttribute&&el.getAttribute("aria-label"));if(al)return al;var lt=labels(el,doc);if(lt)return lt;var alt=norm(el.getAttribute&&el.getAttribute("alt"));if(alt)return alt;var t=norm(el.getAttribute&&el.getAttribute("title"));if(t)return t;var tx=txt(el);if(tx)return tx;if(el.tagName==="INPUT"&&/^(button|submit|reset|image)$/i.test(el.getAttribute("type")||"")&&el.value)return norm(el.value);return""}
 var n=norm(selector);var r=[];var doc=root.ownerDocument||root;var a=root.querySelectorAll("*");
 for(var i=0;i<a.length;i++){var el=a[i];if(cand(el)&&gan(el,doc)===n)r.push(el)}return r}})`;
 
@@ -47,7 +48,7 @@ let _ariaEngineRegistered = false;
 function registerAriaSelectorEngine(): void {
 	if (_ariaEngineRegistered || !_chromium) return;
 	_ariaEngineRegistered = true;
-	const { selectors } = require("patchright") as typeof import("patchright");
+	const { selectors } = require("patchright") as typeof Patchright;
 	void selectors.register("aria", ARIA_SELECTOR_ENGINE_SOURCE, { contentScript: true }).catch(err => {
 		logger.warn("Failed to register aria selector engine", { error: (err as Error).message });
 	});

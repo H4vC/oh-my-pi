@@ -168,6 +168,15 @@ describe("browser aria selector engine", () => {
 		expect(engine.queryAll(document, "Save").map(element => element.getAttribute("id"))).toEqual(["save"]);
 	});
 
+	it("does not use text input values as accessible names", () => {
+		const { document } = parseHTML('<input type="text" value="Save"><button id="real">Save</button>');
+		const engine = new Function(`return ${ARIA_SELECTOR_ENGINE_SOURCE}`)() as {
+			queryAll(root: TestDocument, selector: string): TestElement[];
+		};
+
+		expect(engine.queryAll(document, "Save").map(element => element.getAttribute("id"))).toEqual(["real"]);
+	});
+
 	it("keeps explicit roles beginning with s as aria candidates", () => {
 		const { document } = parseHTML('<div role="switch">Dark mode</div>');
 		const engine = new Function(`return ${ARIA_SELECTOR_ENGINE_SOURCE}`)() as {
