@@ -132,6 +132,10 @@ const accessibleName = element => {
 		}
 	}
 	if (labels.length) return labels.join(" ");
+	if (element.tagName === "INPUT" && /^(button|submit|reset|image)$/i.test(element.type || "")) {
+		const value = (element.value || "").trim();
+		if (value) return value;
+	}
 	return (element.getAttribute("alt") || element.getAttribute("title") || textOf(element)).trim();
 };
 const IMPLICIT_INPUT_ROLES = {

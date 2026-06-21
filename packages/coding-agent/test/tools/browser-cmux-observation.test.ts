@@ -5,6 +5,7 @@ import {
 	mapWaitUntil,
 	serializeEval,
 } from "@oh-my-pi/pi-coding-agent/tools/browser";
+import { CmuxTab } from "@oh-my-pi/pi-coding-agent/tools/browser/cmux/cmux-tab";
 import { ARIA_SELECTOR_ENGINE_SOURCE } from "@oh-my-pi/pi-coding-agent/tools/browser/launch";
 import { parseHTML } from "linkedom";
 
@@ -16,6 +17,36 @@ interface TestElement {
 interface TestDocument {
 	querySelectorAll(selector: string): TestElement[];
 	getElementById(id: string): TestElement | null;
+}
+
+interface FakeCmuxClient {
+	request(method: string, params: Record<string, unknown>): Promise<Record<string, unknown>>;
+}
+
+function cmuxTabForHtml(html: string): CmuxTab {
+	const { document } = parseHTML(html);
+	for (const element of Array.from(document.querySelectorAll("*"))) {
+		Object.defineProperty(element, "getBoundingClientRect", {
+			value: () => ({ x: 0, y: 0, width: 10, height: 10 }),
+		});
+	}
+	const client: FakeCmuxClient = {
+		async request(method, params) {
+			if (method !== "browser.eval") throw new Error(`Unexpected cmux method ${method}`);
+			const script = String(params.script || "");
+			const run = new Function("document", "getComputedStyle", "CSS", `return ${script}`) as (
+				document: TestDocument,
+				getComputedStyle: (element: TestElement) => { display: string; visibility: string },
+				css: { escape(value: string): string },
+			) => unknown;
+			return {
+				value: run(document, () => ({ display: "block", visibility: "visible" }), {
+					escape: value => value.replace(/(["\\])/g, "\\$1"),
+				}),
+			};
+		},
+	};
+	return new CmuxTab({ client: client as never, surfaceId: "test" });
 }
 
 describe("cmux browser observation mapping", () => {
@@ -96,6 +127,15 @@ describe("cmux browser RPC helpers", () => {
 		expect(mapWaitUntil("networkidle0")).toBe("complete");
 		expect(mapWaitUntil("networkidle2")).toBe("complete");
 		expect(mapWaitUntil(undefined)).toBe("complete");
+	});
+});
+
+describe("cmux selector evaluation", () => {
+	it("uses input button values as accessible names", async () => {
+		const tab = cmuxTabForHtml('<body><form><input type="submit" value="Save"></form></body>');
+
+		await expect(tab.elementExists("aria/Save")).resolves.toBe(true);
+		await expect(tab.elementExists('role=button[name="Save"]')).resolves.toBe(true);
 	});
 });
 
