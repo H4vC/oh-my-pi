@@ -18,7 +18,36 @@ let _chromium: BrowserType | undefined;
 function chromium(): BrowserType {
 	installPatchrightBunPipeSpawnPatch();
 	if (!_chromium) _chromium = require("patchright").chromium;
+	registerAriaSelectorEngine();
 	return _chromium!;
+}
+
+/**
+ * Register a custom `aria=` selector engine that matches by computed accessible
+ * name (aria-label, aria-labelledby, title, visible text, input value), replicating
+ * Puppeteer's aria query handler. Playwright's built-in `role=` engine requires a
+ * role; `text=` only matches visible text, not aria-label. This engine is needed so
+ * bare `aria/Name` selectors match icon buttons whose accessible name comes from
+ * aria-label rather than text content.
+ */
+let _ariaEngineRegistered = false;
+function registerAriaSelectorEngine(): void {
+	if (_ariaEngineRegistered || !_chromium) return;
+	_ariaEngineRegistered = true;
+	const { selectors } = require("patchright") as typeof import("patchright");
+	const source = `({queryAll(root,selector){
+function gan(el){
+var al=el.getAttribute&&el.getAttribute("aria-label");if(al)return al;
+var lb=el.getAttribute&&el.getAttribute("aria-labelledby");
+if(lb){var p=lb.split(/\\s+/).map(function(id){var e=document.getElementById(id);return e&&e.textContent&&e.textContent.trim()}).filter(Boolean);if(p.length)return p.join(" ")}
+var t=el.getAttribute&&el.getAttribute("title");if(t)return t;
+var tx=el.textContent&&el.textContent.trim();if(tx)return tx;
+if(el.tagName==="INPUT"&&el.value)return el.value;return""}
+var n=selector.trim();var r=[];var a=root.querySelectorAll("*");
+for(var i=0;i<a.length;i++){if(gan(a[i])===n)r.push(a[i])}return r}})`;
+	void selectors.register("aria", source, { contentScript: true }).catch(err => {
+		logger.warn("Failed to register aria selector engine", { error: (err as Error).message });
+	});
 }
 
 export const DEFAULT_VIEWPORT = { width: 1365, height: 768, deviceScaleFactor: 1.25 };

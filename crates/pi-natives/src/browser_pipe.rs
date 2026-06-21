@@ -124,6 +124,23 @@ mod platform {
 		pub killed:      AtomicBool,
 	}
 
+	impl Inner {
+		pub fn write_cdp(&self, bytes: &[u8]) -> Result<()> {
+			let guard = self.cdp_write.lock()
+				.map_err(|_| Error::from_reason("cdp_write lock poisoned"))?;
+			let handle = guard.ok_or_else(|| Error::from_reason("cdp_write is closed"))?;
+			write_all(handle, bytes)
+		}
+		pub fn close_cdp(&self) -> Result<()> {
+			if let Ok(mut guard) = self.cdp_write.lock() {
+				if let Some(handle) = guard.take() {
+					unsafe { CloseHandle(handle) };
+				}
+			}
+			Ok(())
+		}
+	}
+
 	unsafe impl Send for Inner {}
 	unsafe impl Sync for Inner {}
 
@@ -480,6 +497,21 @@ mod platform {
 		pub cdp_write: Mutex<Option<OwnedFd>>,
 	}
 
+	impl Inner {
+		pub fn write_cdp(&self, bytes: &[u8]) -> Result<()> {
+			let guard = self.cdp_write.lock()
+				.map_err(|_| Error::from_reason("cdp_write lock poisoned"))?;
+			let handle = guard.as_ref().ok_or_else(|| Error::from_reason("cdp_write is closed"))?;
+			write_all(handle, bytes)
+		}
+		pub fn close_cdp(&self) -> Result<()> {
+			if let Ok(mut guard) = self.cdp_write.lock() {
+				guard.take();
+			}
+			Ok(())
+		}
+	}
+
 	pub fn spawn(
 		options: PatchrightPipeSpawnOptions,
 	) -> Result<(Arc<Inner>, OwnedFd, OwnedFd, OwnedFd)> {
@@ -552,21 +584,19 @@ mod platform {
 	}
 
 	pub fn kill(inner: &Inner) -> Result<()> {
-		let mut guard = inner
-			.child
-			.lock()
-			.map_err(|_| Error::from_reason("process lock poisoned"))?;
-		if let Some(child) = guard.as_mut() {
-			child
-				.kill()
-				.map_err(|err| Error::from_reason(format!("kill failed: {err}")))?;
+		// Send SIGTERM directly via pid — don't lock inner.child, which is held
+		// by wait_exit() until the process actually exits. Locking here would
+		// deadlock forced cleanup when the browser is unresponsive.
+		if inner.pid > 0 && unsafe { libc::kill(inner.pid as i32, libc::SIGTERM) } != 0 {
+			return Err(last_error("kill"));
 		}
 		Ok(())
 	}
 
 	pub fn wait_exit(inner: Arc<Inner>) -> Option<u32> {
-		let mut guard = inner.child.lock().ok()?;
-		let mut child = guard.take()?;
+		// Take the child out of the mutex, then wait without holding the lock
+		// so kill() can run concurrently.
+		let mut child = inner.child.lock().ok()?.take()?;
 		let status = child.wait().ok()?;
 		status.code().and_then(|code| u32::try_from(code).ok())
 	}
@@ -616,6 +646,15 @@ mod platform {
 
 	pub struct Inner {
 		pub pid: u32,
+	}
+
+	impl Inner {
+		pub fn write_cdp(&self, _bytes: &[u8]) -> Result<()> {
+			Err(Error::from_reason("unsupported platform"))
+		}
+		pub fn close_cdp(&self) -> Result<()> {
+			Err(Error::from_reason("unsupported platform"))
+		}
 	}
 
 	pub fn spawn(_options: PatchrightPipeSpawnOptions) -> Result<(Arc<Inner>, (), (), ())> {
@@ -681,64 +720,12 @@ impl PatchrightPipeProcess {
 			Either::A(text) => text.into_bytes(),
 			Either::B(bytes) => bytes.to_vec(),
 		};
-		#[cfg(target_os = "windows")]
-		{
-			let guard = self
-				.inner
-				.cdp_write
-				.lock()
-				.map_err(|_| Error::from_reason("patchright pipe writer lock poisoned"))?;
-			let handle =
-				guard.ok_or_else(|| Error::from_reason("patchright pipe writer is closed"))?;
-			platform::write_all(handle, &bytes)
-		}
-		#[cfg(unix)]
-		{
-			let guard = self
-				.inner
-				.cdp_write
-				.lock()
-				.map_err(|_| Error::from_reason("patchright pipe writer lock poisoned"))?;
-			let handle = guard
-				.as_ref()
-				.ok_or_else(|| Error::from_reason("patchright pipe writer is closed"))?;
-			platform::write_all(handle, &bytes)
-		}
-		#[cfg(not(any(target_os = "windows", unix)))]
-		{
-			let _ = bytes;
-			platform::write_all((), &[])
-		}
+		self.inner.write_cdp(&bytes)
 	}
 
 	#[napi]
 	pub fn close_stdin(&self) -> Result<()> {
-		#[cfg(target_os = "windows")]
-		{
-			let mut guard = self
-				.inner
-				.cdp_write
-				.lock()
-				.map_err(|_| Error::from_reason("patchright pipe writer lock poisoned"))?;
-			if let Some(handle) = guard.take() {
-				unsafe { windows_sys::Win32::Foundation::CloseHandle(handle) };
-			}
-			Ok(())
-		}
-		#[cfg(unix)]
-		{
-			let mut guard = self
-				.inner
-				.cdp_write
-				.lock()
-				.map_err(|_| Error::from_reason("patchright pipe writer lock poisoned"))?;
-			let _ = guard.take();
-			Ok(())
-		}
-		#[cfg(not(any(target_os = "windows", unix)))]
-		{
-			Ok(())
-		}
+		self.inner.close_cdp()
 	}
 
 	#[napi]

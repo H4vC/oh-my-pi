@@ -121,8 +121,8 @@ function normalizeSelector(selector: string): string {
 			const escaped = accessibleName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 			return `role=${role}[name="${escaped}"]`;
 		}
-		// No role prefix — just match by accessible name via text= as a fallback.
-		return `text=${accessibleName}`;
+		// No role prefix — match by accessible name via the custom aria= engine.
+		return `aria=${accessibleName}`;
 	}
 	return selector;
 }
@@ -272,12 +272,7 @@ async function isClickActionable(handle: ElementHandle): Promise<ActionabilityRe
 	})) as ActionabilityResult;
 }
 
-async function clickQueryHandlerText(
-	page: Page,
-	selector: string,
-	timeoutMs: number,
-	signal?: AbortSignal,
-): Promise<void> {
+async function clickQueryHandler(page: Page, selector: string, timeoutMs: number, signal?: AbortSignal): Promise<void> {
 	const timeoutSignal = AbortSignal.timeout(timeoutMs);
 	const clickSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 	const start = Date.now();
@@ -934,7 +929,8 @@ export class WorkerCore {
 			click: selector =>
 				op(`tab.click(${JSON.stringify(selector)})`, INF, async sig => {
 					const resolved = normalizeSelector(selector);
-					if (resolved.startsWith("text=")) await clickQueryHandlerText(page, resolved, timeoutMs, sig);
+					if (resolved.startsWith("text=") || resolved.startsWith("aria="))
+						await clickQueryHandler(page, resolved, timeoutMs, sig);
 					else await untilAborted(sig, () => page.locator(resolved).click({ timeout: timeoutMs }));
 				}),
 			type: (selector, text) =>

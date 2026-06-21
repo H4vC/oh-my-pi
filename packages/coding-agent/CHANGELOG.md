@@ -9,6 +9,8 @@
 
 ### Fixed
 
+- Fixed `aria/Name` selectors (bare accessible name, no role) matching elements whose accessible name comes from `aria-label` or `aria-labelledby` rather than visible text. Previously these fell back to Playwright's `text=` engine, which only matches visible text content and silently timed out on icon buttons. A custom `aria=` selector engine (registered at first browser launch) now computes the accessible name the same way Puppeteer's aria query handler did.
+- Fixed `PatchrightPipeProcess.kill()` on Unix deadlocking with the exit-wait thread. The wait thread held `inner.child`'s mutex through `child.wait()`, blocking `kill()` from acquiring the lock and causing forced browser cleanup to hang instead of terminating Chromium. `kill()` now sends `SIGTERM` directly via `pid`; `wait_exit()` takes the child out of the mutex before waiting.
 - Fixed screenshot capability to correctly re-encode as JPEG/WebP when saving to requested path
 - Fixed `tab.id()` to prevent resolution of stale elements after navigation
 - Fixed `tab.goto()` to clear cached element references upon navigation
