@@ -59,11 +59,12 @@ export const DEFAULT_VIEWPORT = { width: 1365, height: 768, deviceScaleFactor: 1
 export const BROWSER_PROTOCOL_TIMEOUT_MS = 60_000;
 
 let chromiumExecutablePromise: Promise<string | undefined> | undefined;
+const PATCHRIGHT_INSTALL_CWD = path.resolve(import.meta.dir, "../../..");
 
 async function tryInstallPatchrightChromium(argv: string[], label: string): Promise<string | undefined> {
 	let stderr = "";
 	try {
-		const child = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe" });
+		const child = Bun.spawn(argv, { cwd: PATCHRIGHT_INSTALL_CWD, stdout: "pipe", stderr: "pipe" });
 		const [stderrText] = await Promise.all([new Response(child.stderr).text(), new Response(child.stdout).text()]);
 		stderr = stderrText;
 		const exitCode = await child.exited;
@@ -74,7 +75,10 @@ async function tryInstallPatchrightChromium(argv: string[], label: string): Prom
 }
 
 async function installPatchrightChromium(): Promise<void> {
-	const npxStderr = await tryInstallPatchrightChromium(["npx", "patchright", "install", "chromium"], "npx");
+	const npxStderr = await tryInstallPatchrightChromium(
+		["npx", "--no-install", "patchright", "install", "chromium"],
+		"npx",
+	);
 	if (npxStderr === undefined) return;
 	const nodeStderr = await tryInstallPatchrightChromium(
 		["node", "-e", "require('patchright/lib/program').program.parse(['node','patchright','install','chromium'])"],
