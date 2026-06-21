@@ -45,6 +45,8 @@ fn validate_patchright_launch(options: &PatchrightPipeSpawnOptions) -> Result<()
 			| "google-chrome-beta"
 			| "google-chrome-canary"
 			| "microsoft-edge"
+			| "com.google.chrome"
+			| "org.chromium.chromium"
 			| "msedge"
 			| "headless_shell"
 			// macOS app-bundle executables (basename after the last /)
@@ -170,12 +172,6 @@ mod platform {
 	}
 
 	pub fn spawn(
-		options: PatchrightPipeSpawnOptions,
-	) -> Result<(Arc<Inner>, HANDLE, HANDLE, HANDLE)> {
-		spawn_inner(options)
-	}
-
-	fn spawn_inner(
 		options: PatchrightPipeSpawnOptions,
 	) -> Result<(Arc<Inner>, HANDLE, HANDLE, HANDLE)> {
 		validate_patchright_launch(&options)?;
@@ -306,7 +302,7 @@ mod platform {
 		Ok(())
 	}
 
-	pub fn kill(inner: &Inner) -> Result<()> {
+	pub fn kill(inner: &Inner, _signal: Option<String>) -> Result<()> {
 		let ok = unsafe { TerminateProcess(inner.process, 1) };
 		if ok == 0 {
 			return Err(last_error("TerminateProcess"));
@@ -593,11 +589,9 @@ mod platform {
 		Ok(())
 	}
 
-	pub fn kill(inner: &Inner) -> Result<()> {
-		// Send SIGTERM directly via pid — don't lock inner.child, which is held
-		// by wait_exit() until the process actually exits. Locking here would
-		// deadlock forced cleanup when the browser is unresponsive.
-		if inner.pid > 0 && unsafe { libc::kill(inner.pid as i32, libc::SIGTERM) } != 0 {
+	pub fn kill(inner: &Inner, signal: Option<String>) -> Result<()> {
+		let signal = signal_code(signal.as_deref())?;
+		if inner.pid > 0 && unsafe { libc::kill(inner.pid as i32, signal) } != 0 {
 			return Err(last_error("kill"));
 		}
 		Ok(())
@@ -674,6 +668,20 @@ mod platform {
 		Ok(())
 	}
 
+	fn signal_code(signal: Option<&str>) -> Result<i32> {
+		match signal.unwrap_or("SIGTERM") {
+			"SIGTERM" | "TERM" => Ok(libc::SIGTERM),
+			"SIGKILL" | "KILL" => Ok(libc::SIGKILL),
+			"SIGINT" | "INT" => Ok(libc::SIGINT),
+			"SIGHUP" | "HUP" => Ok(libc::SIGHUP),
+			value => value.parse::<i32>().map_err(|_| {
+				Error::from_reason(format!(
+					"Unsupported signal for PatchrightPipeProcess.kill(): {value}"
+				))
+			}),
+		}
+	}
+
 	fn last_error(operation: &str) -> Error {
 		Error::from_reason(format!("{operation} failed: {}", io::Error::last_os_error()))
 	}
@@ -705,11 +713,7 @@ mod platform {
 		Err(Error::from_reason("PatchrightPipeProcess is only implemented on Windows and Unix"))
 	}
 
-	pub fn write_all(_handle: (), _bytes: &[u8]) -> Result<()> {
-		Err(Error::from_reason("PatchrightPipeProcess is only implemented on Windows and Unix"))
-	}
-
-	pub fn kill(_inner: &Inner) -> Result<()> {
+	pub fn kill(_inner: &Inner, _signal: Option<String>) -> Result<()> {
 		Err(Error::from_reason("PatchrightPipeProcess is only implemented on Windows and Unix"))
 	}
 
@@ -773,8 +777,8 @@ impl PatchrightPipeProcess {
 	}
 
 	#[napi]
-	pub fn kill(&self) -> Result<()> {
-		platform::kill(&self.inner)
+	pub fn kill(&self, signal: Option<String>) -> Result<()> {
+		platform::kill(&self.inner, signal)
 	}
 
 	#[napi]

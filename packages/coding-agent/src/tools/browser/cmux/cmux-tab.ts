@@ -705,36 +705,23 @@ export class CmuxTab {
 	): Promise<TResult> {
 		const spec = this.#selectorSpec(selector);
 		const nativeSelector = this.#nativeSelector(spec);
-		if (nativeSelector && action !== "select" && action !== "uploadFile") {
-			switch (action) {
-				case "click":
-					await this.#request("browser.click", { selector: nativeSelector });
-					return undefined as TResult;
-				case "dblclick":
-					await this.#request("browser.dblclick", { selector: nativeSelector });
-					return undefined as TResult;
-				case "hover":
-					await this.#request("browser.hover", { selector: nativeSelector });
-					return undefined as TResult;
-				case "focus":
-					await this.#request("browser.focus", { selector: nativeSelector });
-					return undefined as TResult;
-				case "check":
-					await this.#request("browser.check", { selector: nativeSelector });
-					return undefined as TResult;
-				case "uncheck":
-					await this.#request("browser.uncheck", { selector: nativeSelector });
-					return undefined as TResult;
-				case "type":
-					await this.#request("browser.type", { selector: nativeSelector, text: String(args.text ?? "") });
-					return undefined as TResult;
-				case "fill":
-					await this.#request("browser.fill", { selector: nativeSelector, text: String(args.value ?? "") });
-					return undefined as TResult;
-				case "scrollIntoView":
-					await this.#request("browser.scroll_into_view", { selector: nativeSelector });
-					return undefined as TResult;
-			}
+		const nativeMethod = {
+			click: "browser.click",
+			dblclick: "browser.dblclick",
+			hover: "browser.hover",
+			focus: "browser.focus",
+			check: "browser.check",
+			uncheck: "browser.uncheck",
+			type: "browser.type",
+			fill: "browser.fill",
+			scrollIntoView: "browser.scroll_into_view",
+		}[action];
+		if (nativeSelector && nativeMethod) {
+			const params: Record<string, unknown> = { selector: nativeSelector };
+			if (action === "type") params.text = String(args.text ?? "");
+			else if (action === "fill") params.text = String(args.value ?? "");
+			await this.#request(nativeMethod, params);
+			return undefined as TResult;
 		}
 		return await this.#evalSelectorAction<TResult>(spec, action, args);
 	}

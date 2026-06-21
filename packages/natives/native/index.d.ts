@@ -44,7 +44,7 @@ export declare class PatchrightPipeProcess {
   get pid(): number
   write(data: string | Uint8Array): void
   closeStdin(): void
-  kill(): void
+  kill(signal?: string | undefined | null): void
   onData(callback: (err: null | Error, data: Uint8Array) => void): void
   onStdout(callback: (err: null | Error, data: Uint8Array) => void): void
   onStderr(callback: (err: null | Error, data: Uint8Array) => void): void

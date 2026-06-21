@@ -11,7 +11,7 @@ interface NativePatchrightPipeProcess {
 	readonly pid: number;
 	write(data: string | Uint8Array): void;
 	closeStdin(): void;
-	kill(): void;
+	kill(signal?: string): void;
 	onData(callback: (err: Error | null, data: Uint8Array) => void): void;
 	onStdout(callback: (err: Error | null, data: Uint8Array) => void): void;
 	onStderr(callback: (err: Error | null, data: Uint8Array) => void): void;
@@ -132,10 +132,13 @@ class NativeBrowserChildProcess extends EventEmitter {
 		});
 	}
 
-	kill(_signal?: NodeJS.Signals | number): boolean {
-		if (this.killed) return false;
+	kill(signal?: NodeJS.Signals | number): boolean {
+		const requestedSignal = signal ?? "SIGTERM";
+		const hardKill = requestedSignal === "SIGKILL" || requestedSignal === 9;
+		if (this.killed && !hardKill) return false;
 		this.killed = true;
-		this.process.kill();
+		this.signalCode = typeof requestedSignal === "string" ? requestedSignal : null;
+		this.process.kill(String(requestedSignal));
 		return true;
 	}
 
