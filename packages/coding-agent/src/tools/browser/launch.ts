@@ -243,7 +243,7 @@ export interface LaunchHeadlessOptions {
  * is available (better fingerprint than Chromium), and fall back to the bundled
  * Chromium otherwise.
  */
-export async function launchHeadlessBrowser(opts: LaunchHeadlessOptions): Promise<BrowserServer | Browser> {
+export async function launchHeadlessBrowser(opts: LaunchHeadlessOptions): Promise<BrowserServer> {
 	const vp = opts.viewport ?? DEFAULT_VIEWPORT;
 	const executablePath = await ensureChromiumExecutable();
 	const launchArgs = ["--no-sandbox", "--disable-setuid-sandbox", `--window-size=${vp.width},${vp.height}`];
@@ -264,7 +264,14 @@ export async function launchHeadlessBrowser(opts: LaunchHeadlessOptions): Promis
 	}
 
 	const sysChrome = resolveSystemChromium();
-	const launchOptions = {
+	// Always use launchServer so isolated tab workers can connect via
+	// chromium.connect(wsEndpoint()). Using launch() under Bun was a workaround
+	// for the pipe transport issue, but it returns a Browser without wsEndpoint(),
+	// forcing the inline worker path (headlessDirect) which runs user JS on the
+	// main thread — a synchronous loop or CPU-bound snippet can't be interrupted
+	// by the browser timeout and hangs the whole agent/TUI. The native pipe patch
+	// (patchright-bun-pipe.ts) handles the pipe transport issue under Bun now.
+	return await chromium().launchServer({
 		headless: opts.headless,
 		// When using a system Chrome, use channel "chrome" for the best fingerprint.
 		// Otherwise let patchright use its bundled Chromium.
@@ -272,13 +279,7 @@ export async function launchHeadlessBrowser(opts: LaunchHeadlessOptions): Promis
 		executablePath,
 		args: launchArgs,
 		timeout: BROWSER_PROTOCOL_TIMEOUT_MS,
-	};
-	if (process.versions.bun) {
-		return await chromium().launch(launchOptions);
-	}
-	// Use launchServer where reliable so isolated tab workers can connect via chromium.connect(wsEndpoint).
-	// Playwright's Browser (from launch()) doesn't expose wsEndpoint(); BrowserServer does.
-	return await chromium().launchServer(launchOptions);
+	});
 }
 
 /**

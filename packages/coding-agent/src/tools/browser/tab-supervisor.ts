@@ -210,7 +210,7 @@ async function acquireTabImpl(
 	let worker: WorkerHandle;
 	try {
 		initPayload = await buildInitPayload(browser, opts);
-		worker = initPayload.mode === "headlessDirect" ? await spawnInlineWorker() : await spawnTabWorker();
+		worker = await spawnTabWorker();
 	} catch (error) {
 		// Failing before the worker took its own hold must release the
 		// temporary one, or the browser's refCount never reaches 0 again.
@@ -482,19 +482,9 @@ function isLastSurfaceCloseError(err: unknown): boolean {
 async function buildInitPayload(browser: PuppeteerBrowserHandle, opts: AcquireTabOptions): Promise<WorkerInitPayload> {
 	const safeDir = getPuppeteerDir();
 	if (browser.kind.kind === "headless") {
-		if ("isConnected" in browser.browser) {
-			return {
-				mode: "headlessDirect",
-				browser: browser.browser,
-				safeDir,
-				viewport: opts.viewport,
-				dialogs: opts.dialogs,
-				url: opts.url,
-				waitUntil: opts.waitUntil,
-				timeoutMs: opts.timeoutMs,
-			};
-		}
-		// BrowserServer exposes wsEndpoint(); Browser doesn't.
+		// launchHeadlessBrowser always uses launchServer(), so browser is a
+		// BrowserServer with wsEndpoint(). The worker connects via chromium.connect()
+		// and runs in an isolated Bun Worker — never on the main thread.
 		const server = browser.browser as BrowserServer;
 		const endpoint = server.wsEndpoint();
 		if (!endpoint) throw new ToolError("Browser websocket endpoint is unavailable");

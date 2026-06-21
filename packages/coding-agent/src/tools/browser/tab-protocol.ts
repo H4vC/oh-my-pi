@@ -1,5 +1,5 @@
 import type { ImageContent, TextContent } from "@oh-my-pi/pi-ai";
-import type { Browser } from "patchright";
+
 
 export type Transferable = Bun.Transferable;
 
@@ -55,16 +55,7 @@ export type WorkerInitPayload =
 			waitUntil?: "load" | "domcontentloaded" | "networkidle0" | "networkidle2";
 			timeoutMs: number;
 	  }
-	| {
-			mode: "headlessDirect";
-			browser: Browser;
-			safeDir: string;
-			viewport?: { width: number; height: number; deviceScaleFactor?: number };
-			dialogs?: "accept" | "dismiss";
-			url?: string;
-			waitUntil?: "load" | "domcontentloaded" | "networkidle0" | "networkidle2";
-			timeoutMs: number;
-	  }
+
 	| {
 			mode: "attach";
 			/** CDP URL (http://host:port) for connectOverCDP */

@@ -51,7 +51,7 @@ fn validate_patchright_launch(options: &PatchrightPipeSpawnOptions) -> Result<()
 			| "google chrome"
 			| "google chrome beta"
 			| "google chrome canary"
-			| "microsoft edge"
+			| "google chrome dev"
 	) || command.contains("\\patchright\\")
 		|| command.contains("/patchright/")
 		|| command.contains("ms-playwright");
