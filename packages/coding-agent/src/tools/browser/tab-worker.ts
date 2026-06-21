@@ -91,34 +91,29 @@ interface TabApi {
 
 function normalizeSelector(selector: string): string {
 	if (!selector) return selector;
-	// Reject unknown p- prefixes (only the documented legacy ones are translated).
 	if (selector.startsWith("p-") && !LEGACY_SELECTOR_PREFIXES.some(prefix => selector.startsWith(prefix))) {
 		throw new ToolError(
 			`Unsupported selector prefix. Use CSS or query handlers (aria/, text/, xpath/, pierce/). Got: ${selector}`,
 		);
 	}
-	// Translate legacy slash selectors to Playwright engine= syntax.
-	if (selector.startsWith("p-text/")) return `text=${selector.slice("p-text/".length)}`;
-	if (selector.startsWith("text/")) return `text=${selector.slice("text/".length)}`;
-	if (selector.startsWith("p-xpath/")) return `xpath=${selector.slice("p-xpath/".length)}`;
-	if (selector.startsWith("xpath/")) return `xpath=${selector.slice("xpath/".length)}`;
-	if (selector.startsWith("p-pierce/")) return selector.slice("p-pierce/".length);
-	if (selector.startsWith("pierce/")) return selector.slice("pierce/".length);
+	for (const [prefix, replacement] of [
+		["p-text/", "text="],
+		["text/", "text="],
+		["p-xpath/", "xpath="],
+		["xpath/", "xpath="],
+		["p-pierce/", ""],
+		["pierce/", ""],
+	] as const) {
+		if (selector.startsWith(prefix)) return `${replacement}${selector.slice(prefix.length)}`;
+	}
 	if (selector.startsWith("p-aria/") || selector.startsWith("aria/")) {
-		const rest = selector.startsWith("p-aria/") ? selector.slice("p-aria/".length) : selector.slice("aria/".length);
+		const rest = selector.slice(selector.indexOf("/") + 1);
 		const nameMatch = rest.match(/\[\s*name\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\]]+))\s*\]/);
-		const name = nameMatch?.[1] ?? nameMatch?.[2] ?? nameMatch?.[3];
-		const accessibleName = (name ?? rest).trim();
-		// Only infer role when followed by [name= (not a bare word like "Save").
-		const roleMatch = rest.match(/^(\w+)\s*\[\s*name\s*=/);
-		const role = roleMatch?.[1];
-		if (role) {
-			// Escape backslashes and double quotes for Playwright's [name="..."] syntax.
-			const escaped = accessibleName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-			return `role=${role}[name="${escaped}"]`;
-		}
-		// No role prefix — match by accessible name via the custom aria= engine.
-		return `aria=${accessibleName}`;
+		const accessibleName = (nameMatch?.[1] ?? nameMatch?.[2] ?? nameMatch?.[3] ?? rest).trim();
+		const role = rest.match(/^(\w+)\s*\[\s*name\s*=/)?.[1];
+		if (!role) return `aria=${accessibleName}`;
+		const escaped = accessibleName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+		return `role=${role}[name="${escaped}"]`;
 	}
 	return selector;
 }

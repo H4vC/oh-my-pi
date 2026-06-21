@@ -48,12 +48,6 @@ interface RunContext {
 type WaitUntil = "load" | "domcontentloaded" | "networkidle0" | "networkidle2";
 type DragTarget = string | { readonly x: number; readonly y: number };
 
-interface CachedElementRef {
-	ref: string;
-	name?: string;
-	role?: string;
-}
-
 interface BoundingBox {
 	x: number;
 	y: number;
@@ -309,7 +303,7 @@ export class CmuxTab {
 	#lastViewport: ReadyInfo["viewport"] = DEFAULT_VIEWPORT;
 	#runContext: RunContext | undefined;
 	#runtime: JsRuntime | undefined;
-	readonly #elementRefs = new Map<string, CachedElementRef>();
+	readonly #elementRefs = new Map<string, string>();
 	#pageFacade: CmuxPageFacade | undefined;
 	#browserFacade: CmuxBrowserFacade | undefined;
 	constructor(opts: { client: CmuxSocketClient; surfaceId: string; url?: string; title?: string }) {
@@ -607,12 +601,12 @@ export class CmuxTab {
 	}
 
 	async id(id: string): Promise<CmuxElementHandle> {
-		const cached = this.#elementRefs.get(id);
-		if (!cached) {
+		const ref = this.#elementRefs.get(id);
+		if (!ref) {
 			throw new ToolError(`Unknown element id ${id}. Run tab.observe() to refresh the element list.`);
 		}
-		await this.#waitForSelector(cached.ref, this.#runContext?.timeoutMs ?? 30_000);
-		return new CmuxElementHandle(this, cached.ref);
+		await this.#waitForSelector(ref, this.#runContext?.timeoutMs ?? 30_000);
+		return new CmuxElementHandle(this, ref);
 	}
 
 	ensureRuntime(session: SessionSnapshot): JsRuntime {
@@ -933,11 +927,7 @@ export class CmuxTab {
 	#rememberObservedElements(observation: Observation): void {
 		this.#elementRefs.clear();
 		for (const element of observation.elements) {
-			this.#elementRefs.set(element.id, {
-				ref: `@${element.id}`,
-				name: element.name,
-				role: element.role,
-			});
+			this.#elementRefs.set(element.id, `@${element.id}`);
 		}
 	}
 

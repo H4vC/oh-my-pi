@@ -625,17 +625,50 @@ mod platform {
 
 	fn pipe() -> Result<(OwnedFd, OwnedFd)> {
 		let mut fds = [0; 2];
+		create_pipe(&mut fds)?;
+		let read = unsafe { OwnedFd::from_raw_fd(fds[0]) };
+		let write = unsafe { OwnedFd::from_raw_fd(fds[1]) };
+		Ok((read, write))
+	}
+
+	#[cfg(any(target_os = "linux", target_os = "android"))]
+	fn create_pipe(fds: &mut [i32; 2]) -> Result<()> {
+		if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+			return Err(last_error("pipe2"));
+		}
+		Ok(())
+	}
+
+	#[cfg(not(any(target_os = "linux", target_os = "android")))]
+	fn create_pipe(fds: &mut [i32; 2]) -> Result<()> {
 		if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
 			return Err(last_error("pipe"));
 		}
-		Ok(unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) })
+		set_cloexec(fds[0], true)
+			.map_err(|err| Error::from_reason(format!("fcntl failed: {err}")))?;
+		set_cloexec(fds[1], true)
+			.map_err(|err| Error::from_reason(format!("fcntl failed: {err}")))?;
+		Ok(())
 	}
 
 	fn dup_to(source: i32, target: i32) -> io::Result<()> {
-		if source == target {
-			return Ok(());
+		if source != target && unsafe { libc::dup2(source, target) } < 0 {
+			return Err(io::Error::last_os_error());
 		}
-		if unsafe { libc::dup2(source, target) } < 0 {
+		set_cloexec(target, false)
+	}
+
+	fn set_cloexec(fd: i32, enabled: bool) -> io::Result<()> {
+		let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+		if flags < 0 {
+			return Err(io::Error::last_os_error());
+		}
+		let next = if enabled {
+			flags | libc::FD_CLOEXEC
+		} else {
+			flags & !libc::FD_CLOEXEC
+		};
+		if unsafe { libc::fcntl(fd, libc::F_SETFD, next) } < 0 {
 			return Err(io::Error::last_os_error());
 		}
 		Ok(())

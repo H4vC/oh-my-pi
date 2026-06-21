@@ -50,72 +50,31 @@ function registerAriaSelectorEngine(): void {
 
 export const DEFAULT_VIEWPORT = { width: 1365, height: 768, deviceScaleFactor: 1.25 };
 
-/**
- * Per-CDP-message timeout applied to every patchright launch/connect. Set above
- * `TOOL_TIMEOUTS.browser.max` (30s) so the agent-side wall-clock is the canonical
- * limit; this constant only catches genuinely stuck CDP sockets (renderer wedged,
- * connection dropped, etc.).
- */
 export const BROWSER_PROTOCOL_TIMEOUT_MS = 60_000;
-
-/**
- * Patchright (patched Playwright) provides built-in undetectable stealth:
- * Runtime.enable leak avoidance, Console.enable disable, command-flag leak
- * fixes, and closed shadow root support. No custom injection scripts needed.
- *
- * @see https://github.com/Kaliiiiiiiiii-Vinyzu/patchright
- */
 
 let chromiumExecutablePromise: Promise<string | undefined> | undefined;
 
-/**
- * Resolve a Chromium executable to use for headless launch.
- *
- * Priority: system Chrome/Chromium > PUPPETEER_EXECUTABLE_PATH env >
- * patchright's bundled Chromium (auto-downloaded on first use).
- *
- * Patchright bundles its own Chromium via `npx patchright install chromium`.
- * We still detect system Chrome for cases where the bundled browser hasn't been
- * downloaded yet or the user prefers their installed Chrome (better fingerprint).
- */
-/**
- * Download Patchright's bundled Chromium. Tries multiple strategies so this
- * works on npm installs (npx), standalone binaries (node + patchright CLI), and
- * Bun-only hosts. Throws ToolError with an actionable message if all fail.
- */
-async function installPatchrightChromium(): Promise<void> {
-	// Strategy 1: npx patchright install chromium (npm-based installs).
-	// Bun.spawn throws synchronously if npx is not on PATH, so catch and
-	// fall through to the node strategy instead of crashing.
-	let npxStderr = "";
+async function tryInstallPatchrightChromium(argv: string[], label: string): Promise<string | undefined> {
+	let stderr = "";
 	try {
-		const child = Bun.spawn(["npx", "patchright", "install", "chromium"], {
-			stdout: "pipe",
-			stderr: "pipe",
-		});
-		// Drain both stdout and stderr concurrently — if stdout fills the pipe
-		// buffer, the child blocks on write and never exits.
-		const [stderr] = await Promise.all([new Response(child.stderr).text(), new Response(child.stdout).text()]);
-		npxStderr = stderr;
+		const child = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe" });
+		const [stderrText] = await Promise.all([new Response(child.stderr).text(), new Response(child.stdout).text()]);
+		stderr = stderrText;
 		const exitCode = await child.exited;
-		if (exitCode === 0) return;
-		logger.warn("npx patchright install failed", { exitCode, stderr: npxStderr.slice(-500) });
+		if (exitCode === 0) return undefined;
+		logger.warn(`${label} patchright install failed`, { exitCode, stderr: stderr.slice(-500) });
 	} catch {}
+	return stderr;
+}
 
-	// Strategy 2: node with patchright CLI module (binary installs where node exists)
-	let nodeStderr = "";
-	try {
-		const child2 = Bun.spawn(
-			["node", "-e", "require('patchright/lib/program').program.parse(['node','patchright','install','chromium'])"],
-			{ stdout: "pipe", stderr: "pipe" },
-		);
-		const [stderr2] = await Promise.all([new Response(child2.stderr).text(), new Response(child2.stdout).text()]);
-		nodeStderr = stderr2;
-		const exit2 = await child2.exited;
-		if (exit2 === 0) return;
-		logger.warn("node patchright install failed", { exitCode: exit2, stderr: nodeStderr.slice(-500) });
-	} catch {}
-
+async function installPatchrightChromium(): Promise<void> {
+	const npxStderr = await tryInstallPatchrightChromium(["npx", "patchright", "install", "chromium"], "npx");
+	if (npxStderr === undefined) return;
+	const nodeStderr = await tryInstallPatchrightChromium(
+		["node", "-e", "require('patchright/lib/program').program.parse(['node','patchright','install','chromium'])"],
+		"node",
+	);
+	if (nodeStderr === undefined) return;
 	throw new ToolError(
 		"Failed to install Chromium for patchright. " +
 			"Set PUPPETEER_EXECUTABLE_PATH to use an existing Chrome/Chromium binary, " +

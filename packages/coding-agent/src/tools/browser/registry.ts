@@ -211,37 +211,20 @@ async function disposeBrowserHandle(handle: BrowserHandle, opts: { kill: boolean
 		handle.client.close();
 		return;
 	}
-	if (handle.kind.kind === "headless") {
-		if (browserAlive(handle.browser)) {
-			try {
-				// BrowserServer.close() kills the server process; Browser has no close on server.
-				if ("close" in handle.browser) await (handle.browser as BrowserServer).close();
-			} catch (err) {
-				logger.debug("Failed to close headless browser server", { error: (err as Error).message });
-			}
-		}
-		return;
-	}
-	if (handle.kind.kind === "connected") {
-		// CDP-attached browser: browser.close() disconnects the CDP client
-		// without killing the user's browser or its pages (tested). Without it,
-		// the WebSocket connection leaks.
-		if (browserAlive(handle.browser)) {
-			try {
-				await (handle.browser as Browser).close();
-			} catch (err) {
-				logger.debug("Failed to disconnect from CDP-attached browser", { error: (err as Error).message });
-			}
-		}
-		return;
-	}
-	// Spawned (app.path): close the CDP connection, then kill the process if requested.
-	if (browserAlive(handle.browser)) {
+	const closeIfAlive = async (label: string): Promise<void> => {
+		if (!browserAlive(handle.browser)) return;
 		try {
-			await (handle.browser as Browser).close();
+			await (handle.browser as Browser | BrowserServer).close();
 		} catch (err) {
-			logger.debug("Failed to disconnect from spawned browser", { error: (err as Error).message });
+			logger.debug(`Failed to ${label}`, { error: (err as Error).message });
 		}
+	};
+	if (handle.kind.kind === "headless") {
+		await closeIfAlive("close headless browser server");
+		return;
 	}
-	if (opts.kill && handle.pid !== undefined) await gracefulKillTreeOnce(handle.pid);
+	await closeIfAlive(
+		handle.kind.kind === "connected" ? "disconnect from CDP-attached browser" : "disconnect from spawned browser",
+	);
+	if (handle.kind.kind === "spawned" && opts.kill && handle.pid !== undefined) await gracefulKillTreeOnce(handle.pid);
 }
