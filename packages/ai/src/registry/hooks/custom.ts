@@ -7,6 +7,7 @@ import type { Lazy, LoginHook, RefreshHook } from "./types";
 export const CUSTOM_LOGIN_HOOKS: Record<string, Lazy<LoginHook>> = {
 	"github-copilot": () => import("../oauth/github-copilot").then(module => module.loginGitHubCopilotHook),
 	cursor: () => import("../oauth/cursor").then(module => module.loginCursorHook),
+	meta: () => import("../oauth/meta").then(module => module.loginMetaHook),
 	perplexity: () => import("../oauth/perplexity").then(module => module.loginPerplexity),
 };
 export const CUSTOM_REFRESH_HOOKS: Record<string, Lazy<RefreshHook>> = {

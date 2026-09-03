@@ -1,9 +1,7 @@
 auth "meta" {
 	name "Meta Model API"
-	login "api-key" {
-		auth-url "https://developer.meta.com/ai/"
-		instructions "Create or copy your key from the Meta Model API dashboard"
-		prompt "Paste your Meta Model API key" placeholder="Model API key"
-		validate "models-endpoint" url="https://api.meta.ai/v1/models"
-	}
+	// Muse-Code-style login, implemented by the `meta` custom hook in
+	// @oh-my-pi/pi-ai: browser sign-in (device flow + Model API key mint) or
+	// pasting a dashboard key (MMA accounts and CI cannot use browser sign-in).
+	login "custom" hook="meta"
 }

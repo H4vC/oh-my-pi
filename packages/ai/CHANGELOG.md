@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Meta Model API `/login` now offers Muse-style browser sign-in (Meta account device flow plus Model API key mint) alongside pasting a dashboard key.
+
 ## [18.1.6] - 2026-09-03
 
 ### Breaking Changes

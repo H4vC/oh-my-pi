@@ -16292,15 +16292,8 @@
 				"apiKeyFormat": "bearer",
 				"name": "Meta Model API",
 				"login": {
-					"kind": "api-key",
-					"authUrl": "https://developer.meta.com/ai/",
-					"instructions": "Create or copy your key from the Meta Model API dashboard",
-					"prompt": "Paste your Meta Model API key",
-					"placeholder": "Model API key",
-					"validate": {
-						"kind": "models-endpoint",
-						"url": "https://api.meta.ai/v1/models"
-					}
+					"kind": "custom",
+					"hook": "meta"
 				}
 			},
 			{

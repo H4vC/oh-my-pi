@@ -44,12 +44,17 @@ describe("Meta Model API Responses requests", () => {
 });
 
 describe("Meta Model API login", () => {
-	test("validates pasted keys against the models endpoint without running inference", async () => {
+	test("paste menu option validates the key against the models endpoint without running inference", async () => {
 		let requestedUrl = "";
 		let authorization = "";
+		let promptCount = 0;
 		const apiKey = await loginMeta({
 			onAuth: () => {},
-			onPrompt: async () => " meta-test-key ",
+			onPrompt: async () => {
+				promptCount += 1;
+				// First prompt is the method menu; pick paste, then supply the key.
+				return promptCount === 1 ? "2" : " meta-test-key ";
+			},
 			fetch: (input, init) => {
 				requestedUrl = String(input);
 				authorization = new Headers(init?.headers).get("Authorization") ?? "";
@@ -58,6 +63,7 @@ describe("Meta Model API login", () => {
 		});
 
 		expect(apiKey).toBe("meta-test-key");
+		expect(promptCount).toBe(2);
 		expect(requestedUrl).toBe("https://api.meta.ai/v1/models");
 		expect(authorization).toBe("Bearer meta-test-key");
 	});

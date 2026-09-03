@@ -24,6 +24,8 @@ export type OAuthErrorKind =
 	| "configuration"
 	/** Cloud project provisioning / onboarding (loadCodeAssist, onboardUser). */
 	| "provisioning"
+	/** Subscription/payment gate: plan required, upgrade/purchase needed (require_payment). */
+	| "entitlement"
 	/** OIDC / endpoint discovery failed. */
 	| "discovery";
 
