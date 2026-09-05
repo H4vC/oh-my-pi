@@ -115,12 +115,12 @@ function omitUnusedOptionalArgs(args: MCPToolArgs, inputSchema: MCPToolDefinitio
  * carries `i`. The MCP boundary is the authoritative guard so callers don't
  * have to pre-strip.
  *
- * Leaves `i` in place when the server's own `inputSchema.properties` declares
- * it, so a server that legitimately uses `i` as a parameter is unaffected.
+ * Leaves `i` in place when the server schema branch selected by the current
+ * arguments declares it, so a server that legitimately uses `i` is unaffected.
  */
 function stripHarnessIntent(args: MCPToolArgs, inputSchema: MCPToolDefinition["inputSchema"]): MCPToolArgs {
 	if (!Object.hasOwn(args, INTENT_FIELD)) return args;
-	if (schemaDeclaresProperty(inputSchema, INTENT_FIELD)) return args;
+	if (schemaDeclaresProperty(inputSchema, INTENT_FIELD, args)) return args;
 	const { [INTENT_FIELD]: _intent, ...rest } = args;
 	return rest;
 }

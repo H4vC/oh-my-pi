@@ -188,7 +188,7 @@ describe("MCP tool arguments", () => {
 		expect(calls).toEqual([{ method: "tools/call", params: { name: "echo", arguments: { i: "hello" } } }]);
 	});
 
-	it("preserves `i` when declared inside schema combinators (oneOf / anyOf)", async () => {
+	it("preserves `i` only for the selected schema combinator branch", async () => {
 		const calls: CapturedRequest[] = [];
 		const definition: MCPToolDefinition = {
 			name: "combinator_echo",
@@ -200,10 +200,13 @@ describe("MCP tool arguments", () => {
 						type: "object",
 						properties: { i: { type: "string" } },
 						required: ["i"],
+						additionalProperties: false,
 					},
 					{
 						type: "object",
 						properties: { count: { type: "number" } },
+						required: ["count"],
+						additionalProperties: false,
 					},
 				],
 			},
@@ -211,9 +214,11 @@ describe("MCP tool arguments", () => {
 		const tool = new MCPTool(createCapturedConnection(calls), definition);
 
 		await tool.execute("call-1", { i: "branch-value" }, undefined, unusedContext, undefined);
+		await tool.execute("call-2", { count: 1, i: "py prelude" }, undefined, unusedContext, undefined);
 
 		expect(calls).toEqual([
 			{ method: "tools/call", params: { name: "combinator_echo", arguments: { i: "branch-value" } } },
+			{ method: "tools/call", params: { name: "combinator_echo", arguments: { count: 1 } } },
 		]);
 	});
 

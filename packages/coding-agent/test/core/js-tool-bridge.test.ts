@@ -211,10 +211,28 @@ describe("callSessionTool", () => {
 			undefined,
 		);
 
+		await callSessionTool("one_of_tool", { other: 1, i: "py prelude" }, { session });
+		expect(executeOneOf).toHaveBeenLastCalledWith(
+			expect.stringMatching(/^js-one_of_tool-/),
+			{ other: 1, i: "py prelude" },
+			undefined,
+			undefined,
+			undefined,
+		);
+
 		await callSessionTool("ark_or_tool", { i: "ark-or-value" }, { session });
 		expect(executeArkOr).toHaveBeenCalledWith(
 			expect.stringMatching(/^js-ark_or_tool-/),
 			{ i: "ark-or-value" },
+			undefined,
+			undefined,
+			undefined,
+		);
+
+		await callSessionTool("ark_or_tool", { count: 1, i: "py prelude" }, { session });
+		expect(executeArkOr).toHaveBeenLastCalledWith(
+			expect.stringMatching(/^js-ark_or_tool-/),
+			{ count: 1, i: "py prelude" },
 			undefined,
 			undefined,
 			undefined,

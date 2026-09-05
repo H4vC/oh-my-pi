@@ -1,5 +1,6 @@
 import { type AgentTool, type AgentToolResult, validateToolArgumentsForDispatch } from "@oh-my-pi/pi-agent-core";
 import { toolWireSchema } from "@oh-my-pi/pi-ai";
+import { dereferenceJsonSchema, isJsonSchemaValueValid } from "@oh-my-pi/pi-ai/utils/schema";
 import { isRecord } from "@oh-my-pi/pi-utils";
 import { INTENT_FIELD } from "@oh-my-pi/pi-wire";
 import type { ToolSession } from "../../tools";
@@ -73,52 +74,80 @@ function getTool(session: ToolSession, name: string): AgentTool {
 	return tool;
 }
 
-export function schemaDeclaresProperty(schema: unknown, property: string, visited: Set<unknown> = new Set()): boolean {
+const UNION_SCHEMA_KEYS = ["oneOf", "anyOf"] as const;
+
+function schemaBranchDeclaresProperty(
+	schema: unknown,
+	property: string,
+	value: unknown,
+	visited: Set<unknown>,
+): boolean {
 	if (!isRecord(schema) || visited.has(schema)) return false;
 	visited.add(schema);
+	try {
+		const properties = schema.properties;
+		if (isRecord(properties) && Object.hasOwn(properties, property)) return true;
 
-	const properties = schema.properties;
-	if (isRecord(properties) && Object.hasOwn(properties, property)) {
-		return true;
-	}
-
-	for (const key of ["oneOf", "anyOf", "allOf"] as const) {
-		const branches = schema[key];
-		if (Array.isArray(branches)) {
+		for (const key of UNION_SCHEMA_KEYS) {
+			const branches = schema[key];
+			if (!Array.isArray(branches)) continue;
+			let matched = false;
 			for (const branch of branches) {
-				if (schemaDeclaresProperty(branch, property, visited)) {
+				if (!isJsonSchemaValueValid(branch, value)) continue;
+				matched = true;
+				if (schemaBranchDeclaresProperty(branch, property, value, visited)) return true;
+			}
+			if (matched) continue;
+			for (const branch of branches) {
+				if (schemaBranchDeclaresProperty(branch, property, value, visited)) return true;
+			}
+		}
+
+		const allOf = schema.allOf;
+		if (Array.isArray(allOf)) {
+			for (const branch of allOf) {
+				if (schemaBranchDeclaresProperty(branch, property, value, visited)) return true;
+			}
+		}
+
+		const conditional = schema.if;
+		if (isRecord(conditional)) {
+			const branch = isJsonSchemaValueValid(conditional, value) ? schema.then : schema.else;
+			if (schemaBranchDeclaresProperty(branch, property, value, visited)) return true;
+		}
+
+		const dependentSchemas = schema.dependentSchemas;
+		if (isRecord(value) && isRecord(dependentSchemas)) {
+			for (const dependency in dependentSchemas) {
+				if (
+					Object.hasOwn(value, dependency) &&
+					schemaBranchDeclaresProperty(dependentSchemas[dependency], property, value, visited)
+				) {
 					return true;
 				}
 			}
 		}
+
+		return false;
+	} finally {
+		visited.delete(schema);
+	}
+}
+
+/** Whether the schema branch selected by `value` declares `property`. */
+export function schemaDeclaresProperty(schema: unknown, property: string, value: unknown): boolean {
+	const resolved = dereferenceJsonSchema(schema);
+	if (!isRecord(value) || !Object.hasOwn(value, property)) {
+		return schemaBranchDeclaresProperty(resolved, property, value, new Set());
 	}
 
-	for (const key of ["then", "else"] as const) {
-		const branch = schema[key];
-		if (isRecord(branch) && schemaDeclaresProperty(branch, property, visited)) {
-			return true;
-		}
-	}
-
-	const dependentSchemas = schema.dependentSchemas;
-	if (isRecord(dependentSchemas)) {
-		for (const branch of Object.values(dependentSchemas)) {
-			if (schemaDeclaresProperty(branch, property, visited)) {
-				return true;
-			}
-		}
-	}
-
-	const $defs = schema.$defs ?? schema.definitions;
-	if (isRecord($defs)) {
-		for (const def of Object.values($defs)) {
-			if (schemaDeclaresProperty(def, property, visited)) {
-				return true;
-			}
-		}
-	}
-
-	return false;
+	const withoutProperty = { ...value };
+	delete withoutProperty[property];
+	const candidate =
+		!isJsonSchemaValueValid(resolved, value) && isJsonSchemaValueValid(resolved, withoutProperty)
+			? withoutProperty
+			: value;
+	return schemaBranchDeclaresProperty(resolved, property, candidate, new Set());
 }
 
 function normalizeArgs(args: unknown, ownsIntent: boolean): unknown {
@@ -227,7 +256,7 @@ export async function callSessionTool(name: string, args: unknown, options: Tool
 		throw new ToolError(`\`${name}\` cannot run through the eval bridge; call the direct \`${name}\` tool.`);
 	}
 	const tool = getTool(options.session, name);
-	const ownsIntent = schemaDeclaresProperty(toolWireSchema(tool), INTENT_FIELD);
+	const ownsIntent = schemaDeclaresProperty(toolWireSchema(tool), INTENT_FIELD, args);
 	const normalizedArgs = normalizeArgs(args, ownsIntent);
 	const toolCallId = `js-${name}-${crypto.randomUUID()}`;
 	try {
