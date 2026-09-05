@@ -5,7 +5,8 @@ import type { Settings } from "../config/settings";
 import eagerTaskPrompt from "../prompts/system/eager-task.md" with { type: "text" };
 import eagerTodoPrompt from "../prompts/system/eager-todo.md" with { type: "text" };
 import midRunTodoNudgePrompt from "../prompts/system/mid-run-todo-nudge.md" with { type: "text" };
-import { getLatestTodoPhasesFromEntries, isTodoPhase, type TodoItem, type TodoPhase } from "../tools/todo";
+import { isTodoPhase, type TodoItem, type TodoPhase } from "../tools/todo-shape";
+import { getLatestTodoPhasesFromEntries } from "../tools/todo";
 import { buildNamedToolChoice } from "../utils/tool-choice";
 import type { AgentSessionEvent } from "./agent-session-events";
 import type { SessionManager } from "./session-manager";
@@ -50,6 +51,7 @@ export interface TodoTrackerHost {
 	model(): Model | undefined;
 	agentKind(): "main" | "sub";
 	emitSessionEvent(event: AgentSessionEvent): Promise<void>;
+	emitTodoUpdated(phases: TodoPhase[]): void;
 	scheduleAgentContinue(options: { source: string; generation?: number }): void;
 	promptGeneration(): number;
 	hasPendingAsyncWake(): boolean;
@@ -80,9 +82,12 @@ export class TodoTracker {
 		return this.#clonePhases(this.#phases);
 	}
 
-	/** Replaces todo phases with a defensive clone. */
+	/** Replaces todo phases, resets stale-progress bookkeeping, and publishes a defensive snapshot. */
 	setPhases(phases: TodoPhase[]): void {
 		this.#phases = this.#clonePhases(phases);
+		this.#mutationsSinceLastTouch = 0;
+		this.#reminderAwaitingProgress = false;
+		this.#host.emitTodoUpdated(this.#clonePhases(this.#phases));
 	}
 
 	/** Rehydrates todo phases from the current transcript branch. */

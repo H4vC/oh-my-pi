@@ -5,6 +5,7 @@ import { INTENT_FIELD } from "@oh-my-pi/pi-wire";
 import type { ToolSession } from "../../tools";
 import { ToolError } from "../../tools/tool-errors";
 import { schemaDeclaresIntentField } from "../../utils/tool-schema";
+import { isTodoPhase } from "../../tools/todo-shape";
 import { invokeEvalPrelude } from "../preludes";
 import { EVAL_AGENT_BRIDGE_NAME, type EvalAgentHandleResult, runEvalAgent } from "../agent-bridge";
 import { EVAL_BUDGET_BRIDGE_NAME, type EvalBudgetResult, runEvalBudget } from "../budget-bridge";
@@ -48,6 +49,32 @@ type ToolValue =
 function toolResultHasError(result: AgentToolResult): boolean {
 	if (isRecord(result) && result.isError === true) return true;
 	return isRecord(result.details) && result.details.isError === true;
+}
+
+function isTodoMutationOperation(value: unknown): boolean {
+	switch (value) {
+		case "init":
+		case "start":
+		case "done":
+		case "rm":
+		case "drop":
+		case "block":
+		case "unblock":
+		case "append":
+			return true;
+		default:
+			return false;
+	}
+}
+
+function persistTodoMutation(name: string, result: AgentToolResult, hasError: boolean, session: ToolSession): void {
+	if (name !== "todo" || hasError) return;
+	const details = result.details;
+	if (!details || typeof details !== "object" || !("op" in details) || !("phases" in details)) return;
+	if (!isTodoMutationOperation(details.op) || !Array.isArray(details.phases) || !details.phases.every(isTodoPhase)) {
+		return;
+	}
+	session.persistTodoPhases?.(details.phases);
 }
 
 function getTool(session: ToolSession, name: string): AgentTool {
@@ -139,6 +166,7 @@ function normalizeAgentToolResult(
 	);
 	const text = textBlocks.map(block => block.text).join("");
 	const hasError = toolResultHasError(result);
+	persistTodoMutation(name, result, hasError, options.session);
 	options.emitStatus?.(summarizeToolResult(name, args, result, text, hasError));
 	if (result.details === undefined && imageBlocks.length === 0 && !hasError) {
 		return text;
@@ -204,6 +232,7 @@ export async function callSessionTool(name: string, args: unknown, options: Tool
 		throw new ToolError(`\`${name}\` cannot run through the eval bridge; call the direct \`${name}\` tool.`);
 	}
 	const tool = getTool(options.session, name);
+
 	const toolCallId = `js-${name}-${crypto.randomUUID()}`;
 	// A schema-owned name stays tool data across alternatives. Deleting an
 	// invalid value to make another branch match could select a different operation.

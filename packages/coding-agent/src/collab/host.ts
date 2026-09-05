@@ -44,7 +44,7 @@ import {
 	parseCollabLink,
 } from "./protocol";
 import { CollabSocket } from "./relay-client";
-import { shrinkForReplication } from "./replication-shrink";
+import { shrinkForReplication, shrinkTodoPhasesForReplication } from "./replication-shrink";
 
 /** Events that change the footer state guests render. */
 const STATE_TRIGGER_EVENTS: Record<string, true> = {
@@ -73,6 +73,7 @@ const WIRE_AGENT_EVENT_TYPES: Record<WireAgentEvent["type"], true> = {
 	tool_execution_start: true,
 	tool_execution_update: true,
 	tool_execution_end: true,
+	todo_updated: true,
 	notice: true,
 	auto_compaction_start: true,
 	auto_compaction_end: true,
@@ -269,7 +270,13 @@ export class CollabHost {
 		}
 
 		this.#unsubscribe = this.#ctx.session.subscribe(event => {
-			if (isWireAgentEvent(event)) this.#broadcast({ t: "event", event: shrinkForReplication(event) });
+			if (isWireAgentEvent(event)) {
+				const bounded =
+					event.type === "todo_updated"
+						? { ...event, phases: shrinkTodoPhasesForReplication(event.phases) }
+						: event;
+				this.#broadcast({ t: "event", event: shrinkForReplication(bounded) });
+			}
 			this.#onEventForState(event);
 		});
 		// Subagent frames publish on the session tree's observability bus at
@@ -402,6 +409,7 @@ export class CollabHost {
 		const entries = snapshot.entries.filter(isWireSessionEntry);
 		const socket = this.#socket;
 		if (!socket) return;
+		const todoPhases = shrinkTodoPhasesForReplication(this.#ctx.session.getTodoPhases?.() ?? []);
 		socket.send(
 			{
 				t: "welcome",
@@ -409,6 +417,7 @@ export class CollabHost {
 				header: snapshot.header,
 				state: this.#buildState(),
 				agents: this.#snapshotAgents(),
+				todoPhases,
 				entryCount: entries.length,
 				readOnly: canWrite ? undefined : true,
 			},

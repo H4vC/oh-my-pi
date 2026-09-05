@@ -33,6 +33,7 @@ import { CollabSocket } from "@oh-my-pi/pi-coding-agent/collab/relay-client";
 import {
 	MAX_REPLICATED_PAYLOAD_BYTES,
 	shrinkForReplication,
+	shrinkTodoPhasesForReplication,
 } from "@oh-my-pi/pi-coding-agent/collab/replication-shrink";
 import type { InteractiveModeContext } from "@oh-my-pi/pi-coding-agent/modes/types";
 import type { SessionEntry } from "@oh-my-pi/pi-coding-agent/session/session-entries";
@@ -330,5 +331,30 @@ describe("shrinkForReplication (#3740 review)", () => {
 		expect(shrunk.toolCallId).toBe("call-1");
 		expect(shrunk.toolName).toBe("read");
 		expect(JSON.stringify(shrunk).length).toBeLessThanOrEqual(MAX_REPLICATED_PAYLOAD_BYTES);
+	});
+});
+
+describe("shrinkTodoPhasesForReplication", () => {
+	it("passes small boards through by reference", () => {
+		const phases = [{ name: "Tasks", tasks: [{ content: "step one", status: "in_progress" }] }];
+		expect(shrinkTodoPhasesForReplication(phases)).toBe(phases);
+	});
+
+	it("drops whole trailing tasks without marker strings and stays in UTF-8 bytes", () => {
+		// Multibyte content: UTF-16 length undercounts the wire by 3x, so the
+		// cap is 64 UTF-8 bytes and content is 40 CJK chars (120 bytes).
+		const phases = [
+			{ name: "一", tasks: [{ content: "漢".repeat(40), status: "in_progress" }] },
+			{ name: "Two", tasks: [{ content: "late", status: "pending" }] },
+		];
+		const shrunk = shrinkTodoPhasesForReplication(phases, 64);
+		expect(new TextEncoder().encode(JSON.stringify(shrunk)).byteLength).toBeLessThanOrEqual(64);
+		for (const phase of shrunk) {
+			expect(typeof phase.name).toBe("string");
+			for (const task of phase.tasks) {
+				expect(typeof task.content).toBe("string");
+				expect(task.content).not.toContain("elided for collab session");
+			}
+		}
 	});
 });

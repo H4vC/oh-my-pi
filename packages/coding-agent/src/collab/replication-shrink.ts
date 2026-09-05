@@ -110,3 +110,41 @@ export function shrinkForReplication<T>(value: T): T {
 	}
 	return shrunk as T;
 }
+
+/**
+ * Bound a todo-phase board for host→guest replication without breaking its
+ * wire shape. Unlike {@link shrinkForReplication}, this never inserts string
+ * elision markers into the typed `tasks` arrays: oversized boards drop whole
+ * trailing tasks/phases and truncate overlong content strings, so guests can
+ * always dereference `phase.tasks`. Sizes are measured in UTF-8 bytes (the
+ * unit `TextEncoder` produces for the wire), not UTF-16 code units.
+ */
+export function shrinkTodoPhasesForReplication<TPhase extends { name: string; tasks: Array<{ content: string }> }>(
+	phases: readonly TPhase[],
+	maxBytes: number = MAX_REPLICATED_PAYLOAD_BYTES,
+): TPhase[] {
+	const encoder = new TextEncoder();
+	const byteLength = (value: unknown): number => encoder.encode(JSON.stringify(value)).byteLength;
+	if (byteLength(phases) <= maxBytes) {
+		return phases as TPhase[];
+	}
+	const out: TPhase[] = [];
+	for (const phase of phases) {
+		const slimPhase: TPhase = { ...phase, tasks: [] as TPhase["tasks"] };
+		for (const task of phase.tasks) {
+			let content = task.content;
+			while (byteLength({ ...task, content }) > 1024 && content.length > 0) {
+				content = content.slice(0, Math.max(0, content.length - 256));
+			}
+			slimPhase.tasks.push({ ...task, content } as TPhase["tasks"][number]);
+			if (byteLength([...out, slimPhase]) > maxBytes) {
+				slimPhase.tasks.pop();
+				break;
+			}
+		}
+		if (slimPhase.tasks.length === 0) break;
+		if (byteLength([...out, slimPhase]) > maxBytes) break;
+		out.push(slimPhase);
+	}
+	return out;
+}

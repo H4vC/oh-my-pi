@@ -6,12 +6,12 @@ import { callSessionTool } from "@oh-my-pi/pi-coding-agent/eval/js/tool-bridge";
 import { type TodoPhase, TodoTool, type ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
 import { INTENT_FIELD } from "@oh-my-pi/pi-wire";
 
-function createTool(name: string, execute: AgentTool["execute"]): AgentTool {
+function createTool(name: string, execute: AgentTool["execute"], parameters: unknown = type({})): AgentTool {
 	return {
 		name,
 		label: name,
 		description: `${name} tool`,
-		parameters: type({}),
+		parameters,
 		concurrency: "parallel",
 		execute,
 	} as unknown as AgentTool;
@@ -57,7 +57,7 @@ describe("callSessionTool", () => {
 
 		const result = await callSessionTool(
 			"read",
-			{ path: "/tmp/demo.txt" },
+			{ path: "/tmp/demo.txt", [INTENT_FIELD]: "reading demo" },
 			{
 				session,
 				emitStatus: event => {
@@ -69,7 +69,7 @@ describe("callSessionTool", () => {
 		expect(result).toBe("hello");
 		expect(execute).toHaveBeenCalledWith(
 			expect.stringMatching(/^js-read-/),
-			{ path: "/tmp/demo.txt", [INTENT_FIELD]: "js prelude" },
+			{ path: "/tmp/demo.txt", [INTENT_FIELD]: "reading demo" },
 			undefined,
 			undefined,
 			undefined,
@@ -683,6 +683,136 @@ describe("callSessionTool", () => {
 		expect(phases).toEqual([
 			{ name: "Recovered", tasks: [{ content: "From malformed JSON", status: "in_progress" }] },
 		]);
+	});
+	it("persists only successful mutating todo calls executed through the eval bridge", async () => {
+		let phases: TodoPhase[] = [
+			{
+				name: "Bridge reproduction",
+				tasks: [{ content: "finish phase", status: "in_progress" }],
+			},
+		];
+		const persistTodoPhases = vi.fn((_phases: TodoPhase[]) => {});
+		const todoSession: ToolSession = {
+			...createSession([]),
+			getTodoPhases: () => phases,
+			setTodoPhases: next => {
+				phases = next;
+			},
+		};
+		const todoTool = new TodoTool(todoSession);
+		const bridgeTool = createTool(
+			"todo",
+			async (toolCallId, args, signal) => todoTool.execute(toolCallId, todoTool.parameters.assert(args), signal),
+			todoTool.parameters,
+		);
+		const session: ToolSession = {
+			...todoSession,
+			getToolByName: name => (name === "todo" ? bridgeTool : undefined),
+			persistTodoPhases,
+		};
+
+		await callSessionTool(
+			"todo",
+			{
+				op: "done",
+				phase: "Bridge reproduction",
+				list: null,
+				task: null,
+				items: null,
+				reason: null,
+			},
+			{ session },
+		);
+
+		expect(phases[0]?.tasks.map(task => task.status)).toEqual(["completed"]);
+		expect(persistTodoPhases).toHaveBeenCalledWith(phases);
+
+		persistTodoPhases.mockClear();
+		await callSessionTool("todo", { op: "view" }, { session });
+		await callSessionTool("todo", { op: "done", task: "missing" }, { session });
+		expect(persistTodoPhases).not.toHaveBeenCalled();
+	});
+
+	it("keeps lenient bridge fallback while removing provider parse markers", async () => {
+		const execute = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "recovered" }] });
+		const tool = createTool("custom", execute, type({ required: "string" }));
+		tool.lenientArgValidation = true;
+		const session = createSession([tool]);
+
+		await callSessionTool(
+			"custom",
+			{
+				__parseError: "trailing comma",
+				__rawJson: '{"recovered":"yes",}',
+				recovered: "yes",
+				[INTENT_FIELD]: "recovering call",
+			},
+			{ session },
+		);
+
+		expect(execute).toHaveBeenCalledWith(
+			expect.stringMatching(/^js-custom-/),
+			{ recovered: "yes", [INTENT_FIELD]: "recovering call" },
+			undefined,
+			undefined,
+			undefined,
+		);
+	});
+
+	it("preserves a schema-owned `i` argument instead of stripping it as harness intent", async () => {
+		// A tool whose OWN schema declares `i` (e.g. an MCP server that exposes
+		// it, including as required) must receive the caller value verbatim.
+		// Stripping it made `validateToolArgumentsForDispatch` report the field
+		// missing and the tool never executed.
+		const execute = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "echoed" }] });
+		const tool = createTool("echo", execute, type({ i: "string" }));
+		const session = createSession([tool]);
+
+		await callSessionTool("echo", { i: "hello" }, { session });
+
+		expect(execute).toHaveBeenCalledWith(
+			expect.stringMatching(/^js-echo-/),
+			{ i: "hello" },
+			undefined,
+			undefined,
+			undefined,
+		);
+	});
+
+	it("preserves `i` required without a matching `properties` entry", async () => {
+		const executeRequired = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "required" }] });
+		const toolRequired = createTool("required_tool", executeRequired, {
+			type: "object",
+			required: ["i"],
+		});
+
+		const executeDependent = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "dependent" }] });
+		const toolDependent = createTool("dependent_tool", executeDependent, {
+			type: "object",
+			properties: { x: { type: "number" } },
+			required: ["x"],
+			dependentRequired: { x: ["i"] },
+		});
+
+		const session = createSession([toolRequired, toolDependent]);
+
+		await callSessionTool("required_tool", { i: "hello" }, { session });
+		expect(executeRequired).toHaveBeenLastCalledWith(
+			expect.stringMatching(/^js-required_tool-/),
+			{ i: "hello" },
+			undefined,
+			undefined,
+			undefined,
+		);
+
+		await callSessionTool("dependent_tool", { x: 1, i: "hello" }, { session });
+		expect(executeDependent).toHaveBeenLastCalledWith(
+			expect.stringMatching(/^js-dependent_tool-/),
+			{ x: 1, i: "hello" },
+			undefined,
+			undefined,
+			undefined,
+		);
 	});
 
 	it("returns structured tool results when details or images are present", async () => {

@@ -2,8 +2,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "bun:test";
 import { resetSettingsForTest, Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { AssistantMessageComponent } from "@oh-my-pi/pi-coding-agent/modes/components/assistant-message";
 import { TranscriptContainer } from "@oh-my-pi/pi-coding-agent/modes/components/transcript-container";
+import { ToolExecutionComponent } from "@oh-my-pi/pi-coding-agent/modes/components/tool-execution";
 import { EventController } from "@oh-my-pi/pi-coding-agent/modes/controllers/event-controller";
 import { initTheme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { TodoPhase } from "@oh-my-pi/pi-coding-agent/modes/types";
 import type { AgentSessionEvent } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { TRUNCATE_LENGTHS } from "@oh-my-pi/pi-coding-agent/tools/render-utils";
 import type { Component } from "@oh-my-pi/pi-tui";
@@ -223,6 +225,29 @@ describe("EventController + Cursor todo bridge", () => {
 		expect(f.ctx.setTodos).toHaveBeenCalledTimes(1);
 	});
 
+	it("updates the HUD and existing same-turn todo snapshot without adding a card", async () => {
+		const f = createFixture();
+		const initial: TodoPhase[] = [{ name: "Tasks", tasks: [{ content: "step one", status: "in_progress" }] }];
+		await f.controller.handleEvent(streamedTodoBlock("todo-1"));
+		await f.controller.handleEvent(todoEnd("todo-1", initial));
+		const todoBlock = f.blocks[0];
+		if (!(todoBlock instanceof ToolExecutionComponent)) throw new Error("Expected a todo tool component");
+		const before = Bun.stripANSI(todoBlock.render(80).join("\n"));
+		const updated: TodoPhase[] = [{ name: "Tasks", tasks: [{ content: "step one", status: "completed" }] }];
+		const event: Extract<AgentSessionEvent, { type: "todo_updated" }> = {
+			type: "todo_updated",
+			phases: updated,
+		};
+
+		await f.controller.handleEvent(event);
+
+		const after = Bun.stripANSI(todoBlock.render(80).join("\n"));
+		expect(f.ctx.setTodos).toHaveBeenLastCalledWith(updated);
+		expect(before).toContain("☐ step one");
+		expect(after).toContain("☑ step one");
+		expect(f.blocks).toHaveLength(1);
+	});
+
 	it("does not recreate the card on later cumulative stream updates", async () => {
 		// `message_update` is cumulative: every subsequent update re-lists the
 		// same toolCall block. After the orphaned completion settles the card
@@ -254,5 +279,29 @@ describe("EventController + Cursor todo bridge", () => {
 		expect(f.blocks).toHaveLength(1);
 		expect(f.ctx.pendingTools.size).toBe(0);
 		expect(f.ctx.setTodos).toHaveBeenCalledWith(phases);
+	});
+
+	it("writes live todo updates to the replica session without re-emitting on identical state", async () => {
+		const f = createFixture();
+		const stale: TodoPhase[] = [{ name: "Tasks", tasks: [{ content: "step one", status: "in_progress" }] }];
+		const updated: TodoPhase[] = [{ name: "Tasks", tasks: [{ content: "step one", status: "completed" }] }];
+		const stored = { phases: stale };
+		const setTodoPhases = vi.fn((phases: TodoPhase[]) => {
+			stored.phases = phases;
+		});
+		Object.assign(f.ctx.session, {
+			getTodoPhases: () => stored.phases,
+			setTodoPhases,
+		});
+		// Guest replica diverges from the event: write through once so a later
+		// `reloadTodos()` keeps the live board instead of the welcome snapshot.
+		await f.controller.handleEvent({ type: "todo_updated", phases: updated });
+		expect(setTodoPhases).toHaveBeenCalledTimes(1);
+		expect(setTodoPhases).toHaveBeenLastCalledWith(updated);
+		expect(f.ctx.setTodos).toHaveBeenLastCalledWith(updated);
+
+		// Originating session already matches: no write, so no re-emit loop.
+		await f.controller.handleEvent({ type: "todo_updated", phases: updated });
+		expect(setTodoPhases).toHaveBeenCalledTimes(1);
 	});
 });

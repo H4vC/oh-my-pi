@@ -380,6 +380,34 @@ describe("MCP tool arguments", () => {
 			{ method: "tools/call", params: { name: "search", arguments: { symbol: "Foo", language: "TypeScript" } } },
 		]);
 	});
+	it("preserves `i` required via `required` or legacy draft-07 `dependencies`", async () => {
+		const requiredCalls: CapturedRequest[] = [];
+		const requiredTool = new MCPTool(createCapturedConnection(requiredCalls), {
+			name: "required_echo",
+			description: "Requires i without declaring it in properties",
+			inputSchema: { type: "object", required: ["i"] },
+		});
+		await requiredTool.execute("call-1", { i: "hello" }, undefined, unusedContext, undefined);
+		expect(requiredCalls).toEqual([
+			{ method: "tools/call", params: { name: "required_echo", arguments: { i: "hello" } } },
+		]);
+
+		const legacyCalls: CapturedRequest[] = [];
+		const legacyTool = new MCPTool(createCapturedConnection(legacyCalls), {
+			name: "legacy_echo",
+			description: "draft-07 dependencies requires i when x is present",
+			inputSchema: {
+				type: "object",
+				properties: { x: { type: "number" } },
+				required: ["x"],
+				dependencies: { x: ["i"] },
+			},
+		});
+		await legacyTool.execute("call-1", { x: 1, i: "hello" }, undefined, unusedContext, undefined);
+		expect(legacyCalls).toEqual([
+			{ method: "tools/call", params: { name: "legacy_echo", arguments: { x: 1, i: "hello" } } },
+		]);
+	});
 
 	it("resolves local image arguments before forwarding tools/call", async () => {
 		using tempDir = TempDir.createSync("@pi-mcp-local-image-");

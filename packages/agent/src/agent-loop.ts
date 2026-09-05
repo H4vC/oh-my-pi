@@ -2269,6 +2269,23 @@ function resolveToolForCall(
 	);
 }
 
+/** Validate tool arguments while preserving the raw-argument fallback declared by lenient tools. */
+export function validateToolArgumentsForDispatch<TParameters extends TSchema>(
+	tool: AgentTool<TParameters>,
+	toolCall: AgentToolCall,
+	args: Record<string, unknown>,
+): Record<string, unknown> {
+	try {
+		return validateToolArguments(tool, { ...toolCall, arguments: args });
+	} catch (error) {
+		if (!tool.lenientArgValidation) throw error;
+		const fallback = { ...args };
+		delete fallback.__parseError;
+		delete fallback.__rawJson;
+		return fallback;
+	}
+}
+
 /**
  * Pre-dispatch phase for every pending tool call on `assistantMessage`, run in
  * call order: intent extraction, argument validation, and the `beforeToolCall`
@@ -2313,14 +2330,8 @@ async function prepareToolCallDispatch(
 		const validate = (args: Record<string, unknown>): Record<string, unknown> | undefined => {
 			try {
 				if (!tool) throw new Error(`Tool ${toolCall.name} not found`);
-				return validateToolArguments(tool, { ...toolCall, arguments: args });
+				return validateToolArgumentsForDispatch(tool, toolCall, args);
 			} catch (validationError) {
-				if (tool?.lenientArgValidation) {
-					const fallback = { ...args };
-					delete fallback.__parseError;
-					delete fallback.__rawJson;
-					return fallback;
-				}
 				entry.args = "__parseError" in args ? { __parseError: args.__parseError } : args;
 				entry.validationErrorMessage =
 					validationError instanceof Error ? validationError.message : String(validationError);
