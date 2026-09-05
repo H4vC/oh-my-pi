@@ -108,7 +108,7 @@ function opRow(entry: unknown, key: number): ReactNode {
 	);
 }
 
-function Board({ phases }: { phases: unknown[] }): ReactNode {
+export function Board({ phases }: { phases: unknown[] }): ReactNode {
 	const rendered: ReactNode[] = [];
 	for (let i = 0; i < phases.length; i++) {
 		const phase = phases[i];

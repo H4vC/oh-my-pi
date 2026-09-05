@@ -185,6 +185,27 @@ describe("GuestClient frame apply", () => {
 		expect(client.getSnapshot().activeTools.size).toBe(0);
 	});
 
+	it("todo_updated mirrors the host's live phases and welcome resets them", () => {
+		const client = liveClient();
+		expect(client.getSnapshot().todoPhases).toEqual([]);
+
+		const phases = [
+			{
+				name: "Work",
+				tasks: [
+					{ content: "first", status: "completed" as const },
+					{ content: "second", status: "in_progress" as const },
+				],
+			},
+		];
+		client.applyFrameForTest({ t: "event", event: { type: "todo_updated", phases } });
+		expect(client.getSnapshot().todoPhases).toEqual(phases);
+
+		// A fresh welcome (reconnect / new session) clears the stale board.
+		client.applyFrameForTest(welcomeFrame(0));
+		expect(client.getSnapshot().todoPhases).toEqual([]);
+	});
+
 	it("agent_start/agent_end and state reconcile the working flag", () => {
 		const client = liveClient();
 		client.applyFrameForTest({ t: "event", event: { type: "agent_start" } });
