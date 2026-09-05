@@ -8,6 +8,7 @@ import type { ImageContent, TextContent, TSchema } from "@oh-my-pi/pi-ai";
 import { normalizeSchemaForMCP } from "@oh-my-pi/pi-ai/utils/schema";
 import { logger, untilAborted } from "@oh-my-pi/pi-utils";
 import { INTENT_FIELD } from "@oh-my-pi/pi-wire";
+import { schemaDeclaresProperty } from "../eval/js/tool-bridge";
 import type { SourceMeta } from "../capability/types";
 import type {
 	CustomTool,
@@ -119,7 +120,7 @@ function omitUnusedOptionalArgs(args: MCPToolArgs, inputSchema: MCPToolDefinitio
  */
 function stripHarnessIntent(args: MCPToolArgs, inputSchema: MCPToolDefinition["inputSchema"]): MCPToolArgs {
 	if (!Object.hasOwn(args, INTENT_FIELD)) return args;
-	if (inputSchema.properties && Object.hasOwn(inputSchema.properties, INTENT_FIELD)) return args;
+	if (schemaDeclaresProperty(inputSchema, INTENT_FIELD)) return args;
 	const { [INTENT_FIELD]: _intent, ...rest } = args;
 	return rest;
 }

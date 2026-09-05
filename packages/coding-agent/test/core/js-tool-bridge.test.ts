@@ -173,6 +173,54 @@ describe("callSessionTool", () => {
 		);
 	});
 
+	it("preserves `i` declared inside schema combinators (oneOf / anyOf)", async () => {
+		const executeOneOf = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "oneOf" }] });
+		const toolOneOf = createTool("one_of_tool", executeOneOf, {
+			type: "object",
+			oneOf: [
+				{
+					type: "object",
+					properties: { i: { type: "string" } },
+					required: ["i"],
+					additionalProperties: false,
+				},
+				{
+					type: "object",
+					properties: { other: { type: "number" } },
+					required: ["other"],
+					additionalProperties: false,
+				},
+			],
+		});
+
+		const executeArkOr = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "arkOr" }] });
+		const toolArkOr = createTool(
+			"ark_or_tool",
+			executeArkOr,
+			type.or(type({ i: "string" }), type({ count: "number" })),
+		);
+
+		const session = createSession([toolOneOf, toolArkOr]);
+
+		await callSessionTool("one_of_tool", { i: "one-of-value" }, { session });
+		expect(executeOneOf).toHaveBeenCalledWith(
+			expect.stringMatching(/^js-one_of_tool-/),
+			{ i: "one-of-value" },
+			undefined,
+			undefined,
+			undefined,
+		);
+
+		await callSessionTool("ark_or_tool", { i: "ark-or-value" }, { session });
+		expect(executeArkOr).toHaveBeenCalledWith(
+			expect.stringMatching(/^js-ark_or_tool-/),
+			{ i: "ark-or-value" },
+			undefined,
+			undefined,
+			undefined,
+		);
+	});
+
 	it("returns structured tool results when details or images are present", async () => {
 		const session = createSession([
 			createTool("custom", async () => ({

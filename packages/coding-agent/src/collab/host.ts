@@ -20,6 +20,7 @@ import type {
 	CollabUiResponseValue,
 	AgentEvent as WireAgentEvent,
 	SessionEntry as WireSessionEntry,
+	WireTodoPhase,
 } from "@oh-my-pi/pi-wire";
 import type { InteractiveModeContext } from "../modes/types";
 import { AgentLifecycleManager } from "../registry/agent-lifecycle";
@@ -89,6 +90,7 @@ const WIRE_SESSION_ENTRY_TYPES: Record<WireSessionEntry["type"], true> = {
 	branch_summary: true,
 	model_change: true,
 	thinking_level_change: true,
+	custom: true,
 };
 const COLLAB_BUS_CHANNELS = [
 	TASK_SUBAGENT_LIFECYCLE_CHANNEL,
@@ -403,6 +405,7 @@ export class CollabHost {
 		const entries = snapshot.entries.filter(isWireSessionEntry);
 		const socket = this.#socket;
 		if (!socket) return;
+		const todoPhases = this.#ctx.session.getTodoPhases?.() ?? [];
 		socket.send(
 			{
 				t: "welcome",
@@ -410,6 +413,7 @@ export class CollabHost {
 				header: snapshot.header,
 				state: this.#buildState(),
 				agents: this.#snapshotAgents(),
+				todoPhases: todoPhases.length > 0 ? (todoPhases as WireTodoPhase[]) : undefined,
 				entryCount: entries.length,
 				readOnly: canWrite ? undefined : true,
 			},

@@ -157,6 +157,11 @@ export interface ThinkingLevelChangeEntry extends EntryBase {
 	type: "thinking_level_change";
 	thinkingLevel?: string | null;
 }
+export interface CustomSessionEntry extends EntryBase {
+	type: "custom";
+	customType: string;
+	data?: unknown;
+}
 
 export type SessionEntry =
 	| MessageEntry
@@ -164,8 +169,8 @@ export type SessionEntry =
 	| CompactionEntry
 	| BranchSummaryEntry
 	| ModelChangeEntry
-	| ThinkingLevelChangeEntry;
-
+	| ThinkingLevelChangeEntry
+	| CustomSessionEntry;
 /** customType of collab guest prompts injected on the host. */
 export const COLLAB_PROMPT_MESSAGE_TYPE = "collab-prompt";
 
@@ -177,6 +182,19 @@ export interface CollabPromptDetails {
 // ═══════════════════════════════════════════════════════════════════════════
 // Events (handled subset)
 // ═══════════════════════════════════════════════════════════════════════════
+
+export type WireTodoTaskStatus = "pending" | "in_progress" | "completed" | "abandoned" | "blocked";
+
+export interface WireTodoTask {
+	content: string;
+	status: WireTodoTaskStatus;
+	blocker?: string;
+}
+
+export interface WireTodoPhase {
+	name: string;
+	tasks: WireTodoTask[];
+}
 
 export type AgentEvent =
 	| { type: "agent_start" }
@@ -192,14 +210,7 @@ export type AgentEvent =
 	| { type: "tool_execution_end"; toolCallId: string; toolName: string; result: unknown; isError?: boolean }
 	| {
 			type: "todo_updated";
-			phases: Array<{
-				name: string;
-				tasks: Array<{
-					content: string;
-					status: "pending" | "in_progress" | "completed" | "abandoned" | "blocked";
-					blocker?: string;
-				}>;
-			}>;
+			phases: WireTodoPhase[];
 	  }
 	| { type: "notice"; level: "info" | "warning" | "error"; message: string; source?: string }
 	| { type: "auto_compaction_start"; reason: string; action: string }
@@ -360,6 +371,7 @@ export type HostFrame =
 			header: SessionHeader;
 			state: SessionState;
 			agents: AgentSnapshot[];
+			todoPhases?: WireTodoPhase[];
 			/**
 			 * Total number of `SessionEntry` items the host will deliver in the
 			 * `snapshot-chunk` frames that follow. Guests stay in the loading

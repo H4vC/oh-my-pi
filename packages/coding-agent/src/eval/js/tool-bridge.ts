@@ -73,6 +73,53 @@ function getTool(session: ToolSession, name: string): AgentTool {
 	return tool;
 }
 
+export function schemaDeclaresProperty(schema: unknown, property: string, visited: Set<unknown> = new Set()): boolean {
+	if (!isRecord(schema) || visited.has(schema)) return false;
+	visited.add(schema);
+
+	const properties = schema.properties;
+	if (isRecord(properties) && Object.hasOwn(properties, property)) {
+		return true;
+	}
+
+	for (const key of ["oneOf", "anyOf", "allOf"] as const) {
+		const branches = schema[key];
+		if (Array.isArray(branches)) {
+			for (const branch of branches) {
+				if (schemaDeclaresProperty(branch, property, visited)) {
+					return true;
+				}
+			}
+		}
+	}
+
+	for (const key of ["then", "else"] as const) {
+		const branch = schema[key];
+		if (isRecord(branch) && schemaDeclaresProperty(branch, property, visited)) {
+			return true;
+		}
+	}
+
+	const dependentSchemas = schema.dependentSchemas;
+	if (isRecord(dependentSchemas)) {
+		for (const branch of Object.values(dependentSchemas)) {
+			if (schemaDeclaresProperty(branch, property, visited)) {
+				return true;
+			}
+		}
+	}
+
+	const $defs = schema.$defs ?? schema.definitions;
+	if (isRecord($defs)) {
+		for (const def of Object.values($defs)) {
+			if (schemaDeclaresProperty(def, property, visited)) {
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
 /**
  * Whether the tool's OWN schema declares `i` as a real parameter. The harness
  * injects `i` into every tool's model-facing wire schema separately (see

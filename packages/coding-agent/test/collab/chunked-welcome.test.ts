@@ -54,7 +54,7 @@ function makeLargeSnapshot(): SizedSnapshot {
 	};
 }
 
-function makeHostContext(snapshot: SizedSnapshot): InteractiveModeContext {
+function makeHostContext(snapshot: SizedSnapshot, options: { todoPhases?: unknown[] } = {}): InteractiveModeContext {
 	const ctx = {
 		settings: { get: () => "" },
 		sessionManager: {
@@ -73,6 +73,7 @@ function makeHostContext(snapshot: SizedSnapshot): InteractiveModeContext {
 			emitNotice: () => {},
 			promptCustomMessage: () => Promise.resolve(),
 			abort: () => Promise.resolve(),
+			getTodoPhases: () => options.todoPhases ?? [],
 		},
 		eventBus: undefined,
 		statusLine: {
@@ -309,5 +310,53 @@ describe("collab chunked welcome (#3144)", () => {
 		} finally {
 			await guest.leave("test cleanup").catch(() => {});
 		}
+	});
+
+	it("includes canonical todoPhases in welcome and replicates user_todo_edit entries", async () => {
+		const todoPhases = [
+			{
+				name: "Build",
+				tasks: [{ content: "compile", status: "completed" as const }],
+			},
+		];
+		const todoSnapshot: SizedSnapshot = {
+			header: { type: "session", id: "sess-todo", timestamp: "2026-06-20T00:00:00Z", cwd: "/tmp" },
+			entries: [
+				{
+					type: "custom",
+					id: "custom-todo-1",
+					parentId: null,
+					timestamp: "2026-06-20T00:00:00Z",
+					customType: "user_todo_edit",
+					data: { phases: todoPhases },
+				} as unknown as SessionEntry,
+			],
+		};
+		const hostCtx = makeHostContext(todoSnapshot, { todoPhases });
+		const todoHost = new CollabHost(hostCtx);
+		await todoHost.start("ws://localhost:8788");
+		const parsed = parseCollabLink(todoHost.link);
+		if ("error" in parsed) throw new Error(parsed.error);
+		const writeToken = parsed.writeToken ? Buffer.from(parsed.writeToken).toString("base64url") : undefined;
+		const key = await importRoomKey(parsed.key);
+		const socket = new CollabSocket({ wsUrl: parsed.wsUrl, role: "guest", key });
+		guestCleanups.push(() => socket.close());
+
+		const frames: CollabFrame[] = [];
+		const trainDone = Promise.withResolvers<void>();
+		socket.onFrame = frame => {
+			frames.push(frame);
+			if (frame.t === "snapshot-chunk" && frame.final) trainDone.resolve();
+		};
+		socket.onOpen = () => socket.send({ t: "hello", proto: COLLAB_PROTO, name: "todo-guest", writeToken });
+		socket.connect();
+		await trainDone.promise;
+
+		const welcome = frames.find((f): f is Extract<CollabFrame, { t: "welcome" }> => f.t === "welcome");
+		expect(welcome).toBeDefined();
+		expect(welcome?.todoPhases).toEqual(todoPhases);
+
+		const chunk = frames.find((f): f is Extract<CollabFrame, { t: "snapshot-chunk" }> => f.t === "snapshot-chunk");
+		expect(chunk?.entries.some(e => e.type === "custom")).toBe(true);
 	});
 });

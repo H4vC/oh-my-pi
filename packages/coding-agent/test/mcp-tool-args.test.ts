@@ -188,6 +188,35 @@ describe("MCP tool arguments", () => {
 		expect(calls).toEqual([{ method: "tools/call", params: { name: "echo", arguments: { i: "hello" } } }]);
 	});
 
+	it("preserves `i` when declared inside schema combinators (oneOf / anyOf)", async () => {
+		const calls: CapturedRequest[] = [];
+		const definition: MCPToolDefinition = {
+			name: "combinator_echo",
+			description: "Echo with oneOf",
+			inputSchema: {
+				type: "object",
+				oneOf: [
+					{
+						type: "object",
+						properties: { i: { type: "string" } },
+						required: ["i"],
+					},
+					{
+						type: "object",
+						properties: { count: { type: "number" } },
+					},
+				],
+			},
+		};
+		const tool = new MCPTool(createCapturedConnection(calls), definition);
+
+		await tool.execute("call-1", { i: "branch-value" }, undefined, unusedContext, undefined);
+
+		expect(calls).toEqual([
+			{ method: "tools/call", params: { name: "combinator_echo", arguments: { i: "branch-value" } } },
+		]);
+	});
+
 	it("resolves local image arguments before forwarding tools/call", async () => {
 		using tempDir = TempDir.createSync("@pi-mcp-local-image-");
 		const calls: CapturedRequest[] = [];

@@ -301,7 +301,7 @@ export class GuestClient {
 				this.#stream = null;
 				this.#streamDone = false;
 				this.#activeTools = new Map();
-				this.#todoPhases = [];
+				this.#todoPhases = frame.todoPhases ? [...frame.todoPhases] : [];
 				this.#progress = new Map();
 				this.#lifecycle = new Map();
 				this.#working = frame.state.isStreaming;

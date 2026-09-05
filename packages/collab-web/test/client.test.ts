@@ -206,6 +206,19 @@ describe("GuestClient frame apply", () => {
 		expect(client.getSnapshot().todoPhases).toEqual([]);
 	});
 
+	it("welcome adopts the host's canonical todoPhases when present", () => {
+		const client = liveClient();
+		const canonicalPhases = [
+			{
+				name: "Canonical",
+				tasks: [{ content: "persisted", status: "completed" as const }],
+			},
+		];
+		const frame = { ...welcomeFrame(0), todoPhases: canonicalPhases };
+		client.applyFrameForTest(frame);
+		expect(client.getSnapshot().todoPhases).toEqual(canonicalPhases);
+	});
+
 	it("agent_start/agent_end and state reconcile the working flag", () => {
 		const client = liveClient();
 		client.applyFrameForTest({ t: "event", event: { type: "agent_start" } });
