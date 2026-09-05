@@ -255,8 +255,6 @@ const EntryRow = memo(function EntryRow({ entry, results, active, host }: EntryR
 					<span className="tr-marker">thinking → {entry.thinkingLevel ?? "off"}</span>
 				</Row>
 			);
-		case "custom":
-			return null;
 		default:
 			// unknown entry types from newer hosts — skip tolerantly
 			return null;

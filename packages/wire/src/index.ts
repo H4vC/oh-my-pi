@@ -157,11 +157,6 @@ export interface ThinkingLevelChangeEntry extends EntryBase {
 	type: "thinking_level_change";
 	thinkingLevel?: string | null;
 }
-export interface CustomSessionEntry extends EntryBase {
-	type: "custom";
-	customType: string;
-	data?: unknown;
-}
 
 export type SessionEntry =
 	| MessageEntry
@@ -169,8 +164,7 @@ export type SessionEntry =
 	| CompactionEntry
 	| BranchSummaryEntry
 	| ModelChangeEntry
-	| ThinkingLevelChangeEntry
-	| CustomSessionEntry;
+	| ThinkingLevelChangeEntry;
 /** customType of collab guest prompts injected on the host. */
 export const COLLAB_PROMPT_MESSAGE_TYPE = "collab-prompt";
 

@@ -459,12 +459,8 @@ export class CollabGuestLink {
 		this.#ctx.chatContainer.disposeChildren();
 		await this.#ctx.renderInitialMessages({ clearTerminalHistory: true });
 		await this.#ctx.reloadTodos();
-		if (
-			pending.todoPhases &&
-			pending.todoPhases.length > 0 &&
-			(this.#ctx.session.getTodoPhases?.() ?? []).length === 0
-		) {
-			this.#ctx.session.setTodoPhases?.(pending.todoPhases as never);
+		if (pending.todoPhases !== undefined) {
+			this.#ctx.session.setTodoPhases(pending.todoPhases);
 			await this.#ctx.reloadTodos();
 		}
 		this.#updateStatusSegment();

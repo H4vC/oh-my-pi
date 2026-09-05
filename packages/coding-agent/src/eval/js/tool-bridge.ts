@@ -120,17 +120,6 @@ export function schemaDeclaresProperty(schema: unknown, property: string, visite
 
 	return false;
 }
-/**
- * Whether the tool's OWN schema declares `i` as a real parameter. The harness
- * injects `i` into every tool's model-facing wire schema separately (see
- * `injectIntentIntoSchema`), so it never appears in `tool.parameters`; an `i`
- * present there is server/tool-owned (e.g. an MCP tool that exposes `i`). Such
- * a field must survive verbatim — mirrors the MCP boundary's `stripHarnessIntent`.
- */
-function toolSchemaOwnsIntent(tool: AgentTool): boolean {
-	const properties = toolWireSchema(tool).properties;
-	return isRecord(properties) && Object.hasOwn(properties, INTENT_FIELD);
-}
 
 function normalizeArgs(args: unknown, ownsIntent: boolean): unknown {
 	if (!isRecord(args)) return args;
@@ -238,7 +227,7 @@ export async function callSessionTool(name: string, args: unknown, options: Tool
 		throw new ToolError(`\`${name}\` cannot run through the eval bridge; call the direct \`${name}\` tool.`);
 	}
 	const tool = getTool(options.session, name);
-	const ownsIntent = toolSchemaOwnsIntent(tool);
+	const ownsIntent = schemaDeclaresProperty(toolWireSchema(tool), INTENT_FIELD);
 	const normalizedArgs = normalizeArgs(args, ownsIntent);
 	const toolCallId = `js-${name}-${crypto.randomUUID()}`;
 	try {
