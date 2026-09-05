@@ -1,9 +1,5 @@
-import {
-	type AgentTool,
-	type AgentToolCall,
-	type AgentToolResult,
-	validateToolArgumentsForDispatch,
-} from "@oh-my-pi/pi-agent-core";
+import { type AgentTool, type AgentToolResult, validateToolArgumentsForDispatch } from "@oh-my-pi/pi-agent-core";
+import { toolWireSchema } from "@oh-my-pi/pi-ai";
 import { isRecord } from "@oh-my-pi/pi-utils";
 import { INTENT_FIELD } from "@oh-my-pi/pi-wire";
 import type { ToolSession } from "../../tools";
@@ -77,8 +73,22 @@ function getTool(session: ToolSession, name: string): AgentTool {
 	return tool;
 }
 
-function normalizeArgs(args: unknown): unknown {
+/**
+ * Whether the tool's OWN schema declares `i` as a real parameter. The harness
+ * injects `i` into every tool's model-facing wire schema separately (see
+ * `injectIntentIntoSchema`), so it never appears in `tool.parameters`; an `i`
+ * present there is server/tool-owned (e.g. an MCP tool that exposes `i`). Such
+ * a field must survive verbatim — mirrors the MCP boundary's `stripHarnessIntent`.
+ */
+function toolSchemaOwnsIntent(tool: AgentTool): boolean {
+	const properties = toolWireSchema(tool).properties;
+	return isRecord(properties) && Object.hasOwn(properties, INTENT_FIELD);
+}
+
+function normalizeArgs(args: unknown, ownsIntent: boolean): unknown {
 	if (!isRecord(args)) return args;
+	// A schema-owned `i` is real data; never overwrite it with the placeholder.
+	if (ownsIntent) return args;
 	const record = { ...args };
 	if (record[INTENT_FIELD] === undefined) {
 		record[INTENT_FIELD] = "js prelude";
@@ -86,13 +96,27 @@ function normalizeArgs(args: unknown): unknown {
 	return record;
 }
 
-function validateArgsForBridge(tool: AgentTool, name: string, toolCallId: string, args: unknown): unknown {
+function validateArgsForBridge(
+	tool: AgentTool,
+	name: string,
+	toolCallId: string,
+	args: unknown,
+	ownsIntent: boolean,
+): unknown {
 	if (!isRecord(args)) return args;
+	// A schema-owned `i` is a declared parameter: validate it in place rather
+	// than stripping the harness intent field, or the tool never executes.
+	if (ownsIntent) {
+		return validateToolArgumentsForDispatch(tool, { type: "toolCall", id: toolCallId, name, arguments: args }, args);
+	}
 	const intent = args[INTENT_FIELD];
 	const stripped = { ...args };
 	delete stripped[INTENT_FIELD];
-	const toolCall: AgentToolCall = { type: "toolCall", id: toolCallId, name, arguments: stripped };
-	const validated = validateToolArgumentsForDispatch(tool, toolCall, stripped);
+	const validated = validateToolArgumentsForDispatch(
+		tool,
+		{ type: "toolCall", id: toolCallId, name, arguments: stripped },
+		stripped,
+	);
 	return intent === undefined ? validated : { ...validated, [INTENT_FIELD]: intent };
 }
 
@@ -167,10 +191,11 @@ export async function callSessionTool(name: string, args: unknown, options: Tool
 		throw new ToolError(`\`${name}\` cannot run through the eval bridge; call the direct \`${name}\` tool.`);
 	}
 	const tool = getTool(options.session, name);
-	const normalizedArgs = normalizeArgs(args);
+	const ownsIntent = toolSchemaOwnsIntent(tool);
+	const normalizedArgs = normalizeArgs(args, ownsIntent);
 	const toolCallId = `js-${name}-${crypto.randomUUID()}`;
 	try {
-		const validatedArgs = validateArgsForBridge(tool, name, toolCallId, normalizedArgs);
+		const validatedArgs = validateArgsForBridge(tool, name, toolCallId, normalizedArgs, ownsIntent);
 		const result = await tool.execute(
 			toolCallId,
 			validatedArgs,

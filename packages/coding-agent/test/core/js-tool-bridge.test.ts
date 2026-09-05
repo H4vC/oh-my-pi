@@ -153,6 +153,26 @@ describe("callSessionTool", () => {
 		);
 	});
 
+	it("preserves a schema-owned `i` argument instead of stripping it as harness intent", async () => {
+		// A tool whose OWN schema declares `i` (e.g. an MCP server that exposes
+		// it, including as required) must receive the caller value verbatim.
+		// Stripping it made `validateToolArgumentsForDispatch` report the field
+		// missing and the tool never executed.
+		const execute = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "echoed" }] });
+		const tool = createTool("echo", execute, type({ i: "string" }));
+		const session = createSession([tool]);
+
+		await callSessionTool("echo", { i: "hello" }, { session });
+
+		expect(execute).toHaveBeenCalledWith(
+			expect.stringMatching(/^js-echo-/),
+			{ i: "hello" },
+			undefined,
+			undefined,
+			undefined,
+		);
+	});
+
 	it("returns structured tool results when details or images are present", async () => {
 		const session = createSession([
 			createTool("custom", async () => ({
