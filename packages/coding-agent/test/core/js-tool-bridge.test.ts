@@ -280,6 +280,42 @@ describe("callSessionTool", () => {
 		);
 	});
 
+	it("preserves `i` required without a matching `properties` entry", async () => {
+		const executeRequired = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "required" }] });
+		const toolRequired = createTool("required_tool", executeRequired, {
+			type: "object",
+			required: ["i"],
+		});
+
+		const executeDependent = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "dependent" }] });
+		const toolDependent = createTool("dependent_tool", executeDependent, {
+			type: "object",
+			properties: { x: { type: "number" } },
+			required: ["x"],
+			dependentRequired: { x: ["i"] },
+		});
+
+		const session = createSession([toolRequired, toolDependent]);
+
+		await callSessionTool("required_tool", { i: "hello" }, { session });
+		expect(executeRequired).toHaveBeenLastCalledWith(
+			expect.stringMatching(/^js-required_tool-/),
+			{ i: "hello" },
+			undefined,
+			undefined,
+			undefined,
+		);
+
+		await callSessionTool("dependent_tool", { x: 1, i: "hello" }, { session });
+		expect(executeDependent).toHaveBeenLastCalledWith(
+			expect.stringMatching(/^js-dependent_tool-/),
+			{ x: 1, i: "hello" },
+			undefined,
+			undefined,
+			undefined,
+		);
+	});
+
 	it("returns structured tool results when details or images are present", async () => {
 		const session = createSession([
 			createTool("custom", async () => ({

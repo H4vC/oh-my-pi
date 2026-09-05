@@ -1,6 +1,6 @@
 import { type AgentTool, type AgentToolResult, validateToolArgumentsForDispatch } from "@oh-my-pi/pi-agent-core";
 import { toolWireSchema } from "@oh-my-pi/pi-ai";
-import { dereferenceJsonSchema, isJsonSchemaValueValid } from "@oh-my-pi/pi-ai/utils/schema";
+import { dereferenceJsonSchema, isJsonSchemaValueValid, upgradeJsonSchemaTo202012 } from "@oh-my-pi/pi-ai/utils/schema";
 import { isRecord } from "@oh-my-pi/pi-utils";
 import { INTENT_FIELD } from "@oh-my-pi/pi-wire";
 import type { ToolSession } from "../../tools";
@@ -88,6 +88,22 @@ function schemaBranchDeclaresProperty(
 		const properties = schema.properties;
 		if (isRecord(properties) && Object.hasOwn(properties, property)) return true;
 
+		// A bare `required` (no matching `properties` entry) still makes the field
+		// part of the accepted shape — the repo validator enforces it — so it is
+		// schema-owned, not harness intent.
+		if (Array.isArray(schema.required) && schema.required.includes(property)) return true;
+
+		// `dependentRequired: { trigger: [...] }` requires the field once its
+		// trigger key is present in the value, so it applies to this candidate.
+		const dependentRequired = schema.dependentRequired;
+		if (isRecord(value) && isRecord(dependentRequired)) {
+			for (const trigger in dependentRequired) {
+				if (!Object.hasOwn(value, trigger)) continue;
+				const deps = dependentRequired[trigger];
+				if (Array.isArray(deps) && deps.includes(property)) return true;
+			}
+		}
+
 		for (const key of UNION_SCHEMA_KEYS) {
 			const branches = schema[key];
 			if (!Array.isArray(branches)) continue;
@@ -138,7 +154,9 @@ function schemaBranchDeclaresProperty(
 
 /** Whether the schema branch selected by `value` declares `property`. */
 export function schemaDeclaresProperty(schema: unknown, property: string, value: unknown): boolean {
-	const resolved = dereferenceJsonSchema(schema);
+	// Upgrade first so legacy draft-07 `dependencies` become the 2020-12
+	// `dependentRequired`/`dependentSchemas` the validator and traversal both read.
+	const resolved = upgradeJsonSchemaTo202012(dereferenceJsonSchema(schema));
 	if (!isRecord(value) || !Object.hasOwn(value, property)) {
 		return schemaBranchDeclaresProperty(resolved, property, value, new Set());
 	}
