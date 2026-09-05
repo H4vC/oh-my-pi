@@ -239,6 +239,36 @@ describe("callSessionTool", () => {
 		);
 	});
 
+	it("preserves `i` when an `if` conditional declares it as a discriminator", async () => {
+		const executeIf = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "if" }] });
+		const toolIf = createTool("if_tool", executeIf, {
+			type: "object",
+			if: {
+				properties: { i: { const: "special" } },
+				required: ["i"],
+			},
+			// oxlint-disable-next-line unicorn/no-thenable -- `then` is a JSON Schema conditional keyword, not a promise.
+			then: {
+				properties: { i: { type: "string" }, x: { type: "number" } },
+				required: ["x"],
+			},
+			else: {
+				properties: { y: { type: "number" } },
+				required: ["y"],
+			},
+		});
+		const session = createSession([toolIf]);
+
+		await callSessionTool("if_tool", { i: "special", x: 1 }, { session });
+		expect(executeIf).toHaveBeenLastCalledWith(
+			expect.stringMatching(/^js-if_tool-/),
+			{ i: "special", x: 1 },
+			undefined,
+			undefined,
+			undefined,
+		);
+	});
+
 	it("returns structured tool results when details or images are present", async () => {
 		const session = createSession([
 			createTool("custom", async () => ({

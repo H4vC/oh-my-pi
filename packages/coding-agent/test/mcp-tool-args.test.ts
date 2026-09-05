@@ -222,6 +222,37 @@ describe("MCP tool arguments", () => {
 		]);
 	});
 
+	it("preserves `i` when an `if` conditional declares it as a discriminator", async () => {
+		const calls: CapturedRequest[] = [];
+		const definition: MCPToolDefinition = {
+			name: "conditional_echo",
+			description: "Echo gated by an if/then/else discriminator",
+			inputSchema: {
+				type: "object",
+				if: {
+					properties: { i: { const: "special" } },
+					required: ["i"],
+				},
+				// oxlint-disable-next-line unicorn/no-thenable -- `then` is a JSON Schema conditional keyword, not a promise.
+				then: {
+					properties: { i: { type: "string" }, x: { type: "number" } },
+					required: ["x"],
+				},
+				else: {
+					properties: { y: { type: "number" } },
+					required: ["y"],
+				},
+			},
+		};
+		const tool = new MCPTool(createCapturedConnection(calls), definition);
+
+		await tool.execute("call-1", { i: "special", x: 1 }, undefined, unusedContext, undefined);
+
+		expect(calls).toEqual([
+			{ method: "tools/call", params: { name: "conditional_echo", arguments: { i: "special", x: 1 } } },
+		]);
+	});
+
 	it("resolves local image arguments before forwarding tools/call", async () => {
 		using tempDir = TempDir.createSync("@pi-mcp-local-image-");
 		const calls: CapturedRequest[] = [];
