@@ -13,41 +13,16 @@ import type { SessionEntry } from "../session/session-entries";
 import { framedBlock, renderStatusLine, renderTreeList } from "../tui";
 import { normalizePathLikeInput, resolveToCwd } from "./path-utils";
 import { formatErrorDetail, formatMoreItems, PREVIEW_LIMITS, pluralize, replaceTabs } from "./render-utils";
+import type { TodoItem, TodoPhase, TodoStatus } from "./todo-shape";
+
+export * from "./todo-shape";
 
 // =============================================================================
 // Types
 // =============================================================================
 
-export type TodoStatus = "pending" | "in_progress" | "completed" | "abandoned" | "blocked";
 /** Operation names accepted by the todo tool and echoed in successful result details. */
 export type TodoOperation = "init" | "start" | "done" | "rm" | "drop" | "block" | "unblock" | "append" | "view";
-
-export interface TodoItem {
-	content: string;
-	status: TodoStatus;
-	/** When `status === "blocked"`, an optional note on what the task is waiting for. */
-	blocker?: string;
-}
-
-export interface TodoPhase {
-	name: string;
-	tasks: TodoItem[];
-}
-
-/** Whether an unknown value is a persisted todo phase. */
-export function isTodoPhase(value: unknown): value is TodoPhase {
-	if (!isRecord(value) || typeof value.name !== "string" || !Array.isArray(value.tasks)) return false;
-	return value.tasks.every(
-		task =>
-			isRecord(task) &&
-			typeof task.content === "string" &&
-			(task.status === "pending" ||
-				task.status === "in_progress" ||
-				task.status === "completed" ||
-				task.status === "abandoned" ||
-				task.status === "blocked"),
-	);
-}
 
 export interface TodoCompletionTransition {
 	phase: string;
