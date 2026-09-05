@@ -222,7 +222,7 @@ describe("MCP tool arguments", () => {
 		]);
 	});
 
-	it("preserves `i` when an `if` conditional declares it as a discriminator", async () => {
+	it("selects intent ownership across `if` discriminator branches", async () => {
 		const calls: CapturedRequest[] = [];
 		const definition: MCPToolDefinition = {
 			name: "conditional_echo",
@@ -237,19 +237,23 @@ describe("MCP tool arguments", () => {
 				then: {
 					properties: { i: { type: "string" }, x: { type: "number" } },
 					required: ["x"],
+					additionalProperties: false,
 				},
 				else: {
 					properties: { y: { type: "number" } },
 					required: ["y"],
+					additionalProperties: false,
 				},
 			},
 		};
 		const tool = new MCPTool(createCapturedConnection(calls), definition);
 
 		await tool.execute("call-1", { i: "special", x: 1 }, undefined, unusedContext, undefined);
+		await tool.execute("call-2", { i: "py prelude", y: 1 }, undefined, unusedContext, undefined);
 
 		expect(calls).toEqual([
 			{ method: "tools/call", params: { name: "conditional_echo", arguments: { i: "special", x: 1 } } },
+			{ method: "tools/call", params: { name: "conditional_echo", arguments: { y: 1 } } },
 		]);
 	});
 

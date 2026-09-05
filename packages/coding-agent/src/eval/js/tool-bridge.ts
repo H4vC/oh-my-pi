@@ -112,10 +112,9 @@ function schemaBranchDeclaresProperty(
 
 		const conditional = schema.if;
 		if (isRecord(conditional)) {
-			// The `if` subschema itself can declare the property (as a discriminator);
-			// recognize that before descending into the selected `then`/`else` branch.
-			if (schemaBranchDeclaresProperty(conditional, property, value, visited)) return true;
-			const branch = isJsonSchemaValueValid(conditional, value) ? schema.then : schema.else;
+			const matches = isJsonSchemaValueValid(conditional, value);
+			if (matches && schemaBranchDeclaresProperty(conditional, property, value, visited)) return true;
+			const branch = matches ? schema.then : schema.else;
 			if (schemaBranchDeclaresProperty(branch, property, value, visited)) return true;
 		}
 

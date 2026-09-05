@@ -239,7 +239,7 @@ describe("callSessionTool", () => {
 		);
 	});
 
-	it("preserves `i` when an `if` conditional declares it as a discriminator", async () => {
+	it("selects intent ownership across `if` discriminator branches", async () => {
 		const executeIf = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "if" }] });
 		const toolIf = createTool("if_tool", executeIf, {
 			type: "object",
@@ -251,10 +251,12 @@ describe("callSessionTool", () => {
 			then: {
 				properties: { i: { type: "string" }, x: { type: "number" } },
 				required: ["x"],
+				additionalProperties: false,
 			},
 			else: {
 				properties: { y: { type: "number" } },
 				required: ["y"],
+				additionalProperties: false,
 			},
 		});
 		const session = createSession([toolIf]);
@@ -263,6 +265,15 @@ describe("callSessionTool", () => {
 		expect(executeIf).toHaveBeenLastCalledWith(
 			expect.stringMatching(/^js-if_tool-/),
 			{ i: "special", x: 1 },
+			undefined,
+			undefined,
+			undefined,
+		);
+
+		await callSessionTool("if_tool", { i: "py prelude", y: 1 }, { session });
+		expect(executeIf).toHaveBeenLastCalledWith(
+			expect.stringMatching(/^js-if_tool-/),
+			{ i: "py prelude", y: 1 },
 			undefined,
 			undefined,
 			undefined,
