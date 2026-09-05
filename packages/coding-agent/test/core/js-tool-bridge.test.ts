@@ -3,15 +3,15 @@ import { type } from "@oh-my-pi/omptype";
 import type { AgentTool, AgentToolContext, AgentToolResult } from "@oh-my-pi/pi-agent-core";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { callSessionTool } from "@oh-my-pi/pi-coding-agent/eval/js/tool-bridge";
-import type { ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
+import { TodoTool, type TodoPhase, type ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
 import { INTENT_FIELD } from "@oh-my-pi/pi-wire";
 
-function createTool(name: string, execute: AgentTool["execute"]): AgentTool {
+function createTool(name: string, execute: AgentTool["execute"], parameters: unknown = type({})): AgentTool {
 	return {
 		name,
 		label: name,
 		description: `${name} tool`,
-		parameters: type({}),
+		parameters,
 		concurrency: "parallel",
 		execute,
 	} as unknown as AgentTool;
@@ -39,7 +39,7 @@ describe("callSessionTool", () => {
 
 		const result = await callSessionTool(
 			"read",
-			{ path: "/tmp/demo.txt" },
+			{ path: "/tmp/demo.txt", [INTENT_FIELD]: "reading demo" },
 			{
 				session,
 				emitStatus: event => {
@@ -51,7 +51,7 @@ describe("callSessionTool", () => {
 		expect(result).toBe("hello");
 		expect(execute).toHaveBeenCalledWith(
 			expect.stringMatching(/^js-read-/),
-			{ path: "/tmp/demo.txt", [INTENT_FIELD]: "js prelude" },
+			{ path: "/tmp/demo.txt", [INTENT_FIELD]: "reading demo" },
 			undefined,
 			undefined,
 			undefined,
@@ -75,6 +75,81 @@ describe("callSessionTool", () => {
 			undefined,
 			undefined,
 			context,
+		);
+	});
+
+	it("persists only successful mutating todo calls executed through the eval bridge", async () => {
+		let phases: TodoPhase[] = [
+			{
+				name: "Bridge reproduction",
+				tasks: [{ content: "finish phase", status: "in_progress" }],
+			},
+		];
+		const persistTodoPhases = vi.fn((_phases: TodoPhase[]) => {});
+		const todoSession: ToolSession = {
+			...createSession([]),
+			getTodoPhases: () => phases,
+			setTodoPhases: next => {
+				phases = next;
+			},
+		};
+		const todoTool = new TodoTool(todoSession);
+		const bridgeTool = createTool(
+			"todo",
+			async (toolCallId, args, signal) => todoTool.execute(toolCallId, todoTool.parameters.assert(args), signal),
+			todoTool.parameters,
+		);
+		const session: ToolSession = {
+			...todoSession,
+			getToolByName: name => (name === "todo" ? bridgeTool : undefined),
+			persistTodoPhases,
+		};
+
+		await callSessionTool(
+			"todo",
+			{
+				op: "done",
+				phase: "Bridge reproduction",
+				list: null,
+				task: null,
+				items: null,
+				reason: null,
+			},
+			{ session },
+		);
+
+		expect(phases[0]?.tasks.map(task => task.status)).toEqual(["completed"]);
+		expect(persistTodoPhases).toHaveBeenCalledWith(phases);
+
+		persistTodoPhases.mockClear();
+		await callSessionTool("todo", { op: "view" }, { session });
+		await callSessionTool("todo", { op: "done", task: "missing" }, { session });
+		expect(persistTodoPhases).not.toHaveBeenCalled();
+	});
+
+	it("keeps lenient bridge fallback while removing provider parse markers", async () => {
+		const execute = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "recovered" }] });
+		const tool = createTool("custom", execute, type({ required: "string" }));
+		tool.lenientArgValidation = true;
+		const session = createSession([tool]);
+
+		await callSessionTool(
+			"custom",
+			{
+				__parseError: "trailing comma",
+				__rawJson: '{"recovered":"yes",}',
+				recovered: "yes",
+				[INTENT_FIELD]: "recovering call",
+			},
+			{ session },
+		);
+
+		expect(execute).toHaveBeenCalledWith(
+			expect.stringMatching(/^js-custom-/),
+			{ recovered: "yes", [INTENT_FIELD]: "recovering call" },
+			undefined,
+			undefined,
+			undefined,
 		);
 	});
 

@@ -73,6 +73,7 @@ const WIRE_AGENT_EVENT_TYPES: Record<WireAgentEvent["type"], true> = {
 	tool_execution_start: true,
 	tool_execution_update: true,
 	tool_execution_end: true,
+	todo_updated: true,
 	notice: true,
 	auto_compaction_start: true,
 	auto_compaction_end: true,

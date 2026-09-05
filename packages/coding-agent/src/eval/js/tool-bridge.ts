@@ -1,7 +1,14 @@
-import type { AgentTool, AgentToolResult } from "@oh-my-pi/pi-agent-core";
+import {
+	type AgentTool,
+	type AgentToolCall,
+	type AgentToolResult,
+	validateToolArgumentsForDispatch,
+} from "@oh-my-pi/pi-agent-core";
+import { isRecord } from "@oh-my-pi/pi-utils";
 import { INTENT_FIELD } from "@oh-my-pi/pi-wire";
 import type { ToolSession } from "../../tools";
 import { ToolError } from "../../tools/tool-errors";
+import { isTodoPhase } from "../../tools/todo";
 import { EVAL_AGENT_BRIDGE_NAME, runEvalAgent } from "../agent-bridge";
 import { EVAL_BUDGET_BRIDGE_NAME, type EvalBudgetResult, runEvalBudget } from "../budget-bridge";
 import { EVAL_COMPLETION_BRIDGE_NAME, runEvalCompletion } from "../completion-bridge";
@@ -36,6 +43,32 @@ function toolResultHasError(result: AgentToolResult): boolean {
 	return (result.details as { isError?: unknown }).isError === true;
 }
 
+function isTodoMutationOperation(value: unknown): boolean {
+	switch (value) {
+		case "init":
+		case "start":
+		case "done":
+		case "rm":
+		case "drop":
+		case "block":
+		case "unblock":
+		case "append":
+			return true;
+		default:
+			return false;
+	}
+}
+
+function persistTodoMutation(name: string, result: AgentToolResult, hasError: boolean, session: ToolSession): void {
+	if (name !== "todo" || hasError) return;
+	const details = result.details;
+	if (!details || typeof details !== "object" || !("op" in details) || !("phases" in details)) return;
+	if (!isTodoMutationOperation(details.op) || !Array.isArray(details.phases) || !details.phases.every(isTodoPhase)) {
+		return;
+	}
+	session.persistTodoPhases?.(details.phases);
+}
+
 function getTool(session: ToolSession, name: string): AgentTool {
 	const tool = session.getToolForEvalBridge ? session.getToolForEvalBridge(name) : session.getToolByName?.(name);
 	if (!tool) {
@@ -45,14 +78,22 @@ function getTool(session: ToolSession, name: string): AgentTool {
 }
 
 function normalizeArgs(args: unknown): unknown {
-	if (!args || typeof args !== "object" || Array.isArray(args)) {
-		return args;
-	}
-	const record = { ...(args as Record<string, unknown>) };
+	if (!isRecord(args)) return args;
+	const record = { ...args };
 	if (record[INTENT_FIELD] === undefined) {
 		record[INTENT_FIELD] = "js prelude";
 	}
 	return record;
+}
+
+function validateArgsForBridge(tool: AgentTool, name: string, toolCallId: string, args: unknown): unknown {
+	if (!isRecord(args)) return args;
+	const intent = args[INTENT_FIELD];
+	const stripped = { ...args };
+	delete stripped[INTENT_FIELD];
+	const toolCall: AgentToolCall = { type: "toolCall", id: toolCallId, name, arguments: stripped };
+	const validated = validateToolArgumentsForDispatch(tool, toolCall, stripped);
+	return intent === undefined ? validated : { ...validated, [INTENT_FIELD]: intent };
 }
 
 function summarizeToolResult(
@@ -129,9 +170,10 @@ export async function callSessionTool(name: string, args: unknown, options: Tool
 	const normalizedArgs = normalizeArgs(args);
 	const toolCallId = `js-${name}-${crypto.randomUUID()}`;
 	try {
+		const validatedArgs = validateArgsForBridge(tool, name, toolCallId, normalizedArgs);
 		const result = await tool.execute(
 			toolCallId,
-			normalizedArgs,
+			validatedArgs,
 			options.signal,
 			undefined,
 			options.session.getToolContext?.(),
@@ -146,7 +188,8 @@ export async function callSessionTool(name: string, args: unknown, options: Tool
 		);
 		const text = textBlocks.map(block => block.text).join("");
 		const hasError = toolResultHasError(result);
-		options.emitStatus?.(summarizeToolResult(name, normalizedArgs, result, text, hasError));
+		persistTodoMutation(name, result, hasError, options.session);
+		options.emitStatus?.(summarizeToolResult(name, validatedArgs, result, text, hasError));
 		if (result.details === undefined && imageBlocks.length === 0 && !hasError) {
 			return text;
 		}

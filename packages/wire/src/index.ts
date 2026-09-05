@@ -190,6 +190,17 @@ export type AgentEvent =
 	| { type: "tool_execution_start"; toolCallId: string; toolName: string; args: unknown; intent?: string }
 	| { type: "tool_execution_update"; toolCallId: string; toolName: string; args: unknown; partialResult: unknown }
 	| { type: "tool_execution_end"; toolCallId: string; toolName: string; result: unknown; isError?: boolean }
+	| {
+			type: "todo_updated";
+			phases: Array<{
+				name: string;
+				tasks: Array<{
+					content: string;
+					status: "pending" | "in_progress" | "completed" | "abandoned" | "blocked";
+					blocker?: string;
+				}>;
+			}>;
+	  }
 	| { type: "notice"; level: "info" | "warning" | "error"; message: string; source?: string }
 	| { type: "auto_compaction_start"; reason: string; action: string }
 	| { type: "auto_compaction_end"; aborted: boolean; willRetry: boolean; errorMessage?: string; skipped?: boolean }
