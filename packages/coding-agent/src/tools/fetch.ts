@@ -25,7 +25,7 @@ import { convertWithMarkit, fetchBinary } from "../web/scrapers/utils";
 import { applyListLimit } from "./list-limit";
 import { formatStyledArtifactReference, type OutputMeta } from "./output-meta";
 import { type LineRange, parseLineRanges } from "./path-utils";
-import { formatExpandHint, getDomain, replaceTabs } from "./render-utils";
+import { formatExpandHint, getDomain, sanitizeErrorLines } from "./render-utils";
 import { ToolAbortError, ToolError } from "./tool-errors";
 import { toolResult } from "./tool-result";
 import { clampTimeout } from "./tool-timeouts";
@@ -1467,7 +1467,7 @@ export function renderReadUrlResult(
 		const urlText = details?.finalUrl ?? details?.url ?? "";
 		const description = urlText ? `${getDomain(urlText)}${urlText.replace(/^https?:\/\/[^/]+/, "")}` : undefined;
 		const header = renderStatusLine({ icon: "error", title: "Read", description }, uiTheme);
-		const errorLines = errorText.split("\n").map(line => uiTheme.fg("error", replaceTabs(line)));
+		const errorLines = sanitizeErrorLines(errorText).map(line => uiTheme.fg("error", line));
 		const outputBlock = new CachedOutputBlock();
 		return {
 			render: (width: number) =>

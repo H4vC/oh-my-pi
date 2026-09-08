@@ -181,6 +181,20 @@ export function formatErrorMessage(message: string | undefined, theme: Theme): s
 	return `${theme.styledSymbol("status.error", "error")} ${theme.fg("error", `Error: ${safe}`)}`;
 }
 
+/**
+ * Split multi-line tool error text into TUI-safe display lines.
+ * Splits CRLF/LF, collapses stray `\r` progress overwrites to the final
+ * segment (mirroring terminal rendering), and expands tabs — so raw process
+ * stderr (e.g. Windows ssh emitting CRLF) can't corrupt the framed block
+ * layout with cursor-moving control characters or tab-stop width mismatches.
+ */
+export function sanitizeErrorLines(text: string): string[] {
+	return text.split(/\r?\n/).map(line => {
+		const idx = line.lastIndexOf("\r");
+		return replaceTabs(idx < 0 ? line : line.slice(idx + 1));
+	});
+}
+
 export function formatEmptyMessage(message: string, theme: Theme): string {
 	return `${theme.styledSymbol("status.warning", "warning")} ${theme.fg("muted", message)}`;
 }

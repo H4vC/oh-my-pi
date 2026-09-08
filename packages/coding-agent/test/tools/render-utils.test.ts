@@ -9,6 +9,7 @@ import {
 	formatErrorMessage,
 	formatParseErrors,
 	formatScreenshot,
+	sanitizeErrorLines,
 	truncateDiffByHunk,
 } from "@oh-my-pi/pi-coding-agent/tools/render-utils";
 
@@ -280,5 +281,22 @@ describe("formatErrorMessage (F4 sanitization)", () => {
 	it("falls back to 'Unknown error' for empty/missing input", () => {
 		const out = formatErrorMessage(undefined, theme);
 		expect(out).toContain("Unknown error");
+	});
+});
+
+describe("sanitizeErrorLines", () => {
+	it("expands tabs so error lines never emit raw tab stops", () => {
+		expect(sanitizeErrorLines("offending\tkey")).toEqual(["offending   key"]);
+	});
+
+	it("splits Windows CRLF stderr without leaving carriage returns", () => {
+		const lines = sanitizeErrorLines("SHA256:abc\r\nHost key verification failed.\r\n");
+		expect(lines.join("\n")).not.toContain("\r");
+		expect(lines).toContain("SHA256:abc");
+		expect(lines).toContain("Host key verification failed.");
+	});
+
+	it("collapses carriage-return progress overwrites to the final segment", () => {
+		expect(sanitizeErrorLines("50%\r100%")).toEqual(["100%"]);
 	});
 });

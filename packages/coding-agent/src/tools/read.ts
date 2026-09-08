@@ -73,7 +73,7 @@ import {
 	splitInternalUrlSel,
 	splitPathAndSel,
 } from "./path-utils";
-import { formatBytes, replaceTabs, shortenPath, wrapBrackets } from "./render-utils";
+import { formatBytes, sanitizeErrorLines, shortenPath, wrapBrackets } from "./render-utils";
 import {
 	executeReadQuery,
 	getRowByKey,
@@ -2371,7 +2371,7 @@ export const readToolRenderer = {
 				title += `:${startLine}${endLine ? `-${endLine}` : ""}`;
 			}
 			const header = renderStatusLine({ icon: "error", title }, uiTheme);
-			const errorLines = errorText.split("\n").map(line => uiTheme.fg("error", replaceTabs(line)));
+			const errorLines = sanitizeErrorLines(errorText).map(line => uiTheme.fg("error", line));
 			const outputBlock = new CachedOutputBlock();
 			return {
 				render: (width: number) =>
