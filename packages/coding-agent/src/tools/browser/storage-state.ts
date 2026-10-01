@@ -1,7 +1,6 @@
-import * as os from "node:os";
 import * as path from "node:path";
 
-import { isRecord, untilAborted } from "@oh-my-pi/pi-utils";
+import { getBaseConfigRoot, isRecord, untilAborted } from "@oh-my-pi/pi-utils";
 import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
 import type { Cookie, CookieParam, Page } from "puppeteer-core";
 import { resolveToCwd } from "../path-utils";
@@ -467,7 +466,7 @@ export function storageStatePath(tabName: string, requestedPath: string | undefi
 	const fileName = safeName === "." || safeName === ".." ? "_" : safeName || "main";
 	return requestedPath
 		? resolveToCwd(requestedPath, cwd)
-		: path.join(os.homedir(), ".omp", "browser-state", `${fileName}.json`);
+		: path.join(getBaseConfigRoot(), "browser-state", `${fileName}.json`);
 }
 
 /** Save cookies and current-origin Web Storage to a Playwright-compatible state file. */

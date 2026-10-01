@@ -111,9 +111,12 @@ function readProfileFromEnvSafe(): string | undefined {
 	}
 }
 
-/** Profile-independent config root (~/.omp), shared by every omp profile. */
+/**
+ * Profile-independent config root (~/.omp), shared by every omp profile. An
+ * absolute `PI_CONFIG_DIR` is the root itself; a relative one names it under home.
+ */
 export function getBaseConfigRoot(): string {
-	return path.join(os.homedir(), getConfigDirName());
+	return path.resolve(os.homedir(), getUserConfigDirName());
 }
 
 function getProfileConfigRoot(profile: string | undefined): string {
@@ -303,15 +306,32 @@ export function getSafeProjectCwd(): string {
 	return os.homedir();
 }
 
-/** Get the config directory name relative to home (e.g. ".omp" or PI_CONFIG_DIR override). */
+/**
+ * Config directory name relative to home or a project root (".omp", or a
+ * relative `PI_CONFIG_DIR`). An absolute `PI_CONFIG_DIR` names the user config
+ * root only, so project-relative lookups keep ".omp".
+ */
 export function getConfigDirName(): string {
+	const configured = process.env.PI_CONFIG_DIR;
+	return configured && !path.isAbsolute(configured) ? configured : CONFIG_DIR_NAME;
+}
+
+/**
+ * User config directory as given by `PI_CONFIG_DIR` (default ".omp"): relative
+ * to home, or absolute. Resolve with `path.resolve(home, …)`, never `path.join`.
+ */
+export function getUserConfigDirName(): string {
 	return process.env.PI_CONFIG_DIR || CONFIG_DIR_NAME;
 }
 
-/** Get the config agent directory name relative to home (e.g. ".omp/agent" or PI_CONFIG_DIR + "/agent"). */
+/**
+ * User agent directory relative to home (e.g. ".omp/agent"), or absolute when
+ * `PI_CONFIG_DIR` is absolute. Resolve with `path.resolve(home, …)`.
+ */
 export function getConfigAgentDirName(): string {
 	const profile = getActiveProfile();
-	return profile ? path.join(getConfigDirName(), "profiles", profile, "agent") : `${getConfigDirName()}/agent`;
+	const base = getUserConfigDirName();
+	return profile ? path.join(base, "profiles", profile, "agent") : `${base}/agent`;
 }
 
 // =============================================================================

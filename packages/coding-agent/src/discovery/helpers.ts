@@ -7,6 +7,7 @@ import {
 	getAgentDir,
 	getConfigDirName,
 	getPluginsDir,
+	getUserConfigDirName,
 	getProjectDir,
 	parseFrontmatter,
 	tryParseJson,
@@ -38,11 +39,12 @@ import { buildPluginDirRoot } from "./plugin-dir-roots";
  */
 export const SOURCE_PATHS = {
 	native: {
+		// Relative to home, or absolute for an absolute PI_CONFIG_DIR.
 		get userBase() {
-			return getConfigDirName();
+			return getUserConfigDirName();
 		},
 		get userAgent() {
-			return `${getConfigDirName()}/agent`;
+			return `${getUserConfigDirName()}/agent`;
 		},
 		projectDir: CONFIG_DIR_NAME,
 	},
@@ -108,7 +110,7 @@ export function resolveUserPath(ctx: LoadContext, source: SourceId, subpath: str
 	if (source === "claude") return path.join(resolveClaudePaths(ctx.home).configDir, subpath);
 	const paths = SOURCE_PATHS[source];
 	if (!paths.userAgent) return null;
-	return path.join(ctx.home, paths.userAgent, subpath);
+	return path.resolve(ctx.home, paths.userAgent, subpath);
 }
 
 /**

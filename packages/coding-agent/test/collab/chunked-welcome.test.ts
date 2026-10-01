@@ -19,6 +19,7 @@ import { CollabSocket } from "@oh-my-pi/pi-coding-agent/collab/relay-client";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import type { InteractiveModeContext } from "@oh-my-pi/pi-coding-agent/modes/types";
 import type { SessionEntry } from "@oh-my-pi/pi-coding-agent/session/session-entries";
+import { type IsolatedHome, isolateHome } from "../helpers/isolated-home";
 import { installInMemoryRelay, uninstallInMemoryRelay } from "./helpers/in-memory-relay";
 
 // In-memory transport: shared FakeWebSocket + InMemoryRelay harness (see
@@ -180,8 +181,11 @@ function makeCancelledSwitchGuestContext(
 
 const snapshot = makeLargeSnapshot();
 let host: CollabHost;
+// Joining guests write ~1.5 MB replicas under getConfigRootDir()/collab.
+let isolated: IsolatedHome;
 
 beforeAll(async () => {
+	isolated = await isolateHome("omp-collab-chunked-");
 	installInMemoryRelay();
 	host = new CollabHost(makeHostContext(snapshot));
 	await host.start("ws://localhost:8788");
@@ -190,6 +194,7 @@ beforeAll(async () => {
 afterAll(async () => {
 	uninstallInMemoryRelay();
 	await host.stop("test done");
+	await isolated.restore();
 });
 
 const guestCleanups: (() => void)[] = [];

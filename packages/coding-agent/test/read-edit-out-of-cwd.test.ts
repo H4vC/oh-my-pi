@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -52,9 +52,11 @@ describe("read → edit round-trip for out-of-cwd files", () => {
 	});
 
 	afterEach(async () => {
+		spyOn(os, "homedir").mockRestore();
 		await removeWithRetries(cwdDir);
 		await removeWithRetries(outDir);
 		if (homeDir) await removeWithRetries(homeDir);
+		homeDir = undefined;
 	});
 
 	it("anchors the out-of-cwd path in the header so a follow-up edit lands", async () => {
@@ -79,9 +81,11 @@ describe("read → edit round-trip for out-of-cwd files", () => {
 	});
 
 	it("round-trips a home-relative path through read and edit", async () => {
-		homeDir = await fs.mkdtemp(path.join(os.homedir(), ".omp-read-edit-"));
-		const homeFile = path.join(homeDir, "settings.txt");
-		const authoredPath = `~/${path.relative(os.homedir(), homeFile)}`;
+		// `~` expands through `os.homedir()`; fake it so the fixture never lands in the real home.
+		homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "read-edit-home-"));
+		spyOn(os, "homedir").mockReturnValue(homeDir);
+		const homeFile = path.join(homeDir, ".omp-read-edit", "settings.txt");
+		const authoredPath = "~/.omp-read-edit/settings.txt";
 		await Bun.write(homeFile, "alpha\nbeta\n");
 
 		const session = createSession(cwdDir);

@@ -4,9 +4,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as nativePath from "@oh-my-pi/pi-natives/path";
 import {
+	__resetDirsFromEnvForTests,
 	__resetProjectDirCacheForTests,
 	directoryIsMissing,
+	getBaseConfigRoot,
+	getConfigDirName,
 	getLogPath,
+	getLogsDir,
 	getProjectDir,
 	localDay,
 	relativePathWithinRoot,
@@ -109,5 +113,30 @@ describe("dated log path", () => {
 		if (proc.exitCode === 2) return; // TZ not honored on this platform
 		if (proc.exitCode !== 0) console.error(proc.stderr.toString());
 		expect(proc.exitCode).toBe(0);
+	});
+});
+
+describe("PI_CONFIG_DIR", () => {
+	const savedConfigDir = process.env.PI_CONFIG_DIR;
+	afterEach(() => {
+		if (savedConfigDir === undefined) delete process.env.PI_CONFIG_DIR;
+		else process.env.PI_CONFIG_DIR = savedConfigDir;
+		__resetDirsFromEnvForTests();
+	});
+
+	it("uses an absolute value as the config root while project lookups keep .omp", () => {
+		const root = path.join(os.tmpdir(), "omp-absolute-config-root");
+		process.env.PI_CONFIG_DIR = root;
+		__resetDirsFromEnvForTests();
+		expect(getBaseConfigRoot()).toBe(root);
+		expect(getLogsDir()).toBe(path.join(root, "logs"));
+		expect(getConfigDirName()).toBe(".omp");
+	});
+
+	it("resolves a relative value under home", () => {
+		process.env.PI_CONFIG_DIR = ".omp-relative";
+		__resetDirsFromEnvForTests();
+		expect(getBaseConfigRoot()).toBe(path.join(os.homedir(), ".omp-relative"));
+		expect(getConfigDirName()).toBe(".omp-relative");
 	});
 });

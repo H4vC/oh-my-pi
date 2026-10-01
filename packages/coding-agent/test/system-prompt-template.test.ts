@@ -33,8 +33,13 @@ async function withDiscoveryHome<T>(fn: (paths: DiscoveryPaths) => Promise<T>): 
 	const homedirSpy = spyOn(os, "homedir").mockReturnValue(home);
 	const previousHome = process.env.HOME;
 	const previousUserProfile = process.env.USERPROFILE;
+	// The test preload pins PI_CONFIG_DIR/PI_CODING_AGENT_DIR to its own home; clear them so dirs follow `home`.
+	const previousConfigDir = process.env.PI_CONFIG_DIR;
+	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 	process.env.HOME = home;
 	process.env.USERPROFILE = home;
+	delete process.env.PI_CONFIG_DIR;
+	delete process.env.PI_CODING_AGENT_DIR;
 	__resetDirsFromEnvForTests();
 	try {
 		return await fn({
@@ -48,6 +53,8 @@ async function withDiscoveryHome<T>(fn: (paths: DiscoveryPaths) => Promise<T>): 
 		else process.env.HOME = previousHome;
 		if (previousUserProfile === undefined) delete process.env.USERPROFILE;
 		else process.env.USERPROFILE = previousUserProfile;
+		if (previousConfigDir !== undefined) process.env.PI_CONFIG_DIR = previousConfigDir;
+		if (previousAgentDir !== undefined) process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 		__resetDirsFromEnvForTests();
 	}
 }

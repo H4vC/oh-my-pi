@@ -13,6 +13,10 @@ saveTextLockfile = true
 ".lark" = "text"
 
 [test]
+# Private throwaway omp root (PI_CONFIG_DIR/PI_CODING_AGENT_DIR/XDG_*) so tests never
+# touch the real ~/.omp. Bun only reads the bunfig.toml in its working directory,
+# so each package with tests carries the same entry.
+preload = ["./scripts/test-preload-home.ts"]
 # bun test does NOT honor .gitignore; prune robomp's repo clones and
 # scratch dirs so a root-level `bun test` doesn't walk into them.
 #

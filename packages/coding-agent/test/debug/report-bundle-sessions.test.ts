@@ -1,34 +1,17 @@
 import * as jsc from "bun:jsc";
 import { afterEach, describe, expect, it, vi } from "bun:test";
 import * as fs from "node:fs/promises";
-import * as os from "node:os";
 import * as path from "node:path";
 import { collectMemoryStats } from "@oh-my-pi/pi-coding-agent/debug/profiler";
 import { createReportBundle } from "@oh-my-pi/pi-coding-agent/debug/report-bundle";
-import { getConfigRootDir, removeWithRetries, setAgentDir } from "@oh-my-pi/pi-utils";
+import { type IsolatedHome, isolateHome } from "../helpers/isolated-home";
 
-const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
-const originalXdgStateHome = process.env.XDG_STATE_HOME;
-const fallbackAgentDir = path.join(getConfigRootDir(), "agent");
-let cleanupRoot: string | undefined;
+let isolated: IsolatedHome | undefined;
 
 afterEach(async () => {
 	vi.restoreAllMocks();
-	if (originalXdgStateHome === undefined) {
-		delete process.env.XDG_STATE_HOME;
-	} else {
-		process.env.XDG_STATE_HOME = originalXdgStateHome;
-	}
-	if (originalAgentDir) {
-		setAgentDir(originalAgentDir);
-	} else {
-		setAgentDir(fallbackAgentDir);
-		delete process.env.PI_CODING_AGENT_DIR;
-	}
-	if (cleanupRoot) {
-		await removeWithRetries(cleanupRoot);
-		cleanupRoot = undefined;
-	}
+	await isolated?.restore();
+	isolated = undefined;
 });
 
 async function archiveMembers(archivePath: string): Promise<string[]> {
@@ -37,12 +20,8 @@ async function archiveMembers(archivePath: string): Promise<string[]> {
 }
 
 async function setupReportDirectory(): Promise<string> {
-	cleanupRoot = await fs.mkdtemp(path.join(os.tmpdir(), "omp-report-"));
-	const xdgStateHome = path.join(cleanupRoot, "state");
-	await fs.mkdir(path.join(xdgStateHome, "omp"), { recursive: true });
-	process.env.XDG_STATE_HOME = xdgStateHome;
-	setAgentDir(fallbackAgentDir);
-	return cleanupRoot;
+	isolated = await isolateHome("omp-report-");
+	return isolated.home;
 }
 
 describe("report bundle privacy", () => {

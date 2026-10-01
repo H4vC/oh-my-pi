@@ -346,11 +346,20 @@ fn default_agent_dir(home: &Path, config_dir_override: Option<&OsStr>) -> PathBu
 	base.join("agent")
 }
 
+/// Mirrors JS `path.resolve(os.homedir(), PI_CONFIG_DIR)` (`getBaseConfigRoot`
+/// in `packages/utils/src/dirs.ts`): an absolute `PI_CONFIG_DIR` is the config
+/// root itself, a relative one resolves under `home`; `.`/`..` are normalized
+/// lexically without touching the filesystem.
 fn config_root_dir(home: &Path, config_dir: &OsStr) -> PathBuf {
 	let mut base = PathBuf::from(home);
 	for component in Path::new(config_dir).components() {
 		match component {
-			std::path::Component::Prefix(_) | std::path::Component::RootDir => {},
+			// A drive/UNC prefix starts a new root (Windows).
+			std::path::Component::Prefix(_) => base = PathBuf::from(component.as_os_str()),
+			// `push` of a bare root keeps only the current prefix, so a drive-less
+			// `\state` lands on home's drive like `path.resolve` (Windows), and
+			// `/state` replaces `home` entirely (Unix).
+			std::path::Component::RootDir => base.push(component.as_os_str()),
 			std::path::Component::CurDir => {},
 			std::path::Component::ParentDir => {
 				base.pop();
@@ -463,17 +472,35 @@ mod tests {
 	}
 
 	#[test]
-	fn resolve_logs_dir_reroots_absolute_pi_config_dir_under_home() {
-		// JS resolves the config root via `path.join(os.homedir(),
-		// getConfigDirName())`, which never honors an absolute PI_CONFIG_DIR — it
-		// is always re-rooted under `$HOME` (and `..` components are normalized
-		// away).
+	fn resolve_logs_dir_uses_absolute_pi_config_dir_as_root() {
+		// JS resolves the config root via `path.resolve(os.homedir(),
+		// PI_CONFIG_DIR)`: an absolute value is the root itself, not re-rooted
+		// under `$HOME`, and `..` components are normalized away.
 		let dir = resolve_logs_dir(
 			Path::new("/tmp/pi-natives-test-home"),
 			Some(OsStr::new("/var/tmp/pi-natives-state")),
 			None,
 		);
-		assert_eq!(dir, PathBuf::from("/tmp/pi-natives-test-home/var/tmp/pi-natives-state/logs"));
+		assert_eq!(dir, PathBuf::from("/var/tmp/pi-natives-state/logs"));
+
+		let dir = resolve_logs_dir(
+			Path::new("/tmp/pi-natives-test-home"),
+			Some(OsStr::new("/var/tmp/../pi-natives-state")),
+			None,
+		);
+		assert_eq!(dir, PathBuf::from("/var/pi-natives-state/logs"));
+	}
+
+	#[cfg(windows)]
+	#[test]
+	fn resolve_logs_dir_uses_absolute_windows_pi_config_dir_as_root() {
+		let home = Path::new(r"C:\Users\tester");
+		let dir = resolve_logs_dir(home, Some(OsStr::new(r"D:\omp-state")), None);
+		assert_eq!(dir, PathBuf::from(r"D:\omp-state\logs"));
+
+		// Drive-less rooted path: `path.resolve` keeps home's drive.
+		let dir = resolve_logs_dir(home, Some(OsStr::new(r"\omp-state")), None);
+		assert_eq!(dir, PathBuf::from(r"C:\omp-state\logs"));
 	}
 
 	#[test]

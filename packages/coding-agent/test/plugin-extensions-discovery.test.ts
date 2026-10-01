@@ -12,7 +12,8 @@ describe("plugin extension discovery", () => {
 	let projectDir: TempDir;
 	let tempHome = "";
 	const originalAgentDir = getAgentDir();
-	const xdgVars = ["XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"] as const;
+	// PI_CONFIG_DIR: an absolute value (the test preload sets one) would pin the root outside tempHome.
+	const xdgVars = ["XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "PI_CONFIG_DIR"] as const;
 	const originalXdg = new Map<string, string | undefined>();
 
 	beforeEach(() => {

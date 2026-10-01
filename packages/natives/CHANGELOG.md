@@ -6,6 +6,10 @@
 
 - Added `readTextFromClipboard()` to read plain clipboard text without starting a subprocess ([#13991](https://github.com/can1357/oh-my-pi/pull/13991) by [@H4vC](https://github.com/H4vC))
 
+### Fixed
+
+- Fixed native crash logs landing outside the JS logs directory when `PI_CONFIG_DIR` is an absolute path: the crash handler now uses it as the config root itself, matching `getLogsDir()`, instead of re-rooting it under `$HOME` ([#14013](https://github.com/can1357/oh-my-pi/pull/14013) by [@H4vC](https://github.com/H4vC))
+
 ## [18.4.7] - 2026-10-01
 
 ### Fixed
