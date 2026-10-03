@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { CompactionCancelledError } from "@oh-my-pi/pi-agent-core/compaction";
 import { logger, setProjectDir } from "@oh-my-pi/pi-utils";
 import { clearClaudePluginRootsCache } from "../discovery/helpers";
+import { showArtifactBrowser } from "../modes/artifact-browser";
 import { rebindMemoryBackendForCwd } from "../hindsight/backend";
 import { memoryStatsUnavailableMessage, resolveMemoryBackend } from "../memory-backend";
 import type { AgentSession, FreshSessionResult, HandoffResult } from "../session/agent-session";
@@ -537,6 +538,15 @@ export const BUILTIN_LIFECYCLE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> =
 		handleTui: async (_command, runtime) => {
 			await runtime.ctx.showDebugSelector();
 			clearSubmittedText(runtime);
+		},
+	},
+	{
+		name: "artifacts",
+		icon: "inbox",
+		description: "Browse this session's artifacts beside the transcript (Tern)",
+		handleTui: async (_command, runtime) => {
+			clearSubmittedText(runtime);
+			showArtifactBrowser(runtime.ctx);
 		},
 	},
 	{

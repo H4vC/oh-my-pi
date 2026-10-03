@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `/artifacts` for Tern: the current session's artifacts (`local://` files first, then tool output, subagent results and transcripts) docked beside the transcript like `/settings`, a page per kind; the selected file shows in a Tern block beside the pane as the selection moves (with IDA available, executables and raw x86-64/AArch64 code show as a disassembly listing) and that block closes with the browser or when omp exits, image artifacts get a thumbnail gallery, double-click or Enter opens a file in a new Tern block, and Ctrl+Y copies its `artifact://`/`agent://`/`local://` URL
+
 ## [18.6.0] - 2026-10-03
 
 ### Added

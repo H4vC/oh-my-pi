@@ -36,7 +36,7 @@ const runtimes = new Map<string, Promise<IdaRuntime>>();
  * (`ida.python`, install dir, cwd). Throws {@link IdaUnavailableError} when IDA is disabled,
  * no install is found, or no interpreter qualifies.
  */
-export function resolveIdaRuntime(session: ToolSession): Promise<IdaRuntime> {
+export function resolveIdaRuntime(session: Pick<ToolSession, "settings" | "cwd">): Promise<IdaRuntime> {
 	const installDir = cfgIdaInstall.get(session.settings);
 	if (!installDir) {
 		return Promise.reject(

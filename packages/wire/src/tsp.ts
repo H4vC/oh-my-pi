@@ -579,7 +579,8 @@ export interface TspPrefsRow {
 	/** Default shown in the changed dot's title. */
 	defaultLabel?: string;
 	disabled?: string;
-	control: TspPrefsControl;
+	/** Absent: a plain row with no control (Tern still reports its clicks as `select`). */
+	control?: TspPrefsControl;
 }
 
 /** A titled group of settings rows. */
