@@ -7,7 +7,7 @@ import * as path from "node:path";
 import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
 import { type FetchImpl, getEnvApiKey, type ImageContent, type TextContent } from "@oh-my-pi/pi-ai";
 import { htmlToMarkdown, notebookToEditableText } from "@oh-my-pi/pi-natives";
-import { $which, ptree } from "@oh-my-pi/pi-utils";
+import { $which, countNewlines, ptree } from "@oh-my-pi/pi-utils";
 import { type ArchiveFormat, listArchiveRoot, sniffArchiveFormat } from "@oh-my-pi/pi-utils/ar";
 import type { Settings } from "../config/settings";
 import type { ToolSession } from "../sdk";
@@ -794,6 +794,13 @@ function shouldSkipBodyDownload(contentType: string): boolean {
 	);
 }
 
+/** Generic MIME types servers use for downloads whose real type is only known from the URL extension. */
+const GENERIC_BINARY_MIMES: Record<string, true> = {
+	"application/octet-stream": true,
+	"binary/octet-stream": true,
+	"application/x-download": true,
+};
+
 function getArchiveFormatHint(mime: string, extensionHint: string): ArchiveFormat | undefined {
 	if (extensionHint === ".zip" || mime === "application/zip" || mime === "application/x-zip-compressed") {
 		return "zip";
@@ -1095,7 +1102,22 @@ async function renderUrl(
 	}
 
 	// Step 2: Fetch page
-	const response = await loadPage(url, { timeout, signal, skipBodyForContentType: shouldSkipBodyDownload });
+	// Generic-MIME responses for convertible extensions (e.g. octet-stream .pdf) are re-fetched
+	// via fetchBinary below, so skip the first body read to download the bytes only once.
+	const requestExtHint = getExtensionHint(url);
+	const skipBody = (contentType: string): boolean =>
+		shouldSkipBodyDownload(contentType) ||
+		(GENERIC_BINARY_MIMES[normalizeMime(contentType)] === true && CONVERTIBLE_EXTENSIONS.has(requestExtHint));
+	let response = await loadPage(url, { timeout, signal, skipBodyForContentType: skipBody });
+	if (
+		response.ok &&
+		response.bodySkipped &&
+		!shouldSkipBodyDownload(response.contentType) &&
+		!CONVERTIBLE_EXTENSIONS.has(getExtensionHint(response.finalUrl))
+	) {
+		// Redirect dropped the convertible extension; the body is needed after all.
+		response = await loadPage(url, { timeout, signal, skipBodyForContentType: shouldSkipBodyDownload });
+	}
 	if (signal?.aborted) {
 		throw new ToolAbortError();
 	}
@@ -1712,7 +1734,7 @@ export async function executeReadUrl(
 	if (needsArtifact) {
 		resultBuilder.truncation(truncation, { direction: "head", artifactId: entry.artifactId });
 	} else if (entry.details.truncated) {
-		const outputLines = entry.output.split("\n").length;
+		const outputLines = countNewlines(entry.output) + 1;
 		const outputBytes = Buffer.byteLength(entry.output, "utf-8");
 		const totalBytes = Math.max(outputBytes + 1, MAX_OUTPUT_CHARS + 1);
 		const totalLines = outputLines + 1;

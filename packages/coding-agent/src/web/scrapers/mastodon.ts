@@ -1,6 +1,7 @@
 import { tryParseJson } from "@oh-my-pi/pi-utils";
-import type { RenderResult, SpecialHandler } from "./types";
+import type { LoadPageResult, RenderResult, SpecialHandler } from "./types";
 import { buildResult, formatNumber, htmlToBasicMarkdown, loadPage } from "./types";
+import { isConclusiveProbeStatus, PlatformProbeCache } from "./utils";
 
 interface MastodonAccount {
 	id: string;
@@ -49,23 +50,29 @@ interface MastodonStatus {
 	};
 }
 
+const mastodonProbes = new PlatformProbeCache();
+
 /**
- * Check if a domain is a Mastodon instance by probing the API
+ * Check if a domain is a Mastodon instance by probing the API. Conclusive
+ * verdicts are memoized per host.
  */
-async function isMastodonInstance(hostname: string, timeout: number, signal?: AbortSignal): Promise<boolean> {
-	try {
-		const result = await loadPage(`https://${hostname}/api/v1/instance`, {
-			timeout: Math.min(timeout, 5),
-			headers: { Accept: "application/json" },
-			signal,
-		});
-		if (!result.ok) return false;
-		const data = JSON.parse(result.content);
+function isMastodonInstance(hostname: string, timeout: number, signal?: AbortSignal): Promise<boolean> {
+	return mastodonProbes.resolve(hostname, async () => {
+		let result: LoadPageResult;
+		try {
+			result = await loadPage(`https://${hostname}/api/v1/instance`, {
+				timeout: Math.min(timeout, 5),
+				headers: { Accept: "application/json" },
+				signal,
+			});
+		} catch {
+			return undefined;
+		}
+		if (!result.ok) return isConclusiveProbeStatus(result.status) ? false : undefined;
 		// Mastodon instances return uri/domain field
-		return !!(data.uri || data.domain || data.title);
-	} catch {
-		return false;
-	}
+		const data = tryParseJson<{ uri?: unknown; domain?: unknown; title?: unknown }>(result.content);
+		return !!(data?.uri || data?.domain || data?.title);
+	});
 }
 
 /**

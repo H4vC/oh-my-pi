@@ -131,6 +131,29 @@ describe("read URL binary dispatch", () => {
 		expect(text).not.toContain("�");
 	});
 
+	it("downloads a generic-MIME convertible document body only once", async () => {
+		const url = uniqueUrl("report", ".pdf");
+		const bodyReads: string[] = [];
+		const loadPage = vi.spyOn(scrapers, "loadPage").mockImplementation(async (requestedUrl, options) => {
+			const contentType = "application/octet-stream";
+			if (options?.skipBodyForContentType?.(contentType)) {
+				return { ok: true, status: 200, finalUrl: requestedUrl, contentType, content: "", bodySkipped: true };
+			}
+			bodyReads.push(requestedUrl);
+			return { ok: true, status: 200, finalUrl: requestedUrl, contentType, content: "%PDF-1.4 binary" };
+		});
+		const fetchBinary = vi
+			.spyOn(scraperUtils, "fetchBinary")
+			.mockImplementation(async () => ({ ok: false, error: "offline" }));
+
+		const tool = new ReadTool(makeSession(testDir));
+		await tool.execute("read-url-generic-pdf", { path: url });
+
+		expect(loadPage).toHaveBeenCalledTimes(1);
+		expect(bodyReads).toEqual([]);
+		expect(fetchBinary).toHaveBeenCalled();
+	});
+
 	it("returns a metadata notice when a hinted binary refetch fails", async () => {
 		const url = uniqueUrl("oversized", ".zip");
 		vi.spyOn(scrapers, "loadPage").mockImplementation(async requestedUrl => ({

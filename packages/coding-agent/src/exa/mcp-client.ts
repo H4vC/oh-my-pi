@@ -1,5 +1,11 @@
+/**
+ * Exa MCP client.
+ *
+ * @deprecated Unused by the coding agent; Exa search lives in `web/search/providers/exa`. Will be removed in the next major.
+ * @module
+ */
 import type { TSchema } from "@oh-my-pi/pi-ai";
-import { $env, isRecord, logger } from "@oh-my-pi/pi-utils";
+import { $env, asRecord, isRecord, logger } from "@oh-my-pi/pi-utils";
 import type { CustomTool, CustomToolResult } from "../extensibility/custom-tools/types";
 import { type CallMcpOptions, callMCP } from "../mcp/json-rpc";
 import type { ExaSearchResponse, MCPTool, MCPToolWrapperConfig } from "./types";
@@ -11,13 +17,9 @@ type MCPWrappedToolDetails = {
 	raw?: unknown;
 };
 
-/** Find EXA_API_KEY from Bun.env or .env files */
+/** @deprecated Read `$env.EXA_API_KEY` directly; Exa search resolves keys in `web/search/providers/exa`. Will be removed in the next major. */
 export function findApiKey(): string | null {
 	return $env.EXA_API_KEY;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-	return isRecord(value) ? value : null;
 }
 
 function isMcpTool(value: unknown): value is MCPTool {
@@ -84,7 +86,7 @@ function normalizeMcpToolPayload(payload: unknown): unknown {
 	return payload;
 }
 
-/** Fetch available tools from Exa MCP */
+/** @deprecated Fetch available tools from Exa MCP; use `searchExa` from `web/search/providers/exa`. Will be removed in the next major. */
 export async function fetchExaTools(apiKey: string | null, toolNames: string[]): Promise<MCPTool[]> {
 	const params = new URLSearchParams();
 	if (apiKey) params.set("exaApiKey", apiKey);
@@ -100,7 +102,7 @@ export async function fetchExaTools(apiKey: string | null, toolNames: string[]):
 	return toolsFromMcpResult(response.result);
 }
 
-/** Fetch available tools from Websets MCP */
+/** @deprecated Fetch available tools from Websets MCP; no replacement. Will be removed in the next major. */
 export async function fetchWebsetsTools(apiKey: string): Promise<MCPTool[]> {
 	const url = `https://websetsmcp.exa.ai/mcp?exaApiKey=${encodeURIComponent(apiKey)}`;
 	const response = await callMCP(url, "tools/list");
@@ -113,7 +115,7 @@ export async function fetchWebsetsTools(apiKey: string): Promise<MCPTool[]> {
 	return toolsFromMcpResult(response.result);
 }
 
-/** Call a tool on Exa MCP (simplified: toolName as first arg for easier use) */
+/** @deprecated Call a tool on Exa MCP; use `searchExa` from `web/search/providers/exa`. Will be removed in the next major. */
 export async function callExaTool(
 	toolName: string,
 	args: Record<string, unknown>,
@@ -142,7 +144,7 @@ export async function callExaTool(
 	return normalizeMcpToolPayload(response.result);
 }
 
-/** Call a tool on Websets MCP */
+/** @deprecated Call a tool on Websets MCP; no replacement. Will be removed in the next major. */
 export async function callWebsetsTool(
 	apiKey: string,
 	toolName: string,
@@ -162,7 +164,7 @@ export async function callWebsetsTool(
 	return normalizeMcpToolPayload(response.result);
 }
 
-/** Format search results for LLM */
+/** @deprecated Format Exa search results for an LLM; use `searchExa` from `web/search/providers/exa`, rendered by the web_search tool. Will be removed in the next major. */
 export function formatSearchResults(data: ExaSearchResponse): string {
 	const results = data.results ?? [];
 	if (results.length === 0) return "No results found.";
@@ -196,6 +198,8 @@ export function formatSearchResults(data: ExaSearchResponse): string {
 /**
  * Format a non-search MCP response as human-readable text.
  * Handles objects, arrays, primitives, and common MCP response shapes.
+ *
+ * @deprecated Part of the unused Exa MCP client; no replacement. Will be removed in the next major.
  */
 export function formatGenericResponse(data: unknown): string {
 	if (data === null || data === undefined) return "No result.";
@@ -267,7 +271,7 @@ function indent(text: string, spaces: number): string {
 		.join("\n");
 }
 
-/** Check if result is a search response */
+/** @deprecated Check if result is an Exa search response; use `searchExa` from `web/search/providers/exa`. Will be removed in the next major. */
 export function isSearchResponse(data: unknown): data is ExaSearchResponse {
 	return (
 		typeof data === "object" &&
@@ -279,7 +283,7 @@ export function isSearchResponse(data: unknown): data is ExaSearchResponse {
 /** Cache for MCP tool schemas (keyed by MCP tool name) */
 const mcpSchemaCache = new Map<string, MCPTool>();
 
-/** Fetch and cache MCP tool schema */
+/** @deprecated Fetch and cache an Exa MCP tool schema; no replacement. Will be removed in the next major. */
 export async function fetchMCPToolSchema(
 	apiKey: string,
 	mcpToolName: string,
@@ -308,6 +312,8 @@ export async function fetchMCPToolSchema(
  *
  * This allows tools to be generated from MCP server schemas without hardcoding,
  * reducing drift when MCP servers add new parameters.
+ *
+ * @deprecated Unused; MCP servers are bridged by the `mcp/` tool loader, and Exa search is `web/search/providers/exa`. Will be removed in the next major.
  */
 export class MCPWrappedTool implements CustomTool<TSchema, MCPWrappedToolDetails> {
 	readonly name: string;
@@ -369,6 +375,8 @@ export class MCPWrappedTool implements CustomTool<TSchema, MCPWrappedToolDetails
  * Create a CustomTool by fetching schema from MCP server.
  *
  * Falls back to provided fallback schema if MCP fetch fails.
+ *
+ * @deprecated Unused; MCP servers are bridged by the `mcp/` tool loader. Will be removed in the next major.
  */
 export async function createMCPToolFromServer(
 	apiKey: string,

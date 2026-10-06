@@ -1,8 +1,8 @@
 // Adapted from markit-ai (MIT). See ../NOTICE.
 import * as path from "node:path";
-import { archiveEntryText, readArchiveEntries } from "@oh-my-pi/pi-utils/ar";
 import { XMLParser } from "@oh-my-pi/pi-utils/xml";
 import type { ConversionResult, Converter, StreamInfo } from "../types";
+import { ZipPackage } from "../zip-package";
 
 const EXTENSIONS = [".pptx"];
 const MIMETYPES = ["application/vnd.openxmlformats-officedocument.presentationml.presentation"];
@@ -106,7 +106,7 @@ export class PptxConverter implements Converter {
 	}
 
 	async convert(input: Buffer, streamInfo: StreamInfo): Promise<ConversionResult> {
-		const entries = await readArchiveEntries({ bytes: input, format: "zip" });
+		const zip = await ZipPackage.open(input);
 		const parser = new XMLParser({
 			ignoreAttributes: false,
 			attributeNamePrefix: "@_",
@@ -114,16 +114,14 @@ export class PptxConverter implements Converter {
 			processEntities: { maxTotalExpansions: 1_000_000 },
 		});
 		// Get slide order from presentation.xml
-		const presXml = archiveEntryText(entries, "ppt/presentation.xml");
+		const presXml = await zip.readText("ppt/presentation.xml");
 		if (!presXml) throw new Error("Invalid PPTX: missing presentation.xml");
 		const pres = parser.parse(presXml) as PresentationDoc;
-		const sldIdList = pres["p:presentation"]?.["p:sldIdLst"]?.["p:sldId"];
-		const sldIds = Array.isArray(sldIdList) ? sldIdList : sldIdList ? [sldIdList] : [];
+		const sldIds = toList(pres["p:presentation"]?.["p:sldIdLst"]?.["p:sldId"]);
 		// Get relationship mappings
-		const relsXml = archiveEntryText(entries, "ppt/_rels/presentation.xml.rels");
+		const relsXml = await zip.readText("ppt/_rels/presentation.xml.rels");
 		const rels = relsXml ? (parser.parse(relsXml) as RelationshipsDoc) : null;
-		const relList = rels?.Relationships?.Relationship;
-		const relArray = Array.isArray(relList) ? relList : relList ? [relList] : [];
+		const relArray = toList(rels?.Relationships?.Relationship);
 		const relMap = new Map<string, string>();
 		for (const r of relArray) {
 			relMap.set(r["@_Id"], r["@_Target"]);
@@ -137,7 +135,7 @@ export class PptxConverter implements Converter {
 		}
 		// If we couldn't resolve from rels, fall back to finding slide files
 		if (slidePaths.length === 0) {
-			const slideFiles = Object.keys(entries)
+			const slideFiles = [...zip.members]
 				.filter(f => /^ppt\/slides\/slide\d+\.xml$/.test(f))
 				.sort((a, b) => {
 					const na = parseInt(a.match(/slide(\d+)/)?.[1] || "0", 10);
@@ -150,14 +148,14 @@ export class PptxConverter implements Converter {
 		const sections: string[] = [];
 		let imageCount = 0;
 		for (let i = 0; i < slidePaths.length; i++) {
-			const slideXml = archiveEntryText(entries, slidePaths[i]);
+			const slideXml = await zip.readText(slidePaths[i]);
 			if (!slideXml) continue;
 			const slide = parser.parse(slideXml) as SlideDoc;
 			const spTree = slide["p:sld"]?.["p:cSld"]?.["p:spTree"];
 			if (!spTree) continue;
 			// Parse slide-level rels for image references
 			const slideRelsPath = `${slidePaths[i].replace("slides/slide", "slides/_rels/slide")}.rels`;
-			const slideRelsXml = archiveEntryText(entries, slideRelsPath);
+			const slideRelsXml = await zip.readText(slideRelsPath);
 			const slideRelMap = new Map<string, string>();
 			if (slideRelsXml) {
 				const slideRels = parser.parse(slideRelsXml) as RelationshipsDoc;
@@ -167,8 +165,7 @@ export class PptxConverter implements Converter {
 				}
 			}
 			const slideLines = [`<!-- Slide ${i + 1} -->`];
-			const shapes = spTree["p:sp"];
-			const shapeList = Array.isArray(shapes) ? shapes : shapes ? [shapes] : [];
+			const shapeList = toList(spTree["p:sp"]);
 			let isTitle = true;
 			for (const shape of shapeList) {
 				const text = this.extractText(shape);
@@ -199,8 +196,7 @@ export class PptxConverter implements Converter {
 						return parts;
 					}, [])
 					.join("/");
-				const buf = entries.get(normalizedPath);
-				if (!buf) continue;
+				if (!zip.members.has(normalizedPath)) continue;
 				imageCount++;
 				const name =
 					pic["p:nvSpPr"]?.["p:cNvPr"]?.["@_name"] ||
@@ -211,6 +207,8 @@ export class PptxConverter implements Converter {
 						const ext = normalizedPath.split(".").pop() || "png";
 						const filename = `slide${i + 1}_${imageCount}.${ext}`;
 						const filepath = path.join(imageDir, filename);
+						const buf = await zip.readBytes(normalizedPath);
+						if (!buf) throw new Error(`Missing image ${normalizedPath}`);
 						await Bun.write(filepath, buf);
 						slideLines.push(`![${name}](${filepath})`);
 					} catch {
@@ -221,21 +219,19 @@ export class PptxConverter implements Converter {
 				}
 			}
 			// Tables
-			const graphicFrames = spTree["p:graphicFrame"];
-			const gfList = Array.isArray(graphicFrames) ? graphicFrames : graphicFrames ? [graphicFrames] : [];
+			const gfList = toList(spTree["p:graphicFrame"]);
 			for (const gf of gfList) {
 				const table = this.extractTable(gf);
 				if (table) slideLines.push(table);
 			}
 			// Slide notes
 			const noteFile = slidePaths[i].replace("slides/slide", "notesSlides/notesSlide");
-			const noteXml = archiveEntryText(entries, noteFile);
+			const noteXml = await zip.readText(noteFile);
 			if (noteXml) {
 				const note = parser.parse(noteXml) as NotesDoc;
 				const noteSpTree = note["p:notes"]?.["p:cSld"]?.["p:spTree"];
 				if (noteSpTree) {
-					const noteShapes = noteSpTree["p:sp"];
-					const noteList = Array.isArray(noteShapes) ? noteShapes : noteShapes ? [noteShapes] : [];
+					const noteList = toList(noteSpTree["p:sp"]);
 					const noteTexts: string[] = [];
 					for (const ns of noteList) {
 						// Skip slide image placeholder
@@ -258,12 +254,10 @@ export class PptxConverter implements Converter {
 	extractText(shape: Shape): string {
 		const txBody = shape["p:txBody"];
 		if (!txBody) return "";
-		const paragraphs = txBody["a:p"];
-		const pList = Array.isArray(paragraphs) ? paragraphs : paragraphs ? [paragraphs] : [];
+		const pList = toList(txBody["a:p"]);
 		const lines: string[] = [];
 		for (const p of pList) {
-			const runs = p["a:r"];
-			const rList = Array.isArray(runs) ? runs : runs ? [runs] : [];
+			const rList = toList(p["a:r"]);
 			const parts: string[] = [];
 			for (const r of rList) {
 				const t = r["a:t"];
@@ -277,13 +271,11 @@ export class PptxConverter implements Converter {
 	extractTable(gf: GraphicFrame): string | null {
 		const tbl = gf?.["a:graphic"]?.["a:graphicData"]?.["a:tbl"];
 		if (!tbl) return null;
-		const rows = tbl["a:tr"];
-		const rowList = Array.isArray(rows) ? rows : rows ? [rows] : [];
+		const rowList = toList(tbl["a:tr"]);
 		if (rowList.length === 0) return null;
 		const mdRows: string[][] = [];
 		for (const row of rowList) {
-			const cells = row["a:tc"];
-			const cellList = Array.isArray(cells) ? cells : cells ? [cells] : [];
+			const cellList = toList(row["a:tc"]);
 			const cellTexts: string[] = [];
 			for (const cell of cellList) {
 				const txBody = cell["a:txBody"];
@@ -291,12 +283,10 @@ export class PptxConverter implements Converter {
 					cellTexts.push("");
 					continue;
 				}
-				const paragraphs = txBody["a:p"];
-				const pList = Array.isArray(paragraphs) ? paragraphs : paragraphs ? [paragraphs] : [];
+				const pList = toList(txBody["a:p"]);
 				const parts: string[] = [];
 				for (const p of pList) {
-					const runs = p["a:r"];
-					const rList = Array.isArray(runs) ? runs : runs ? [runs] : [];
+					const rList = toList(p["a:r"]);
 					for (const r of rList) {
 						const t = r["a:t"];
 						if (t != null) parts.push(typeof t === "object" ? t["#text"] || "" : String(t));

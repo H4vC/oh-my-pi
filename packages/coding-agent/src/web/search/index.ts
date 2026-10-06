@@ -17,8 +17,8 @@ import { settings } from "../../config/settings";
 import type { CustomTool, CustomToolContext } from "../../extensibility/custom-tools/types";
 import webSearchSystemPrompt from "../../prompts/system/web-search.md" with { type: "text" };
 import webSearchDescription from "../../prompts/tools/web-search.md" with { type: "text" };
+import { discoverAuthStorage } from "../../session/auth-discovery";
 import { resolveConfiguredModelTarget } from "../../session/role-models";
-import { discoverAuthStorage } from "../../sdk";
 import type { ToolSession } from "../../tools";
 import { throwIfAborted } from "../../tools/tool-errors";
 import {

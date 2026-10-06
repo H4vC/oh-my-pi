@@ -50,6 +50,7 @@ export interface ParallelExtractResult {
 	usage: ParallelUsageItem[];
 }
 
+/** @deprecated Options for the unused `searchWithParallel`; use `searchParallel` from `web/search/providers/parallel`. Will be removed in the next major. */
 export interface ParallelSearchOptions {
 	mode?: "fast" | "research";
 	maxCharsPerResult?: number;
@@ -294,6 +295,7 @@ function parseExtractPayload(payload: unknown): ParallelExtractResult {
 	};
 }
 
+/** @deprecated Duplicate Parallel search path with no in-repo callers; use `searchParallel` (or `ParallelProvider`) from `web/search/providers/parallel`. Will be removed in the next major. */
 export async function searchWithParallel(
 	objective: string,
 	queries: string[],

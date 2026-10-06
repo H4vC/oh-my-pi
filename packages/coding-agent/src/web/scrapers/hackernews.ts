@@ -91,8 +91,18 @@ async function renderStory(item: HNItem, timeout: number, depth = 0, signal?: Ab
 		if (comments.length > 0) {
 			if (depth === 0) output += "---\n\n## Comments\n\n";
 
-			for (const comment of comments) {
-				const indent = "  ".repeat(depth);
+			// Child threads are independent: fetch them concurrently, stitch in order.
+			const childOutputs = await Promise.all(
+				comments.map(comment =>
+					comment.kids && comment.kids.length > 0 && depth < 1
+						? renderStory(comment, timeout, depth + 1, signal)
+						: "",
+				),
+			);
+
+			const indent = "  ".repeat(depth);
+			for (let i = 0; i < comments.length; i++) {
+				const comment = comments[i];
 				output += `${indent}**${comment.by}** (${formatTimestamp(comment.time ?? 0)})`;
 				if (comment.score !== undefined) output += ` [${comment.score}]`;
 				output += "\n";
@@ -101,11 +111,7 @@ async function renderStory(item: HNItem, timeout: number, depth = 0, signal?: Ab
 					const lines = text.split("\n");
 					output += `${lines.map(line => `${indent}${line}`).join("\n")}\n\n`;
 				}
-
-				if (comment.kids && comment.kids.length > 0 && depth < 1) {
-					const childOutput = await renderStory(comment, timeout, depth + 1, signal);
-					output += childOutput;
-				}
+				output += childOutputs[i];
 			}
 		}
 	}

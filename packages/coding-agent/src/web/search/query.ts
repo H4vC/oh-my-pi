@@ -746,6 +746,8 @@ function sourceTime(source: SearchSource): number | undefined {
  * pass. Sources without a resolvable date pass date bounds (a missing date
  * is not proof of violation). For custom provider flows; the standard path
  * is {@link applyQueryConstraints}.
+ *
+ * @deprecated No in-repo callers; use {@link applyQueryConstraints}. Will be removed in the next major.
  */
 export function matchesQueryConstraints(source: SearchSource, q: StructuredQuery): boolean {
 	for (const dim of constraintDimensions(q)) {

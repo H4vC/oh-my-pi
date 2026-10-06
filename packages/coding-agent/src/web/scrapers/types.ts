@@ -3,6 +3,7 @@
  */
 import { scheduler } from "node:timers/promises";
 import { ptree } from "@oh-my-pi/pi-utils";
+import { decodeEntities } from "@oh-my-pi/pi-utils/dom/entities";
 import type TurndownService from "@oh-my-pi/pi-utils/turndown";
 
 import type { AgentStorage } from "../../session/agent-storage";
@@ -216,7 +217,12 @@ export async function loadPage(url: string, options: LoadPageOptions = {}): Prom
 				}
 			}
 
-			const content = decodeBody(Buffer.concat(chunks), rawContentType);
+			// A single chunk is decoded in place; only multi-chunk bodies need a concat copy.
+			const bytes =
+				chunks.length === 1
+					? Buffer.from(chunks[0].buffer, chunks[0].byteOffset, chunks[0].byteLength)
+					: Buffer.concat(chunks, totalSize);
+			const content = decodeBody(bytes, rawContentType);
 			if (isBotBlocked(response.status, content) && attempt < USER_AGENTS.length - 1) {
 				continue;
 			}
@@ -301,18 +307,11 @@ export function formatIsoDate(value?: string | number | Date): string {
 }
 
 /**
- * Decode common HTML entities.
+ * Decode HTML entities (named and numeric). `&nbsp;` stays a plain space, as
+ * this helper has always produced.
  */
 export function decodeHtmlEntities(text: string): string {
-	return text
-		.replace(/&lt;/g, "<")
-		.replace(/&gt;/g, ">")
-		.replace(/&amp;/g, "&")
-		.replace(/&quot;/g, '"')
-		.replace(/&#0?39;/g, "'")
-		.replace(/&#x27;/g, "'")
-		.replace(/&#x2F;/g, "/")
-		.replace(/&nbsp;/g, " ");
+	return decodeEntities(text.replaceAll("&nbsp;", " "));
 }
 
 /**
@@ -344,7 +343,8 @@ export function getLocalizedText(value: LocalizedText, defaultLocale?: string): 
  * Check if content looks like HTML by inspecting the leading tag.
  */
 export function looksLikeHtml(content: string): boolean {
-	const trimmed = content.trim().toLowerCase();
+	// Only the leading tag matters; lowercase a short prefix instead of the whole body.
+	const trimmed = content.trimStart().slice(0, 16).toLowerCase();
 	return (
 		trimmed.startsWith("<!doctype") ||
 		trimmed.startsWith("<html") ||

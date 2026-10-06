@@ -1,4 +1,5 @@
 import type { AuthStorage } from "@oh-my-pi/pi-ai";
+import { decodeEntities } from "@oh-my-pi/pi-utils/dom/entities";
 import type { SearchResponse, SearchSource } from "../types";
 import { SearchProviderError } from "../../../web/search/types";
 import type { QuerySyntax } from "../query";
@@ -41,20 +42,11 @@ interface ParsedResult {
 
 /**
  * Decode an HTML-encoded fragment lifted from DDG markup. Strips inline tags
- * (the results page wraps query terms in `<b>`), unescapes the small set of
- * named entities DDG emits, and normalises whitespace.
+ * (the results page wraps query terms in `<b>`), unescapes entities, and
+ * normalises whitespace.
  */
 function decodeHtmlText(value: string): string {
-	return value
-		.replace(/<[^>]*>/g, " ")
-		.replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
-		.replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCharCode(Number.parseInt(code, 16)))
-		.replace(/&nbsp;/gi, " ")
-		.replace(/&amp;/gi, "&")
-		.replace(/&lt;/gi, "<")
-		.replace(/&gt;/gi, ">")
-		.replace(/&quot;/gi, '"')
-		.replace(/&#39;|&apos;/gi, "'")
+	return decodeEntities(value.replace(/<[^>]*>/g, " "))
 		.replace(/\s+/g, " ")
 		.trim();
 }

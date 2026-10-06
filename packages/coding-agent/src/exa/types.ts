@@ -2,17 +2,20 @@
  * Exa MCP Types
  *
  * Types for the Exa MCP client and tool implementations.
+ *
+ * @deprecated Unused by the coding agent; Exa search lives in `web/search/providers/exa`. Will be removed in the next major.
+ * @module
  */
 import type { TSchema } from "@oh-my-pi/pi-ai";
 
-/** MCP tool definition from server */
+/** @deprecated MCP tool definition from server; use `MCPToolDefinition` from `mcp/types`. Will be removed in the next major. */
 export interface MCPTool {
 	name: string;
 	description?: string;
 	inputSchema: TSchema;
 }
 
-/** Tool wrapper config for dynamic MCP tool creation */
+/** @deprecated Tool wrapper config for the deprecated `MCPWrappedTool`; no replacement. Will be removed in the next major. */
 export interface MCPToolWrapperConfig {
 	/** Our tool name (e.g., "exa_search") */
 	name: string;
@@ -24,7 +27,7 @@ export interface MCPToolWrapperConfig {
 	isWebsetsTool?: boolean;
 }
 
-/** Search result from Exa */
+/** @deprecated Raw Exa search result; use `searchExa` from `web/search/providers/exa`, whose `SearchResponse.sources` carry results (`web/search/types`). Will be removed in the next major. */
 export interface ExaSearchResult {
 	id?: string;
 	title?: string;
@@ -37,7 +40,7 @@ export interface ExaSearchResult {
 	favicon?: string;
 }
 
-/** Search response from Exa */
+/** @deprecated Raw Exa search response; use `searchExa` from `web/search/providers/exa`, which returns `SearchResponse` (`web/search/types`). Will be removed in the next major. */
 export interface ExaSearchResponse {
 	results?: ExaSearchResult[];
 	statuses?: Array<{ id: string; status: string; source?: string }>;

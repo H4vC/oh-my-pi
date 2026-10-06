@@ -145,8 +145,15 @@ export async function fetchGitHubApi(
 	}
 }
 
+const ISSUE_COMMENTS_PER_PAGE = 100;
+
+function issueCommentsEndpoint(owner: string, repo: string, issueNumber: number, page: number): string {
+	return `/repos/${owner}/${repo}/issues/${issueNumber}/comments?per_page=${ISSUE_COMMENTS_PER_PAGE}&page=${page}`;
+}
+
 /**
- * Fetch all issue comments with pagination.
+ * Fetch all issue comments with pagination. `firstPage`, when given, is an
+ * already-started request for page 1 of the same endpoint.
  */
 async function fetchGitHubIssueComments(
 	owner: string,
@@ -155,16 +162,15 @@ async function fetchGitHubIssueComments(
 	expectedCount: number,
 	timeout: number,
 	signal?: AbortSignal,
+	firstPage?: Promise<{ data: unknown; ok: boolean }>,
 ): Promise<GitHubIssueComment[]> {
-	const perPage = 100;
 	const comments: GitHubIssueComment[] = [];
 
 	for (let page = 1; comments.length < expectedCount; page++) {
-		const result = await fetchGitHubApi(
-			`/repos/${owner}/${repo}/issues/${issueNumber}/comments?per_page=${perPage}&page=${page}`,
-			timeout,
-			signal,
-		);
+		const result =
+			page === 1 && firstPage
+				? await firstPage
+				: await fetchGitHubApi(issueCommentsEndpoint(owner, repo, issueNumber, page), timeout, signal);
 		if (!result.ok || !Array.isArray(result.data)) {
 			break;
 		}
@@ -175,7 +181,7 @@ async function fetchGitHubIssueComments(
 		}
 
 		comments.push(...pageComments);
-		if (pageComments.length < perPage) {
+		if (pageComments.length < ISSUE_COMMENTS_PER_PAGE) {
 			break;
 		}
 	}
@@ -196,6 +202,11 @@ async function renderGitHubIssue(
 			? `/repos/${gh.owner}/${gh.repo}/pulls/${gh.number}`
 			: `/repos/${gh.owner}/${gh.repo}/issues/${gh.number}`;
 
+	// The first comments page does not depend on the issue body; request both at once.
+	const firstCommentsPage =
+		gh.number !== undefined
+			? fetchGitHubApi(issueCommentsEndpoint(gh.owner, gh.repo, gh.number, 1), timeout, signal)
+			: undefined;
 	const result = await fetchGitHubApi(endpoint, timeout, signal);
 	if (!result.ok || !result.data) return { content: "", ok: false };
 
@@ -224,7 +235,15 @@ async function renderGitHubIssue(
 
 	// Fetch comments if any
 	if (issue.comments > 0) {
-		const comments = await fetchGitHubIssueComments(gh.owner, gh.repo, issue.number, issue.comments, timeout, signal);
+		const comments = await fetchGitHubIssueComments(
+			gh.owner,
+			gh.repo,
+			issue.number,
+			issue.comments,
+			timeout,
+			signal,
+			issue.number === gh.number ? firstCommentsPage : undefined,
+		);
 		if (comments.length > 0) {
 			const commentCount =
 				issue.comments > comments.length ? `${comments.length} of ${issue.comments}` : `${comments.length}`;
@@ -431,8 +450,13 @@ async function renderGitHubRepo(
 	timeout: number,
 	signal?: AbortSignal,
 ): Promise<{ content: string; ok: boolean }> {
-	// Fetch repo info
-	const repoResult = await fetchGitHubApi(`/repos/${gh.owner}/${gh.repo}`, timeout, signal);
+	// Repo info, file tree and README are independent: `HEAD` resolves to the
+	// default branch, so the tree request need not wait for `default_branch`.
+	const [repoResult, treeResult, readmeResult] = await Promise.all([
+		fetchGitHubApi(`/repos/${gh.owner}/${gh.repo}`, timeout, signal),
+		fetchGitHubApi(`/repos/${gh.owner}/${gh.repo}/git/trees/HEAD?recursive=1`, timeout, signal),
+		fetchGitHubApi(`/repos/${gh.owner}/${gh.repo}/readme`, timeout, signal),
+	]);
 	if (!repoResult.ok) return { content: "", ok: false };
 
 	const repo = repoResult.data as {
@@ -441,7 +465,6 @@ async function renderGitHubRepo(
 		stargazers_count: number;
 		forks_count: number;
 		open_issues_count: number;
-		default_branch: string;
 		language: string | null;
 		license: { name: string } | null;
 	};
@@ -453,12 +476,7 @@ async function renderGitHubRepo(
 	if (repo.license) md += `License: ${repo.license.name}\n`;
 	md += `\n---\n\n`;
 
-	// Fetch file tree
-	const treeResult = await fetchGitHubApi(
-		`/repos/${gh.owner}/${gh.repo}/git/trees/${repo.default_branch}?recursive=1`,
-		timeout,
-		signal,
-	);
+	// File tree
 	if (treeResult.ok && treeResult.data) {
 		const tree = (treeResult.data as { tree: Array<{ path: string; type: string }> }).tree;
 		md += `## Files\n\n`;
@@ -473,8 +491,7 @@ async function renderGitHubRepo(
 		md += "```\n\n";
 	}
 
-	// Fetch README
-	const readmeResult = await fetchGitHubApi(`/repos/${gh.owner}/${gh.repo}/readme`, timeout, signal);
+	// README
 	if (readmeResult.ok && readmeResult.data) {
 		const readme = readmeResult.data as { content: string; encoding: string };
 		if (readme.encoding === "base64") {
@@ -622,7 +639,10 @@ async function renderGitHubActionsRun(
 	timeout: number,
 	signal?: AbortSignal,
 ): Promise<{ content: string; ok: boolean }> {
-	const runResult = await fetchGitHubApi(`/repos/${gh.owner}/${gh.repo}/actions/runs/${gh.runId}`, timeout, signal);
+	const [runResult, jobsResult] = await Promise.all([
+		fetchGitHubApi(`/repos/${gh.owner}/${gh.repo}/actions/runs/${gh.runId}`, timeout, signal),
+		fetchGitHubApi(`/repos/${gh.owner}/${gh.repo}/actions/runs/${gh.runId}/jobs?per_page=100`, timeout, signal),
+	]);
 	if (!runResult.ok || !runResult.data) return { content: "", ok: false };
 
 	const run = runResult.data as GitHubActionsRun;
@@ -630,11 +650,6 @@ async function renderGitHubActionsRun(
 	md += renderActionsRunMeta(run);
 	md += `\n---\n\n`;
 
-	const jobsResult = await fetchGitHubApi(
-		`/repos/${gh.owner}/${gh.repo}/actions/runs/${gh.runId}/jobs?per_page=100`,
-		timeout,
-		signal,
-	);
 	if (jobsResult.ok && jobsResult.data) {
 		const jobs = (jobsResult.data as { jobs?: GitHubActionsJob[] }).jobs ?? [];
 		md += `## Jobs (${jobs.length})\n\n`;
@@ -658,13 +673,19 @@ async function renderGitHubActionsJob(
 	timeout: number,
 	signal?: AbortSignal,
 ): Promise<{ content: string; ok: boolean }> {
-	const jobResult = await fetchGitHubApi(`/repos/${gh.owner}/${gh.repo}/actions/jobs/${gh.jobId}`, timeout, signal);
+	// The URL already names the run, so its context can load alongside the job.
+	const runEndpoint = (runId: number | undefined) => `/repos/${gh.owner}/${gh.repo}/actions/runs/${runId}`;
+	const [jobResult, urlRunResult] = await Promise.all([
+		fetchGitHubApi(`/repos/${gh.owner}/${gh.repo}/actions/jobs/${gh.jobId}`, timeout, signal),
+		fetchGitHubApi(runEndpoint(gh.runId), timeout, signal),
+	]);
 	if (!jobResult.ok || !jobResult.data) return { content: "", ok: false };
 
 	const job = jobResult.data as GitHubActionsJob;
 
 	// Best-effort run context for nicer headers; the job render stands on its own without it.
-	const runResult = await fetchGitHubApi(`/repos/${gh.owner}/${gh.repo}/actions/runs/${job.run_id}`, timeout, signal);
+	const runResult =
+		job.run_id === gh.runId ? urlRunResult : await fetchGitHubApi(runEndpoint(job.run_id), timeout, signal);
 	const run = runResult.ok && runResult.data ? (runResult.data as GitHubActionsRun) : null;
 
 	let md = `# ${escapeCell(job.name)}\n\n`;
