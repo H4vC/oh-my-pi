@@ -103,6 +103,26 @@ export const PLAYWRIGHT_ONLY_SELECTOR_RE =
 
 const ARIA_REF_PREFIXES = ["aria-ref=", "aria-ref/", "ariaref/"];
 
+const LEGACY_SELECTOR_PREFIXES = ["p-aria/", "p-text/", "p-xpath/", "p-pierce/"] as const;
+
+/**
+ * Map a legacy `p-aria/` / `p-text/` / `p-xpath/` / `p-pierce/` selector to its modern
+ * query-handler form; other selectors pass through. Throws on any other `p-` prefix.
+ */
+export function mapLegacySelector(selector: string): string {
+	if (!selector.startsWith("p-")) return selector;
+	if (!LEGACY_SELECTOR_PREFIXES.some(prefix => selector.startsWith(prefix))) {
+		throw new ToolError(
+			`Unsupported selector prefix. Use CSS or puppeteer query handlers (aria/, text/, xpath/, pierce/). Got: ${selector}`,
+		);
+	}
+	if (!selector.startsWith("p-aria/")) return selector.slice("p-".length);
+	const rest = selector.slice("p-aria/".length);
+	const nameMatch = rest.match(/\[\s*name\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\]]+))\s*\]/);
+	const name = nameMatch?.[1] ?? nameMatch?.[2] ?? nameMatch?.[3];
+	return `aria/${name ? name.trim() : rest}`;
+}
+
 /**
  * Guard the selector funnels: `tab.click`/`type`/`fill`/`waitFor*`/`scrollIntoView`
  * take string selectors only, but user `run` code routinely passes the ElementHandle

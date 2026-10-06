@@ -9,12 +9,17 @@ import type { GhLabel, GhUser } from "./gh-types";
 import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
 import { toolResult } from "./tool-result";
 
+/** Normalize line endings to `\n` and expand tabs to four spaces. */
+function normalizeGhText(value: string | null | undefined): string {
+	return (value ?? "").replaceAll("\r\n", "\n").replaceAll("\r", "\n").replaceAll("\t", "    ");
+}
+
 export function normalizeText(value: string | null | undefined): string {
-	return (value ?? "").replaceAll("\r\n", "\n").replaceAll("\r", "\n").replaceAll("\t", "    ").trim();
+	return normalizeGhText(value).trim();
 }
 
 export function normalizeBlock(value: string | null | undefined): string {
-	return (value ?? "").replaceAll("\r\n", "\n").replaceAll("\r", "\n").replaceAll("\t", "    ").trimEnd();
+	return normalizeGhText(value).trimEnd();
 }
 
 export function normalizeOptionalString(value: string | null | undefined): string | undefined {
@@ -141,21 +146,18 @@ export function formatLabels(labels: GhLabel[] | undefined): string | undefined 
 	return names.join(", ");
 }
 
-export function parsePullRequestUrl(value: string | undefined): { repo?: string; prNumber?: number } {
+/** Match `value` against a numbered GitHub URL pattern; yields the repo ref and number, or nothing. */
+function parseNumberedGhUrl(value: string | undefined, pattern: RegExp): { repo: string; num: number } | undefined {
 	const normalized = normalizeOptionalString(value);
-	if (!normalized) {
-		return {};
-	}
+	if (!normalized) return undefined;
+	const match = normalized.match(pattern);
+	if (!match) return undefined;
+	return { repo: formatRepoRef(match[1], match[2]), num: Number(match[3]) };
+}
 
-	const match = normalized.match(PR_URL_PATTERN);
-	if (!match) {
-		return {};
-	}
-
-	return {
-		repo: formatRepoRef(match[1], match[2]),
-		prNumber: Number(match[3]),
-	};
+export function parsePullRequestUrl(value: string | undefined): { repo?: string; prNumber?: number } {
+	const parsed = parseNumberedGhUrl(value, PR_URL_PATTERN);
+	return parsed ? { repo: parsed.repo, prNumber: parsed.num } : {};
 }
 
 /**
@@ -171,14 +173,8 @@ export function parsePositiveDecimalInt(value: string | undefined): number | und
 }
 
 export function parseIssueUrl(value: string | undefined): { repo?: string; issueNumber?: number } {
-	const normalized = normalizeOptionalString(value);
-	if (!normalized) return {};
-	const match = normalized.match(ISSUE_URL_PATTERN);
-	if (!match) return {};
-	return {
-		repo: formatRepoRef(match[1], match[2]),
-		issueNumber: Number(match[3]),
-	};
+	const parsed = parseNumberedGhUrl(value, ISSUE_URL_PATTERN);
+	return parsed ? { repo: parsed.repo, issueNumber: parsed.num } : {};
 }
 
 /** The host `gh` falls back to for any ref that names none. */

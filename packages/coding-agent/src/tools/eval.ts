@@ -9,7 +9,7 @@ import type {
 import type { ImageContent, ToolExample } from "@oh-my-pi/pi-ai";
 import { formatBackgroundNotice } from "@oh-my-pi/pi-tui/tools/bash";
 import { parseConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
-import { isRecord, prompt } from "@oh-my-pi/pi-utils";
+import { countNewlines, isRecord, prompt } from "@oh-my-pi/pi-utils";
 import { raceJobSettlement, resolveAutoBackgroundWaitMs } from "../async";
 import { jsBackend, pythonBackend } from "../eval";
 import type { ExecutorBackend, ExecutorBackendResult } from "../eval/backend";
@@ -833,15 +833,12 @@ export class EvalTool implements AgentTool<typeof evalSchema> {
 			const cellOutputs: string[] = [];
 			// The cell currently inside backend.execute(). Streamed stdout is
 			// appended to its rendered `output` live so a long-running cell (e.g. a
-			// sleep loop) shows progress instead of nothing until it returns. A
-			// dedicated per-cell tail buffer keeps attribution correct and avoids
-			// double-counting against the aggregate `tailBuffer`; on completion the
-			// authoritative `cellResult.output` (below) overwrites this live tail.
-			let activeLiveCell: { result: EvalCellResult; buf: TailBuffer } | undefined;
-
-			const appendTail = (text: string) => {
-				tailBuffer.append(text);
-			};
+			// sleep loop) shows progress instead of nothing until it returns. Its
+			// live output is the suffix of the aggregate `tailBuffer` streamed since
+			// the cell started (`chars` UTF-16 units), sliced only when an update is
+			// emitted; on completion the authoritative `cellResult.output` (below)
+			// overwrites this live tail.
+			let activeLiveCell: { result: EvalCellResult; chars: number } | undefined;
 
 			const buildUpdateDetails = (): EvalToolDetails => {
 				const details: EvalToolDetails = {
@@ -875,7 +872,12 @@ export class EvalTool implements AgentTool<typeof evalSchema> {
 				if (!updateTimer) return;
 				clearTimeout(updateTimer);
 				updateTimer = undefined;
-				emitUpdate?.(tailBuffer.text(), buildUpdateDetails());
+				const text = tailBuffer.text();
+				if (activeLiveCell) {
+					const { chars } = activeLiveCell;
+					activeLiveCell.result.output = chars >= text.length ? text : text.slice(text.length - chars);
+				}
+				emitUpdate?.(text, buildUpdateDetails());
 			};
 			const pushUpdate = () => {
 				if (!emitUpdate || updateTimer) return;
@@ -893,11 +895,8 @@ export class EvalTool implements AgentTool<typeof evalSchema> {
 				artifactMaxBytes: resolveOutputSinkArtifactMaxBytes(session.settings),
 				maxColumns: resolveOutputMaxColumns(session.settings),
 				onChunk: chunk => {
-					appendTail(chunk);
-					if (activeLiveCell) {
-						activeLiveCell.buf.append(chunk);
-						activeLiveCell.result.output = activeLiveCell.buf.text();
-					}
+					tailBuffer.append(chunk);
+					if (activeLiveCell) activeLiveCell.chars += chunk.length;
 					pushUpdate();
 				},
 			});
@@ -933,7 +932,7 @@ export class EvalTool implements AgentTool<typeof evalSchema> {
 				cellResult.statusEvents = undefined;
 				cellResult.exitCode = undefined;
 				cellResult.durationMs = undefined;
-				activeLiveCell = { result: cellResult, buf: new TailBuffer(DEFAULT_MAX_BYTES * 2) };
+				activeLiveCell = { result: cellResult, chars: 0 };
 				pushUpdate();
 
 				const startTime = Date.now();
@@ -1062,7 +1061,7 @@ export class EvalTool implements AgentTool<typeof evalSchema> {
 
 				if (cellOutput) {
 					cellOutputs.push(cellOutput);
-					appendTail(cellOutput);
+					tailBuffer.append(cellOutput);
 				}
 
 				if (result.cancelled || (result.exitCode !== 0 && result.exitCode !== undefined)) {
@@ -1148,7 +1147,7 @@ async function summarizeFinal(
 		outputLines: 0,
 		outputBytes: 0,
 	};
-	const outputLines = combinedOutput.length > 0 ? combinedOutput.split("\n").length : 0;
+	const outputLines = combinedOutput.length > 0 ? countNewlines(combinedOutput) + 1 : 0;
 	const outputBytes = Buffer.byteLength(combinedOutput, "utf-8");
 	const missingLines = Math.max(0, rawSummary.totalLines - rawSummary.outputLines);
 	const missingBytes = Math.max(0, rawSummary.totalBytes - rawSummary.outputBytes);

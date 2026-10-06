@@ -783,6 +783,7 @@ async function sendUserAgentOverride(client: PuppeteerCdpClient, override: UserA
 	}
 }
 
+/** @deprecated Unused internal type; use the `{ browserSession, override }` state of `applyStealthPatches()`. Will be removed in the next major. */
 export interface UserAgentSession {
 	override: UserAgentOverride;
 	browserSession: CDPSession | null;
@@ -997,7 +998,10 @@ async function injectStealthScripts(page: Page): Promise<void> {
 	await page.evaluateOnNewDocument(buildStealthInjectionScript());
 }
 
-/** Builds the browser-page stealth bootstrap source for regression tests. */
+/**
+ * Builds the browser-page stealth bootstrap source for regression tests.
+ * @deprecated Unused test seam; use `applyStealthPatches()`. Will be removed in the next major.
+ */
 export function buildStealthInjectionScriptForTest(scripts: readonly string[] = STEALTH_PATCH_SCRIPTS): string {
 	return buildStealthInjectionScript(scripts);
 }
@@ -1040,9 +1044,11 @@ export function stealthIgnoreDefaultArgsForTest(executablePath: string | undefin
 	return stealthIgnoreDefaultArgs(executablePath);
 }
 
+/** @deprecated Unused test seam; no replacement (target filtering is internal to `applyStealthPatches()`). Will be removed in the next major. */
 export function targetSupportsUserAgentOverrideForTest(target: Target): boolean {
 	return targetSupportsUserAgentOverride(target);
 }
+/** @deprecated Unused test seam; use `applyStealthPatches()`. Will be removed in the next major. */
 export async function configureUserAgentTargetsForTest(
 	browser: Browser,
 	state: { browserSession: CDPSession | null; override: UserAgentOverride },

@@ -12,7 +12,6 @@ import * as path from "node:path";
 import { isRecord, logger, Snowflake, untilAborted } from "@oh-my-pi/pi-utils";
 import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
 import { JsRuntime } from "../../../eval/js/shared/runtime";
-import { formatScreenshot, resizeImage } from "../../../utils/image-resize";
 import { resolveToCwd } from "../../path-utils";
 import { ToolAbortError, throwIfAborted } from "../../tool-errors";
 import {
@@ -83,20 +82,21 @@ import {
 	type RecordingStopResult,
 } from "../recording";
 import {
-	createPngDiff,
 	type DiffScreenshotOptions,
 	type DiffScreenshotResult,
 	formatScreenshotLegend,
 	type PdfOptions,
-	pngPixelChangeRatio,
 	type ScreenshotAnnotationTarget,
 	type ScreenshotChangeResult,
-	type ScreenshotHistory,
+	ScreenshotChangeTracker,
 	type ScreenshotOptions,
+	saveScreenshot,
+	saveScreenshotDiff,
 	screenshotQuality,
 	screenshotScope,
 	screenshotThreshold,
 } from "../screenshot";
+import { readUploadPayload } from "../interactions";
 import {
 	type AriaSnapshotBaseline,
 	type AriaSnapshotDiffResult,
@@ -375,7 +375,7 @@ export class TernTab implements InProcessRunTab {
 	readonly #buttons = new Set<"left" | "right" | "middle">();
 	readonly #mods: TernModifier[] = [];
 	// Screenshots, snapshots, recording, WebMCP.
-	readonly #screenshotHistory = new Map<string, ScreenshotHistory>();
+	readonly #screenshotChanges = new ScreenshotChangeTracker();
 	readonly #ariaBaselines = new Map<string, AriaSnapshotBaseline>();
 	readonly #recording = new RecordingController();
 	#webmcp: WebMcpController | undefined;
@@ -1428,15 +1428,7 @@ export class TernTab implements InProcessRunTab {
 			// No chooser asked for the preset: disarm it before dropping the files instead.
 			await this.#op("files", { paths: null });
 		}
-		const files = [];
-		for (const file of absolute) {
-			const handle = Bun.file(file);
-			files.push({
-				name: path.basename(file),
-				type: handle.type || "application/octet-stream",
-				data: Buffer.from(await fs.promises.readFile(file)).toString("base64"),
-			});
-		}
+		const files = await Promise.all(absolute.map(readUploadPayload));
 		await this.#kit("setFiles", [spec, files]);
 	}
 
@@ -1803,108 +1795,46 @@ export class TernTab implements InProcessRunTab {
 				legend.push({ ...box, role: element?.role ?? "generic", name: element?.name });
 			}
 		}
-		let comparison: Buffer;
-		let buffer: Buffer;
+		const scope = screenshotScope(opts);
+		let comparison: Buffer | undefined;
+		let change: ScreenshotChangeResult | undefined;
+		let buffer: Buffer | undefined;
 		try {
 			const capture = { selector: opts.selector, fullPage: opts.fullPage };
-			comparison = await this.captureBytes({ ...capture, format: "png" }, frame);
-			buffer =
-				format === "png"
-					? comparison
-					: await this.captureBytes({ ...capture, format, quality: opts.quality }, frame);
+			// The PNG comparison capture doubles as the result when no other format was requested;
+			// an unchanged capture skips the formatted one entirely.
+			if (changeDetection) {
+				comparison = await this.captureBytes({ ...capture, format: "png" }, frame);
+				change = this.#screenshotChanges.compare(scope, comparison, threshold);
+			}
+			if (!change || change.changed) {
+				buffer =
+					comparison && format === "png"
+						? comparison
+						: await this.captureBytes({ ...capture, format, quality: opts.quality }, frame);
+			}
 		} finally {
 			if (annotation) await this.#kit("removeOverlay", [annotation.token]).catch(() => undefined);
 		}
-		let change: ScreenshotChangeResult | undefined;
-		if (changeDetection) {
-			const scope = screenshotScope(opts);
-			const previous = this.#screenshotHistory.get(scope);
-			const pixelChangeRatio = previous ? pngPixelChangeRatio(previous.png, comparison) : 1;
-			const changed = !previous || pixelChangeRatio > threshold;
-			const revision = previous ? previous.revision + (changed ? 1 : 0) : 1;
-			this.#screenshotHistory.set(scope, { png: comparison, revision });
-			change = { changed, revision, pixelChangeRatio };
-			if (!changed) return change;
+		if (comparison && change) {
+			this.#screenshotChanges.record(scope, comparison, change.revision);
+			if (!change.changed) return change;
 		}
-		const resized = await resizeImage(
-			{ type: "image", data: buffer.toString("base64"), mimeType: mime },
-			{
-				maxWidth: 1024,
-				maxHeight: 1024,
-				maxBytes: 150 * 1024,
-				jpegQuality: 70,
-				excludeWebP: context.session.excludeWebP,
-			},
-		);
-		const saveFullRes = !!context.session.browserScreenshotDir || opts.format !== undefined;
-		const savedBuffer = saveFullRes ? buffer : Buffer.from(resized.buffer);
-		const savedMimeType = saveFullRes ? mime : resized.mimeType;
-		const ext = savedMimeType === "image/webp" ? "webp" : savedMimeType === "image/jpeg" ? "jpg" : "png";
-		const dest = context.session.browserScreenshotDir
-			? path.join(
-					context.session.browserScreenshotDir,
-					`screenshot-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, -1)}.${ext}`,
-				)
-			: path.join(os.tmpdir(), `omp-sshots-${Snowflake.next()}.${ext}`);
-		await Bun.write(dest, savedBuffer);
-		context.screenshots.push({
-			dest,
-			mimeType: savedMimeType,
-			bytes: savedBuffer.length,
-			width: resized.width,
-			height: resized.height,
+		const dest = await saveScreenshot(context, buffer!, {
+			mimeType: mime,
+			preserveFormat: opts.format !== undefined,
+			silent: opts.silent,
+			notes: opts.annotate ? [formatScreenshotLegend(legend)] : undefined,
 		});
-		if (!opts.silent) {
-			const lines = formatScreenshot({
-				saveFullRes,
-				savedMimeType,
-				savedByteLength: savedBuffer.length,
-				dest,
-				resized,
-			});
-			if (opts.annotate) lines.push(formatScreenshotLegend(legend));
-			context.output.push({ type: "text", text: lines.join("\n") });
-			context.output.push({ type: "image", data: resized.data, mimeType: resized.mimeType });
-		}
 		return change ? { ...change, path: dest } : dest;
 	}
 
 	/** Compare the viewport with a PNG baseline and show the highlighted diff. */
 	async diffScreenshot(baselinePath: string, opts: DiffScreenshotOptions = {}): Promise<DiffScreenshotResult> {
 		const context = this.#requireRunContext("tab.diffScreenshot()");
-		const baseline = await untilAborted(context.signal, () =>
-			fs.promises.readFile(resolveToCwd(baselinePath, context.session.cwd)),
+		return await saveScreenshotDiff(context, context.signal, baselinePath, opts, () =>
+			this.captureBytes({ format: "png" }),
 		);
-		const current = await this.captureBytes({ format: "png" });
-		const diff = createPngDiff(baseline, current);
-		const changed = diff.pixelChangeRatio > screenshotThreshold(opts.threshold);
-		const diffPath = opts.output
-			? resolveToCwd(opts.output, context.session.cwd)
-			: path.join(os.tmpdir(), `omp-screenshot-diff-${Snowflake.next()}.png`);
-		await Bun.write(diffPath, diff.png);
-		const resized = await resizeImage(
-			{ type: "image", data: diff.png.toString("base64"), mimeType: "image/png" },
-			{
-				maxWidth: 1024,
-				maxHeight: 1024,
-				maxBytes: 150 * 1024,
-				jpegQuality: 70,
-				excludeWebP: context.session.excludeWebP,
-			},
-		);
-		context.screenshots.push({
-			dest: diffPath,
-			mimeType: "image/png",
-			bytes: diff.png.length,
-			width: resized.width,
-			height: resized.height,
-		});
-		context.output.push({
-			type: "text",
-			text: `Screenshot diff: ${diff.pixelChangeRatio.toFixed(6)} changed-pixel ratio (${changed ? "changed" : "unchanged"}); saved to ${diffPath}`,
-		});
-		context.output.push({ type: "image", data: resized.data, mimeType: resized.mimeType });
-		return { pixelChangeRatio: diff.pixelChangeRatio, changed, diffPath };
 	}
 
 	/** Print the page to PDF (WKWebView pagination; layout options unsupported). */

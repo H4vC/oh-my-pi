@@ -5,11 +5,11 @@ import {
 	STREAM_CLOSE_PROTO_MISMATCH,
 	STREAM_CLOSE_UNAUTHORIZED,
 	STREAM_PROTO,
-	type StreamChatMessage,
 	type StreamHostFrame,
 	type StreamPaneFrame,
 	type StreamServerToHost,
 } from "@oh-my-pi/pi-wire";
+import { isStreamChatMessage } from "./protocol";
 
 const INITIAL_RECONNECT_MS = 1_000;
 const MAX_RECONNECT_MS = 30_000;
@@ -189,7 +189,7 @@ function parseServerFrame(data: unknown): StreamServerToHost | undefined {
 			case "viewers":
 				return typeof frame.n === "number" ? (frame as StreamServerToHost) : undefined;
 			case "chat":
-				return isChatMessage(frame.msg) ? (frame as StreamServerToHost) : undefined;
+				return isStreamChatMessage(frame.msg) ? (frame as StreamServerToHost) : undefined;
 			case "error":
 				return typeof frame.message === "string" ? (frame as StreamServerToHost) : undefined;
 			default:
@@ -198,16 +198,4 @@ function parseServerFrame(data: unknown): StreamServerToHost | undefined {
 	} catch {
 		return undefined;
 	}
-}
-
-function isChatMessage(value: unknown): value is StreamChatMessage {
-	if (!value || typeof value !== "object") return false;
-	const message = value as Record<string, unknown>;
-	return (
-		typeof message.id === "number" &&
-		typeof message.name === "string" &&
-		typeof message.text === "string" &&
-		typeof message.ts === "number" &&
-		(message.host === undefined || typeof message.host === "boolean")
-	);
 }

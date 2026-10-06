@@ -1,6 +1,10 @@
+/** @deprecated Unused; line endings are handled by the native edit engine. Will be removed in the next major. */
 export type LineEnding = "\r\n" | "\n";
 
-/** Detect the first line-ending style. Defaults to LF. */
+/**
+ * Detect the first line-ending style. Defaults to LF.
+ * @deprecated Unused; line endings are handled by the native edit engine. Will be removed in the next major.
+ */
 export function detectLineEnding(content: string): LineEnding {
 	const crlfIndex = content.indexOf("\r\n");
 	const lfIndex = content.indexOf("\n");
@@ -13,12 +17,18 @@ export function normalizeToLF(text: string): string {
 	return text.indexOf("\r") === -1 ? text : text.replace(/\r\n?/g, "\n");
 }
 
-/** Re-encode LF text with the requested line ending. */
+/**
+ * Re-encode LF text with the requested line ending.
+ * @deprecated Unused; line endings are handled by the native edit engine. Will be removed in the next major.
+ */
 export function restoreLineEndings(text: string, ending: LineEnding): string {
 	return ending === "\r\n" ? text.replace(/\n/g, "\r\n") : text;
 }
 
-/** Strip a UTF-8 BOM and preserve it for round-tripping. */
+/**
+ * Strip a UTF-8 BOM and preserve it for round-tripping.
+ * @deprecated Unused; BOMs are handled by the native edit engine — inline `content.startsWith("\uFEFF")` where needed. Will be removed in the next major.
+ */
 export function stripBom(content: string): { bom: string; text: string } {
 	return content.startsWith("\uFEFF") ? { bom: "\uFEFF", text: content.slice(1) } : { bom: "", text: content };
 }

@@ -52,10 +52,18 @@ interface ClickPoint {
 
 type ActionabilityResult = { ok: true; x: number; y: number } | { ok: false; reason: string; coveredBy?: string };
 
-interface FilePayload {
+/** A file to drop onto a page element; `data` is base64. */
+export interface UploadFilePayload {
 	name: string;
 	type: string;
 	data: string;
+}
+
+/** Read `absolute` into the base64 payload an in-page drop/upload helper consumes. */
+export async function readUploadPayload(absolute: string): Promise<UploadFilePayload> {
+	const file = Bun.file(absolute);
+	const data = (await file.bytes()).toBase64();
+	return { name: path.basename(absolute), type: file.type || "application/octet-stream", data };
 }
 
 interface PageRect {
@@ -654,12 +662,10 @@ export async function uploadFilesToElement(
 		return;
 	}
 
-	const files: FilePayload[] = [];
+	const files: UploadFilePayload[] = [];
 	for (const absolute of absolutePaths) {
 		throwIfAborted(signal);
-		const file = Bun.file(absolute);
-		const data = Buffer.from(await file.arrayBuffer()).toString("base64");
-		files.push({ name: path.basename(absolute), type: file.type || "application/octet-stream", data });
+		files.push(await readUploadPayload(absolute));
 	}
 	await untilAborted(signal, () =>
 		handle.evaluate((el, payloads) => {

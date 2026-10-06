@@ -24,7 +24,8 @@ import {
 	XDEV_EXTERNAL_DESCRIPTION_CAP,
 	type XdevState,
 	xdevDocs,
-	xdevDocsAll,
+	planXdevPromptDocs,
+	renderXdevPromptDocs,
 	xdevEntries,
 } from "@oh-my-pi/pi-coding-agent/tools/xdev";
 import { removeWithRetries } from "@oh-my-pi/pi-utils";
@@ -597,7 +598,7 @@ describe("read and write route xd:// device URLs", () => {
 			xdev.mountedNames.add(giant.name);
 			xdev.builtInNames.add(giant.name);
 
-			const docs = xdevDocsAll(xdev);
+			const docs = renderXdevPromptDocs(planXdevPromptDocs(xdev));
 			expect(docs.length).toBeLessThan(XDEV_DOCS_TOTAL_BUDGET + XDEV_DOCS_PER_DEVICE_CAP);
 			expect(docs).toContain(`## ${mounted[0]!.name}`);
 			expect(docs).toContain("## Additional devices (docs on demand)");
@@ -629,18 +630,18 @@ describe("read and write route xd:// device URLs", () => {
 			xdev.tools.set(external.name, external);
 			xdev.mountedNames.add(external.name);
 
-			const inlineDocs = xdevDocsAll(xdev, "inline");
+			const inlineDocs = renderXdevPromptDocs(planXdevPromptDocs(xdev, "inline"));
 			expect(inlineDocs).toContain("## mcp_external_tool");
 			expect(inlineDocs).toContain("LEDE ");
 			expect(inlineDocs).not.toContain("TAIL");
 			expect(inlineDocs).toContain("… (full docs: read xd://mcp_external_tool)");
 
-			const builtinsDocs = xdevDocsAll(xdev, "builtins");
+			const builtinsDocs = renderXdevPromptDocs(planXdevPromptDocs(xdev, "builtins"));
 			expect(builtinsDocs).toContain("## ");
 			expect(builtinsDocs).not.toContain("## mcp_external_tool");
 			expect(builtinsDocs).toContain("- xd://mcp_external_tool —");
 			expect(builtinsDocs).not.toContain("TAIL");
-			const catalogDocs = xdevDocsAll(xdev, "catalog");
+			const catalogDocs = renderXdevPromptDocs(planXdevPromptDocs(xdev, "catalog"));
 			expect(catalogDocs).not.toContain(`## ${mounted[0]!.name}`);
 			expect(catalogDocs).toContain("- xd://");
 			expect(catalogDocs).toContain("- xd://mcp_external_tool —");
@@ -655,20 +656,24 @@ describe("read and write route xd:// device URLs", () => {
 			xdev.mountedNames.clear();
 			for (const name of [...builtInMountedNames, contextMode.name, unrelatedMcp.name]) xdev.mountedNames.add(name);
 
-			const allowlistedDocs = xdevDocsAll(xdev, "builtins", ["mcp__context_mode_*"]);
+			const allowlistedDocs = renderXdevPromptDocs(planXdevPromptDocs(xdev, "builtins", ["mcp__context_mode_*"]));
 			expect(allowlistedDocs).toContain("## mcp__context_mode_ctx_execute");
 			expect(allowlistedDocs).not.toContain("## mcp__other_server_execute");
 			expect(allowlistedDocs).toContain("- xd://mcp__other_server_execute —");
 
-			const catalogWithAllowlistDocs = xdevDocsAll(xdev, "catalog", ["mcp__context_mode_*"]);
+			const catalogWithAllowlistDocs = renderXdevPromptDocs(
+				planXdevPromptDocs(xdev, "catalog", ["mcp__context_mode_*"]),
+			);
 			expect(catalogWithAllowlistDocs).not.toContain("## mcp__context_mode_ctx_execute");
 
 			// Malformed user config (scalar or non-string entries reach the
 			// registry unvalidated) degrades to the catalog listing instead of
 			// throwing while the system prompt is built.
-			const scalarAllowlistDocs = xdevDocsAll(xdev, "builtins", "mcp__context_mode_*" as never);
+			const scalarAllowlistDocs = renderXdevPromptDocs(
+				planXdevPromptDocs(xdev, "builtins", "mcp__context_mode_*" as never),
+			);
 			expect(scalarAllowlistDocs).toContain("- xd://mcp__context_mode_ctx_execute —");
-			const nonStringAllowlistDocs = xdevDocsAll(xdev, "builtins", [123] as never);
+			const nonStringAllowlistDocs = renderXdevPromptDocs(planXdevPromptDocs(xdev, "builtins", [123] as never));
 			expect(nonStringAllowlistDocs).toContain("- xd://mcp__context_mode_ctx_execute —");
 		} finally {
 			await removeWithRetries(tempDir);

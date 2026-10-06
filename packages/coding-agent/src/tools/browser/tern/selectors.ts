@@ -1,5 +1,10 @@
 import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
-import { assertSelectorString, PLAYWRIGHT_ONLY_SELECTOR_RE, parseAriaRefSelector } from "../aria/aria-snapshot";
+import {
+	assertSelectorString,
+	mapLegacySelector,
+	PLAYWRIGHT_ONLY_SELECTOR_RE,
+	parseAriaRefSelector,
+} from "../aria/aria-snapshot";
 
 /** Semantic selector engines resolved in-page by the exported Chromium query handlers. */
 export type TernSemanticEngine = "label" | "placeholder" | "testid" | "alt" | "title" | "role";
@@ -26,8 +31,6 @@ const SEMANTIC_ENGINES: readonly TernSemanticEngine[] = ["label", "placeholder",
 
 const PREFIXED_ENGINES = ["text", "xpath", "pierce", ...SEMANTIC_ENGINES] as const;
 
-const LEGACY_PREFIXES = ["p-aria/", "p-text/", "p-xpath/", "p-pierce/"] as const;
-
 const ARIA_REF_PREFIXES = ["aria-ref=", "aria-ref/", "ariaref/"] as const;
 
 const ENGINE_PREFIXES = ["aria/", ...PREFIXED_ENGINES.map(engine => `${engine}/`), ...ARIA_REF_PREFIXES, "p-"];
@@ -49,16 +52,6 @@ function parseAriaQuery(query: string): TernSelector {
 	return { engine: "aria", ...options };
 }
 
-function legacyToModern(selector: string): string {
-	if (selector.startsWith("p-aria/")) {
-		const rest = selector.slice("p-aria/".length);
-		const nameMatch = rest.match(/\[\s*name\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\]]+))\s*\]/);
-		const name = nameMatch?.[1] ?? nameMatch?.[2] ?? nameMatch?.[3];
-		return `aria/${name ? name.trim() : rest}`;
-	}
-	return selector.slice("p-".length);
-}
-
 /** Parse a browser-tool selector string into a {@link TernSelector}. Throws ToolError on unsupported syntax. */
 export function parseTernSelector(selector: string): TernSelector {
 	assertSelectorString(selector);
@@ -68,14 +61,7 @@ export function parseTernSelector(selector: string): TernSelector {
 				`Use a puppeteer text selector ("text/Allow all"), an aria selector ("aria/Name"), CSS, or "xpath/...".`,
 		);
 	}
-	if (selector.startsWith("p-")) {
-		if (!LEGACY_PREFIXES.some(prefix => selector.startsWith(prefix))) {
-			throw new ToolError(
-				`Unsupported selector prefix. Use CSS or puppeteer query handlers (aria/, text/, xpath/, pierce/). Got: ${selector}`,
-			);
-		}
-		return parseTernSelector(legacyToModern(selector));
-	}
+	if (selector.startsWith("p-")) return parseTernSelector(mapLegacySelector(selector));
 	const ref = parseAriaRefSelector(selector);
 	if (ref !== null) return { engine: "ariaRef", ref };
 	if (ARIA_REF_PREFIXES.some(prefix => selector.trim().startsWith(prefix))) {

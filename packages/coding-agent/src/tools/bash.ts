@@ -15,7 +15,7 @@ import type {
 	ToolTier,
 } from "@oh-my-pi/pi-agent-core";
 import type { ImageContent } from "@oh-my-pi/pi-ai";
-import { isEnoent, logger, prompt } from "@oh-my-pi/pi-utils";
+import { countNewlines, isEnoent, logger, prompt } from "@oh-my-pi/pi-utils";
 import { isPosixShell } from "@oh-my-pi/pi-utils/procmgr";
 import { raceJobSettlement, resolveAutoBackgroundWaitMs } from "../async";
 import type { Settings } from "../config/settings";
@@ -29,12 +29,7 @@ import type {
 	ClientBridgeTerminalHandle,
 	ClientBridgeTerminalOutput,
 } from "../session/client-bridge";
-import {
-	DEFAULT_MAX_BYTES,
-	enforceInlineByteCap,
-	streamTailUpdates,
-	TailBuffer,
-} from "@oh-my-pi/pi-tui/tools/streaming-output";
+import { DEFAULT_MAX_BYTES, enforceInlineByteCap } from "@oh-my-pi/pi-tui/tools/streaming-output";
 import { resolveCliEntryCmd } from "../subprocess/worker-client";
 import { TerminalGraphicsDecoder } from "../utils/terminal-graphics";
 import type { ToolSession } from ".";
@@ -479,6 +474,14 @@ class TerminalSnapshotDecoder {
 	}
 }
 
+/** Counters for ACP-bridge output, which the client terminal returns whole rather than through an OutputSink. */
+function bridgeOutputCounts(
+	text: string,
+): Pick<BashResult, "totalLines" | "totalBytes" | "outputLines" | "outputBytes"> {
+	const lines = text.length > 0 ? countNewlines(text) + 1 : 0;
+	return { totalLines: lines, totalBytes: text.length, outputLines: lines, outputBytes: text.length };
+}
+
 function formatTimeoutClampNotice(
 	requestedTimeoutSec: number,
 	effectiveTimeoutSec: number,
@@ -848,7 +851,6 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 			label,
 			async ({ jobId, signal: runSignal, reportProgress }) => {
 				const { path: artifactPath, id: artifactId } = (await this.session.allocateOutputArtifact?.("bash")) ?? {};
-				const tailBuffer = new TailBuffer(DEFAULT_MAX_BYTES);
 				const wallTimeStart = performance.now();
 				try {
 					const result = await executeBash(options.command, {
@@ -860,11 +862,10 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 						filesystem: this.#urlFilesystem(runSignal, options.approvalTier).shellFilesystem(),
 						artifactPath,
 						artifactId,
-						onChunk: chunk => {
-							tailBuffer.append(chunk);
-							latestText = tailBuffer.text();
-							void reportProgress(latestText, {
-								output: latestText,
+						onPreview: text => {
+							latestText = text;
+							void reportProgress(text, {
+								output: text,
 								async: { state: "running", jobId, type: "bash" },
 							});
 						},
@@ -1336,39 +1337,48 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 				// Emit partial update so the editor can embed the live terminal card.
 				onUpdate?.({ content: [], details: { terminalId: handle.terminalId } });
 
-				const exitPromise = handle.waitForExit();
-				let exitStatus!: ClientBridgeTerminalExitStatus;
-
-				type BridgeRaceResult =
+				// Exit, timeout, and abort are each subscribed once and latch the first
+				// outcome. Every wait below races only a fresh per-iteration promise, so
+				// a long command does not pile reactions onto promises that stay pending.
+				type BridgeOutcome =
 					| { kind: "exit"; status: ClientBridgeTerminalExitStatus }
-					| { kind: "poll" }
 					| { kind: "timeout" }
-					| { kind: "aborted" };
-
-				const exitRacer = exitPromise.then(status => ({ kind: "exit" as const, status }));
-				const abortRacer = abortedP.then(() => ({ kind: "aborted" as const }));
-				const abortPollRacer = abortedP.then(() => undefined as ClientBridgeTerminalOutput | undefined);
-				const timeoutPollRacer = timeoutPromise.then(() => undefined as ClientBridgeTerminalOutput | undefined);
+					| { kind: "aborted" }
+					| { kind: "failed"; error: unknown };
+				// Held on an object: TypeScript would narrow a closure-assigned `let` to `undefined`.
+				const bridge: { outcome?: BridgeOutcome; wake?: () => void } = {};
+				const settle = (next: BridgeOutcome): void => {
+					bridge.outcome ??= next;
+					bridge.wake?.();
+				};
+				void handle.waitForExit().then(
+					status => settle({ kind: "exit", status }),
+					(error: unknown) => settle({ kind: "failed", error }),
+				);
+				void timeoutPromise.then(settle);
+				void abortedP.then(() => settle({ kind: "aborted" }));
+				let exitStatus!: ClientBridgeTerminalExitStatus;
 				let lastPolledOutput: ClientBridgeTerminalOutput = { output: "", truncated: false };
 
 				// Poll until the process exits, times out, or the caller aborts.
 				for (;;) {
-					const racers: Array<Promise<BridgeRaceResult>> = [
-						exitRacer,
-						timeoutPromise,
-						Bun.sleep(250).then(() => ({ kind: "poll" as const })),
-					];
-					if (signal) {
-						racers.push(abortRacer);
+					if (!bridge.outcome) {
+						// The sleep settles within one tick even when an outcome wakes us first.
+						const tick = Promise.withResolvers<void>();
+						bridge.wake = tick.resolve;
+						void Bun.sleep(250).then(tick.resolve);
+						await tick.promise;
 					}
-					const raced = await Promise.race(racers);
+					const outcome = bridge.outcome;
 
-					if (raced.kind === "aborted" || signal?.aborted) {
+					if (outcome?.kind === "failed") throw outcome.error;
+
+					if (outcome?.kind === "aborted" || signal?.aborted) {
 						await Promise.race([fireKill(), Bun.sleep(killGraceMs)]);
 						throw new ToolAbortError("Command aborted");
 					}
 
-					if (raced.kind === "timeout") {
+					if (outcome?.kind === "timeout") {
 						// Kill before reading final output so a slow `terminal/output`
 						// RPC cannot let a timed-out command keep running past the
 						// enforced timeout. The handle stays valid post-kill so the
@@ -1393,10 +1403,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 							cancelled: false,
 							timedOut: true,
 							truncated: current.truncated,
-							totalLines: decoded.text.length > 0 ? decoded.text.split("\n").length : 0,
-							totalBytes: decoded.text.length,
-							outputLines: decoded.text.length > 0 ? decoded.text.split("\n").length : 0,
-							outputBytes: decoded.text.length,
+							...bridgeOutputCounts(decoded.text),
 							...(decoded.images.length > 0 ? { images: decoded.images } : {}),
 						};
 						return this.#buildCompletedResult(timedOutResult, timeoutSec, {
@@ -1406,18 +1413,20 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 						});
 					}
 
-					if (raced.kind === "exit") {
-						exitStatus = raced.status;
+					if (outcome?.kind === "exit") {
+						exitStatus = outcome.status;
 						break;
 					}
 
 					// Poll tick: push current output so agent-loop transcript stays consistent.
-					// Race the read against abort/timeout so a stuck `terminal/output` RPC does
+					// Race the read against the outcomes so a stuck `terminal/output` RPC does
 					// not delay cancellation or let the command outlive its deadline.
-					const pollOutput = await Promise.race([handle.currentOutput(), abortPollRacer, timeoutPollRacer]);
+					const interrupted = Promise.withResolvers<undefined>();
+					bridge.wake = () => interrupted.resolve(undefined);
+					const pollOutput = await Promise.race([handle.currentOutput(), interrupted.promise]);
 					if (pollOutput === undefined) {
-						// Abort or timeout fired during the poll-tick read; let the next loop
-						// iteration exit via the matching abort/timeout branch.
+						// An outcome landed during the poll-tick read; let the next loop
+						// iteration exit via the matching branch.
 						continue;
 					}
 					lastPolledOutput = pollOutput;
@@ -1448,18 +1457,13 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 
 				const decoded = await bridgeGraphics.finish(finalOutput.output);
 				const outputText = decoded.text;
-				const outputByteLen = outputText.length;
-				const outputLineCount = outputText.length > 0 ? outputText.split("\n").length : 0;
 
 				const bridgeResult: BashResult = {
 					output: outputText,
 					exitCode,
 					cancelled: false,
 					truncated: finalOutput.truncated,
-					totalLines: outputLineCount,
-					totalBytes: outputByteLen,
-					outputLines: outputLineCount,
-					outputBytes: outputByteLen,
+					...bridgeOutputCounts(outputText),
 					...(decoded.images.length > 0 ? { images: decoded.images } : {}),
 				};
 
@@ -1488,9 +1492,6 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 				}
 			}
 		}
-
-		// Track output for streaming updates (tail only)
-		const tailBuffer = new TailBuffer(DEFAULT_MAX_BYTES);
 
 		// Allocate artifact for truncated output storage
 		const { path: artifactPath, id: artifactId } = (await this.session.allocateOutputArtifact?.("bash")) ?? {};
@@ -1523,7 +1524,8 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 					filesystem: this.#urlFilesystem(signal, approvalTier).shellFilesystem(),
 					artifactPath,
 					artifactId,
-					onChunk: streamTailUpdates(tailBuffer, onUpdate),
+					// Stream the sink's own inline view rather than re-buffering chunks.
+					onPreview: onUpdate ? text => onUpdate({ content: [{ type: "text", text }], details: {} }) : undefined,
 					onMinimizedSave: originalText => saveBashOriginalArtifact(this.session, originalText),
 				});
 		const wallTimeMs = performance.now() - wallTimeStart;

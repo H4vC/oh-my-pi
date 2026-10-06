@@ -65,71 +65,172 @@ interface ParsedLocation {
 	column?: number;
 }
 
+type DiagnosticParser = (input: CleanseParserInput) => CleanseDiagnostic[];
+
+type JsonRecord = Record<string, unknown> | undefined;
+
+/** One family of diagnostic records inside a parsed JSON document. */
+interface JsonSection {
+	/** Diagnostic records in one document — or, with `nested`, the file records that own them. */
+	select: (root: unknown) => unknown[];
+	/** Key of each selected owner record's diagnostic array. */
+	nested?: string;
+	fields: (record: JsonRecord, owner: JsonRecord) => DiagnosticFields;
+}
+
+/** One line-oriented diagnostic format, matched against each trimmed output line. */
+interface LineFormat {
+	pattern: RegExp;
+	fields: (match: RegExpExecArray) => DiagnosticFields;
+}
+
+/**
+ * Where partial output on one stream may be cut so both sides parse independently:
+ * at any line end, or only at line ends outside every JSON document.
+ */
+type StreamFraming = "lines" | "json";
+
+interface ParserSpec {
+	parse: DiagnosticParser;
+	/** Used instead of `parse` when it finds nothing in the output. */
+	fallback?: DiagnosticParser;
+	stdout: StreamFraming;
+	stderr: StreamFraming;
+}
+
 /** Parse one checker invocation into normalized, project-relative diagnostics. */
 export function parseCleanseDiagnostics(kind: CleanseParserKind, input: CleanseParserInput): CleanseDiagnostic[] {
-	const parsed = (() => {
-		switch (kind) {
-			case "rust":
-				return parseRust(input);
-			case "rust-test":
-				return parseRustTest(input);
-			case "go":
-				return parseGo(input);
-			case "go-test":
-				return parseGoTest(input);
-			case "staticcheck":
-				return parseStaticcheck(input);
-			case "golangci":
-				return parseGolangci(input);
-			case "ruff":
-				return parseRuff(input);
-			case "pyright":
-				return parsePyright(input);
-			case "mypy":
-				return parseGeneric(input);
-			case "pylint":
-				return parsePylint(input);
-			case "flake8":
-				return parseFlake8(input);
-			case "ty":
-				return parseTy(input);
-			case "eslint":
-				return parseEslint(input);
-			case "biome":
-				return parseBiome(input);
-			case "oxlint":
-				return parseUnixFormat(input);
-			case "deno-lint":
-				return parseDenoLint(input);
-			case "stylelint":
-				return parseStylelint(input);
-			case "rubocop":
-				return parseRubocop(input);
-			case "phpstan":
-				return parsePhpstan(input);
-			case "psalm":
-				return parsePsalm(input);
-			case "swiftlint":
-				return parseSwiftlint(input);
-			case "dart":
-				return parseDart(input);
-			case "credo":
-				return parseCredo(input);
-			case "shellcheck":
-				return parseShellcheck(input);
-			case "hlint":
-				return parseHlint(input);
-			case "terraform":
-				return parseTerraform(input);
-			case "tflint":
-				return parseTflint(input);
-			case "actionlint":
-				return parseActionlint(input);
-			case "generic":
-				return parseGeneric(input);
+	const spec = PARSERS[kind];
+	const parsed = spec.parse(input);
+	return deduplicateDiagnostics(parsed.length > 0 || !spec.fallback ? parsed : spec.fallback(input));
+}
+
+/** Identity key shared by every cleanse dedupe; also used for exactly-once streaming emission. */
+export function diagnosticKey(diagnostic: CleanseDiagnostic): string {
+	return [
+		diagnostic.file ?? "",
+		diagnostic.line ?? "",
+		diagnostic.column ?? "",
+		diagnostic.code ?? "",
+		diagnostic.message,
+	].join("\u0000");
+}
+
+/** Drop repeated diagnostics by {@link diagnosticKey}, keeping first-seen order. */
+export function deduplicateDiagnostics(diagnostics: readonly CleanseDiagnostic[]): CleanseDiagnostic[] {
+	const seen = new Set<string>();
+	const unique: CleanseDiagnostic[] = [];
+	for (const diagnostic of diagnostics) {
+		const key = diagnosticKey(diagnostic);
+		if (seen.has(key)) continue;
+		seen.add(key);
+		unique.push(diagnostic);
+	}
+	return unique;
+}
+
+/**
+ * Incremental parser for output of a checker that is still running.
+ *
+ * Each {@link push} takes the text appended to stdout/stderr since the previous call and
+ * parses only the output completed since then, cut where the format parses independently:
+ * at line ends, and for JSON streams only between documents. The diagnostics yielded across
+ * calls match re-parsing the whole completed prefix each time; callers dedupe across calls.
+ */
+export class CleanseStreamParser {
+	readonly #spec: ParserSpec;
+	readonly #context: Omit<CleanseParserInput, "stdout" | "stderr">;
+	readonly #stdout: StreamCutter;
+	readonly #stderr: StreamCutter;
+	#primaryFound = false;
+
+	constructor(kind: CleanseParserKind, context: Omit<CleanseParserInput, "stdout" | "stderr">) {
+		this.#spec = PARSERS[kind];
+		this.#context = context;
+		this.#stdout = new StreamCutter(this.#spec.stdout);
+		this.#stderr = new StreamCutter(this.#spec.stderr);
+	}
+
+	/** Feed newly produced output; returns diagnostics parsed from newly completed segments. */
+	push(stdout: string, stderr: string): CleanseDiagnostic[] {
+		const input: CleanseParserInput = {
+			...this.#context,
+			stdout: this.#stdout.push(stdout),
+			stderr: this.#stderr.push(stderr),
+		};
+		if (!input.stdout && !input.stderr) return [];
+		const parsed = this.#spec.parse(input);
+		if (parsed.length > 0) this.#primaryFound = true;
+		// A fallback applies only while the primary format has matched nothing in the
+		// whole prefix, exactly as a full re-parse of that prefix would decide.
+		const fallback = this.#primaryFound ? undefined : this.#spec.fallback;
+		return deduplicateDiagnostics(fallback ? fallback(input) : parsed);
+	}
+}
+
+/** Splits one growing output stream into sanitized segments that parse independently. */
+class StreamCutter {
+	readonly #json: boolean;
+	/** Raw output after the last newline seen. */
+	#partial = "";
+	/** Sanitized complete lines held back while a JSON document is open. */
+	#held = "";
+	// JSON scanner state at the end of #held, mirroring parseJsonValues.
+	#inDocument = false;
+	#depth = 0;
+	#inString = false;
+	#escaped = false;
+
+	constructor(framing: StreamFraming) {
+		this.#json = framing === "json";
+	}
+
+	push(chunk: string): string {
+		const text = this.#partial + chunk;
+		const newline = text.lastIndexOf("\n");
+		if (newline < 0) {
+			this.#partial = text;
+			return "";
 		}
-	})();
-	return deduplicateDiagnostics(parsed);
+		this.#partial = text.slice(newline + 1);
+		// Sanitize whole lines only: ANSI sequences never span a newline, so this
+		// equals the corresponding slice of the full sanitized output.
+		const complete = sanitizeText(text.slice(0, newline + 1));
+		if (!this.#json) return complete;
+		const held = this.#held + complete;
+		const cut = this.#scan(held, this.#held.length);
+		this.#held = held.slice(cut);
+		return held.slice(0, cut);
+	}
+
+	/** Advance the scanner over `text` from `from`; returns the offset after the last line end outside a document. */
+	#scan(text: string, from: number): number {
+		let cut = 0;
+		for (let index = from; index < text.length; index += 1) {
+			const char = text[index];
+			if (!this.#inDocument) {
+				if (char === "\n") cut = index + 1;
+				else if (char === "{" || char === "[") {
+					this.#inDocument = true;
+					this.#depth = 1;
+					this.#inString = false;
+					this.#escaped = false;
+				}
+				continue;
+			}
+			if (this.#inString) {
+				if (this.#escaped) this.#escaped = false;
+				else if (char === "\\") this.#escaped = true;
+				else if (char === '"') this.#inString = false;
+				continue;
+			}
+			if (char === '"') this.#inString = true;
+			else if (char === "{" || char === "[") this.#depth += 1;
+			else if (char === "}" || char === "]") this.#depth -= 1;
+			if (this.#depth === 0) this.#inDocument = false;
+		}
+		return cut;
+	}
 }
 
 function toRecord(value: unknown): Record<string, unknown> | undefined {
@@ -254,6 +355,61 @@ function allJsonValues(input: CleanseParserInput): unknown[] {
 	return [...parseJsonValues(input.stdout), ...parseJsonValues(input.stderr)];
 }
 
+function parseJsonSections(input: CleanseParserInput, sections: readonly JsonSection[]): CleanseDiagnostic[] {
+	const diagnostics: CleanseDiagnostic[] = [];
+	for (const root of allJsonValues(input)) {
+		for (const section of sections) {
+			for (const value of section.select(root)) {
+				const record = toRecord(value);
+				if (section.nested === undefined) {
+					addDiagnostic(diagnostics, input, section.fields(record, undefined));
+					continue;
+				}
+				for (const child of toArray(record?.[section.nested])) {
+					addDiagnostic(diagnostics, input, section.fields(toRecord(child), record));
+				}
+			}
+		}
+	}
+	return diagnostics;
+}
+
+function parseLines(input: CleanseParserInput, formats: readonly LineFormat[]): CleanseDiagnostic[] {
+	const diagnostics: CleanseDiagnostic[] = [];
+	for (const line of sanitizeText(`${input.stdout}\n${input.stderr}`).split("\n")) {
+		const trimmed = line.trim();
+		if (!trimmed) continue;
+		for (const format of formats) {
+			const match = format.pattern.exec(trimmed);
+			if (!match) continue;
+			addDiagnostic(diagnostics, input, format.fields(match));
+			break;
+		}
+	}
+	return diagnostics;
+}
+
+function jsonFormat(...sections: JsonSection[]): ParserSpec {
+	return { parse: input => parseJsonSections(input, sections), stdout: "json", stderr: "json" };
+}
+
+function lineFormat(...formats: LineFormat[]): ParserSpec {
+	return { parse: input => parseLines(input, formats), stdout: "lines", stderr: "lines" };
+}
+
+/** Elements of one array field on a top-level document object. */
+function rootField(key: string): (root: unknown) => unknown[] {
+	return root => toArray(toRecord(root)?.[key]);
+}
+
+function integer(value: string | undefined): number | undefined {
+	return value ? Number.parseInt(value, 10) : undefined;
+}
+
+function zeroBased(value: number | undefined): number | undefined {
+	return value === undefined ? undefined : value + 1;
+}
+
 function parseRust(input: CleanseParserInput): CleanseDiagnostic[] {
 	const diagnostics: CleanseDiagnostic[] = [];
 	for (const value of parseJsonValues(input.stdout)) {
@@ -300,7 +456,7 @@ function parseRustTest(input: CleanseParserInput): CleanseDiagnostic[] {
 	return diagnostics;
 }
 
-function parseGo(input: CleanseParserInput): CleanseDiagnostic[] {
+function parseGoVet(input: CleanseParserInput): CleanseDiagnostic[] {
 	const diagnostics: CleanseDiagnostic[] = [];
 	const visit = (value: unknown, analyzer?: string): void => {
 		if (Array.isArray(value)) {
@@ -326,10 +482,10 @@ function parseGo(input: CleanseParserInput): CleanseDiagnostic[] {
 		for (const key in record) visit(record[key], key);
 	};
 	for (const value of allJsonValues(input)) visit(value);
-	return diagnostics.length > 0 ? diagnostics : parseGeneric(input);
+	return diagnostics;
 }
 
-function parseGoTest(input: CleanseParserInput): CleanseDiagnostic[] {
+function parseGoTestEvents(input: CleanseParserInput): CleanseDiagnostic[] {
 	const diagnostics: CleanseDiagnostic[] = [];
 	for (const value of parseJsonValues(input.stdout)) {
 		const event = toRecord(value);
@@ -355,301 +511,6 @@ function parseGoTest(input: CleanseParserInput): CleanseDiagnostic[] {
 				code: "test-failure",
 				message: `test ${testName} failed`,
 			});
-		}
-	}
-	return diagnostics.length > 0 ? diagnostics : parseGeneric(input);
-}
-
-function parseStaticcheck(input: CleanseParserInput): CleanseDiagnostic[] {
-	const diagnostics: CleanseDiagnostic[] = [];
-	for (const value of allJsonValues(input)) {
-		const record = toRecord(value);
-		const location = nestedRecord(record, "location");
-		const end = nestedRecord(record, "end");
-		addDiagnostic(diagnostics, input, {
-			file: stringField(location, "file"),
-			line: numberField(location, "line"),
-			column: numberField(location, "column"),
-			endLine: numberField(end, "line"),
-			endColumn: numberField(end, "column"),
-			code: stringField(record, "code"),
-			severity: stringField(record, "severity") ?? "warning",
-			message: stringField(record, "message"),
-		});
-	}
-	return diagnostics;
-}
-
-function parseGolangci(input: CleanseParserInput): CleanseDiagnostic[] {
-	const diagnostics: CleanseDiagnostic[] = [];
-	const text = sanitizeText(`${input.stdout}\n${input.stderr}`);
-	for (const line of text.split("\n")) {
-		const match = /^(.+?):(\d+):(\d+):\s+(.*?)\s+\(([A-Za-z0-9_-]+)\)$/.exec(line.trim());
-		if (!match) continue;
-		addDiagnostic(diagnostics, input, {
-			file: match[1],
-			line: Number.parseInt(match[2], 10),
-			column: Number.parseInt(match[3], 10),
-			code: match[5],
-			severity: "warning",
-			message: match[4],
-		});
-	}
-	return diagnostics;
-}
-
-function parseRuff(input: CleanseParserInput): CleanseDiagnostic[] {
-	const diagnostics: CleanseDiagnostic[] = [];
-	for (const root of allJsonValues(input)) {
-		for (const value of toArray(root)) {
-			const record = toRecord(value);
-			const location = nestedRecord(record, "location");
-			const endLocation = nestedRecord(record, "end_location");
-			const fix = nestedRecord(record, "fix");
-			addDiagnostic(diagnostics, input, {
-				file: stringField(record, "filename"),
-				line: numberField(location, "row"),
-				column: numberField(location, "column"),
-				endLine: numberField(endLocation, "row"),
-				endColumn: numberField(endLocation, "column"),
-				code: stringField(record, "code"),
-				severity: "warning",
-				message: stringField(record, "message"),
-				suggestion: stringField(fix, "message"),
-			});
-		}
-	}
-	return diagnostics;
-}
-
-function parsePyright(input: CleanseParserInput): CleanseDiagnostic[] {
-	const diagnostics: CleanseDiagnostic[] = [];
-	for (const rootValue of allJsonValues(input)) {
-		const root = toRecord(rootValue);
-		for (const value of toArray(root?.generalDiagnostics)) {
-			const record = toRecord(value);
-			const range = nestedRecord(record, "range");
-			const start = nestedRecord(range, "start");
-			const end = nestedRecord(range, "end");
-			addDiagnostic(diagnostics, input, {
-				file: stringField(record, "file"),
-				line: zeroBased(numberField(start, "line")),
-				column: zeroBased(numberField(start, "character")),
-				endLine: zeroBased(numberField(end, "line")),
-				endColumn: zeroBased(numberField(end, "character")),
-				code: stringField(record, "rule"),
-				severity: stringField(record, "severity"),
-				message: stringField(record, "message"),
-			});
-		}
-	}
-	return diagnostics;
-}
-
-function parsePylint(input: CleanseParserInput): CleanseDiagnostic[] {
-	const diagnostics: CleanseDiagnostic[] = [];
-	for (const root of allJsonValues(input)) {
-		for (const value of toArray(root)) {
-			const record = toRecord(value);
-			addDiagnostic(diagnostics, input, {
-				file: stringField(record, "path"),
-				line: numberField(record, "line"),
-				column: zeroBased(numberField(record, "column")),
-				endLine: numberField(record, "endLine"),
-				endColumn: zeroBased(numberField(record, "endColumn")),
-				code: stringField(record, "symbol") ?? stringField(record, "message-id"),
-				severity: stringField(record, "type"),
-				message: stringField(record, "message"),
-			});
-		}
-	}
-	return diagnostics;
-}
-
-function parseFlake8(input: CleanseParserInput): CleanseDiagnostic[] {
-	const diagnostics: CleanseDiagnostic[] = [];
-	const text = sanitizeText(`${input.stdout}\n${input.stderr}`);
-	for (const line of text.split("\n")) {
-		const match = /^(.+?):(\d+):(\d+):\s+([A-Z]+\d+)\s+(.*)$/.exec(line.trim());
-		if (!match) continue;
-		addDiagnostic(diagnostics, input, {
-			file: match[1],
-			line: Number.parseInt(match[2], 10),
-			column: Number.parseInt(match[3], 10),
-			code: match[4],
-			severity: match[4].startsWith("F") || match[4].startsWith("E9") ? "error" : "warning",
-			message: match[5],
-		});
-	}
-	return diagnostics;
-}
-
-function parseTy(input: CleanseParserInput): CleanseDiagnostic[] {
-	const diagnostics: CleanseDiagnostic[] = [];
-	const text = sanitizeText(`${input.stdout}\n${input.stderr}`);
-	for (const line of text.split("\n")) {
-		const match = /^(.+?):(\d+):(\d+):\s+(error|warning|info)\[([^\]]+)\]\s+(.*)$/.exec(line.trim());
-		if (!match) continue;
-		addDiagnostic(diagnostics, input, {
-			file: match[1],
-			line: Number.parseInt(match[2], 10),
-			column: Number.parseInt(match[3], 10),
-			code: match[5],
-			severity: match[4],
-			message: match[6],
-		});
-	}
-	return diagnostics;
-}
-
-function zeroBased(value: number | undefined): number | undefined {
-	return value === undefined ? undefined : value + 1;
-}
-
-function parseEslint(input: CleanseParserInput): CleanseDiagnostic[] {
-	const diagnostics: CleanseDiagnostic[] = [];
-	for (const root of allJsonValues(input)) {
-		for (const fileValue of toArray(root)) {
-			const file = toRecord(fileValue);
-			for (const messageValue of toArray(file?.messages)) {
-				const message = toRecord(messageValue);
-				const fix = nestedRecord(message, "fix");
-				addDiagnostic(diagnostics, input, {
-					file: stringField(file, "filePath"),
-					line: numberField(message, "line"),
-					column: numberField(message, "column"),
-					endLine: numberField(message, "endLine"),
-					endColumn: numberField(message, "endColumn"),
-					code: stringField(message, "ruleId"),
-					severity: numberField(message, "severity"),
-					message: stringField(message, "message"),
-					suggestion: fix ? "automatic fix available" : undefined,
-				});
-			}
-		}
-	}
-	return diagnostics;
-}
-
-function parseBiome(input: CleanseParserInput): CleanseDiagnostic[] {
-	const diagnostics: CleanseDiagnostic[] = [];
-	for (const rootValue of allJsonValues(input)) {
-		const root = toRecord(rootValue);
-		for (const value of toArray(root?.diagnostics)) {
-			const record = toRecord(value);
-			const location = nestedRecord(record, "location");
-			const pathRecord = nestedRecord(location, "path");
-			const message =
-				stringField(record, "description") ?? stringField(record, "message") ?? stringField(record, "title");
-			addDiagnostic(diagnostics, input, {
-				file: stringField(pathRecord, "file") ?? stringField(location, "path"),
-				code: stringField(record, "category"),
-				severity: stringField(record, "severity"),
-				message,
-			});
-		}
-	}
-	return diagnostics;
-}
-
-function parseUnixFormat(input: CleanseParserInput): CleanseDiagnostic[] {
-	const diagnostics: CleanseDiagnostic[] = [];
-	const text = sanitizeText(`${input.stdout}\n${input.stderr}`);
-	for (const line of text.split("\n")) {
-		const match = /^(.+?):(\d+):(\d+):\s+(.*?)\s+\[(Error|Warning)\/([^\]]+)\]$/i.exec(line.trim());
-		if (!match) continue;
-		addDiagnostic(diagnostics, input, {
-			file: match[1],
-			line: Number.parseInt(match[2], 10),
-			column: Number.parseInt(match[3], 10),
-			code: match[6],
-			severity: match[5],
-			message: match[4],
-		});
-	}
-	return diagnostics;
-}
-
-function parseDenoLint(input: CleanseParserInput): CleanseDiagnostic[] {
-	const diagnostics: CleanseDiagnostic[] = [];
-	for (const root of allJsonValues(input)) {
-		const record = toRecord(root);
-		if (!record) continue;
-		for (const value of toArray(record.diagnostics)) {
-			const entry = toRecord(value);
-			const range = nestedRecord(entry, "range");
-			const start = nestedRecord(range, "start");
-			const end = nestedRecord(range, "end");
-			addDiagnostic(diagnostics, input, {
-				file: stringField(entry, "filename"),
-				line: numberField(start, "line"),
-				column: zeroBased(numberField(start, "col")),
-				endLine: numberField(end, "line"),
-				endColumn: zeroBased(numberField(end, "col")),
-				code: stringField(entry, "code"),
-				severity: "warning",
-				message: stringField(entry, "message"),
-				suggestion: stringField(entry, "hint"),
-			});
-		}
-		for (const value of toArray(record.errors)) {
-			const entry = toRecord(value);
-			addDiagnostic(diagnostics, input, {
-				file: stringField(entry, "file_path"),
-				severity: "error",
-				message: stringField(entry, "message"),
-			});
-		}
-	}
-	return diagnostics;
-}
-
-function parseStylelint(input: CleanseParserInput): CleanseDiagnostic[] {
-	const diagnostics: CleanseDiagnostic[] = [];
-	for (const root of allJsonValues(input)) {
-		for (const value of toArray(root)) {
-			const record = toRecord(value);
-			const source = stringField(record, "source");
-			if (!source) continue;
-			for (const warning of toArray(record?.warnings)) {
-				const entry = toRecord(warning);
-				addDiagnostic(diagnostics, input, {
-					file: source,
-					line: numberField(entry, "line"),
-					column: numberField(entry, "column"),
-					endLine: numberField(entry, "endLine"),
-					endColumn: numberField(entry, "endColumn"),
-					code: stringField(entry, "rule"),
-					severity: stringField(entry, "severity"),
-					message: stringField(entry, "text"),
-				});
-			}
-		}
-	}
-	return diagnostics;
-}
-
-function parseRubocop(input: CleanseParserInput): CleanseDiagnostic[] {
-	const diagnostics: CleanseDiagnostic[] = [];
-	for (const rootValue of allJsonValues(input)) {
-		const root = toRecord(rootValue);
-		for (const fileValue of toArray(root?.files)) {
-			const file = toRecord(fileValue);
-			for (const offenseValue of toArray(file?.offenses)) {
-				const offense = toRecord(offenseValue);
-				const location = nestedRecord(offense, "location");
-				addDiagnostic(diagnostics, input, {
-					file: stringField(file, "path"),
-					line: numberField(location, "start_line"),
-					column: numberField(location, "start_column"),
-					endLine: numberField(location, "last_line"),
-					endColumn: numberField(location, "last_column"),
-					code: stringField(offense, "cop_name"),
-					severity: stringField(offense, "severity"),
-					message: stringField(offense, "message"),
-					suggestion: offense?.corrected === true ? "automatic correction available" : undefined,
-				});
-			}
 		}
 	}
 	return diagnostics;
@@ -682,45 +543,6 @@ function parsePhpstan(input: CleanseParserInput): CleanseDiagnostic[] {
 	return diagnostics;
 }
 
-function parsePsalm(input: CleanseParserInput): CleanseDiagnostic[] {
-	const diagnostics: CleanseDiagnostic[] = [];
-	for (const root of allJsonValues(input)) {
-		for (const value of toArray(root)) {
-			const record = toRecord(value);
-			const shortcode = numberField(record, "shortcode");
-			addDiagnostic(diagnostics, input, {
-				file: stringField(record, "file_name") ?? stringField(record, "file_path"),
-				line: numberField(record, "line_from"),
-				column: numberField(record, "column_from"),
-				endLine: numberField(record, "line_to"),
-				endColumn: numberField(record, "column_to"),
-				code: stringField(record, "type") ?? (shortcode === undefined ? undefined : String(shortcode)),
-				severity: stringField(record, "severity"),
-				message: stringField(record, "message"),
-			});
-		}
-	}
-	return diagnostics;
-}
-
-function parseSwiftlint(input: CleanseParserInput): CleanseDiagnostic[] {
-	const diagnostics: CleanseDiagnostic[] = [];
-	for (const root of allJsonValues(input)) {
-		for (const value of toArray(root)) {
-			const record = toRecord(value);
-			addDiagnostic(diagnostics, input, {
-				file: stringField(record, "file"),
-				line: numberField(record, "line"),
-				column: numberField(record, "character"),
-				code: stringField(record, "rule_id"),
-				severity: stringField(record, "severity"),
-				message: stringField(record, "reason"),
-			});
-		}
-	}
-	return diagnostics;
-}
-
 function parseDart(input: CleanseParserInput): CleanseDiagnostic[] {
 	const diagnostics: CleanseDiagnostic[] = [];
 	for (const line of sanitizeText(`${input.stdout}\n${input.stderr}`).split("\n")) {
@@ -733,180 +555,6 @@ function parseDart(input: CleanseParserInput): CleanseDiagnostic[] {
 			line: Number.parseInt(fields[4], 10),
 			column: Number.parseInt(fields[5], 10),
 			message: fields.slice(7).join("|"),
-		});
-	}
-	return diagnostics;
-}
-
-function parseCredo(input: CleanseParserInput): CleanseDiagnostic[] {
-	const diagnostics: CleanseDiagnostic[] = [];
-	for (const rootValue of allJsonValues(input)) {
-		const root = toRecord(rootValue);
-		for (const value of toArray(root?.issues)) {
-			const record = toRecord(value);
-			addDiagnostic(diagnostics, input, {
-				file: stringField(record, "filename"),
-				line: numberField(record, "line_no") ?? numberField(record, "line"),
-				column: numberField(record, "column"),
-				code: stringField(record, "check"),
-				severity: stringField(record, "priority") ?? stringField(record, "category"),
-				message: stringField(record, "message"),
-			});
-		}
-	}
-	return diagnostics;
-}
-
-function parseShellcheck(input: CleanseParserInput): CleanseDiagnostic[] {
-	const diagnostics: CleanseDiagnostic[] = [];
-	for (const rootValue of allJsonValues(input)) {
-		const rootRecord = toRecord(rootValue);
-		const values = Array.isArray(rootValue) ? rootValue : toArray(rootRecord?.comments);
-		for (const value of values) {
-			const record = toRecord(value);
-			const code = numberField(record, "code");
-			addDiagnostic(diagnostics, input, {
-				file: stringField(record, "file"),
-				line: numberField(record, "line"),
-				column: numberField(record, "column"),
-				endLine: numberField(record, "endLine"),
-				endColumn: numberField(record, "endColumn"),
-				code: code === undefined ? undefined : `SC${code}`,
-				severity: stringField(record, "level"),
-				message: stringField(record, "message"),
-				suggestion: record?.fix ? "automatic fix available" : undefined,
-			});
-		}
-	}
-	return diagnostics;
-}
-
-function parseHlint(input: CleanseParserInput): CleanseDiagnostic[] {
-	const diagnostics: CleanseDiagnostic[] = [];
-	for (const root of allJsonValues(input)) {
-		for (const value of toArray(root)) {
-			const record = toRecord(value);
-			addDiagnostic(diagnostics, input, {
-				file: stringField(record, "file"),
-				line: numberField(record, "startLine"),
-				column: numberField(record, "startColumn"),
-				endLine: numberField(record, "endLine"),
-				endColumn: numberField(record, "endColumn"),
-				code: stringField(record, "hint"),
-				severity: stringField(record, "severity"),
-				message: stringField(record, "hint") ?? stringField(record, "from"),
-				suggestion: stringField(record, "to"),
-			});
-		}
-	}
-	return diagnostics;
-}
-
-function parseTerraform(input: CleanseParserInput): CleanseDiagnostic[] {
-	const diagnostics: CleanseDiagnostic[] = [];
-	for (const rootValue of allJsonValues(input)) {
-		const root = toRecord(rootValue);
-		for (const value of toArray(root?.diagnostics)) {
-			const record = toRecord(value);
-			const range = nestedRecord(record, "range");
-			const start = nestedRecord(range, "start");
-			const end = nestedRecord(range, "end");
-			const summary = stringField(record, "summary");
-			const detail = stringField(record, "detail");
-			addDiagnostic(diagnostics, input, {
-				file: stringField(range, "filename"),
-				line: numberField(start, "line"),
-				column: numberField(start, "column"),
-				endLine: numberField(end, "line"),
-				endColumn: numberField(end, "column"),
-				severity: stringField(record, "severity"),
-				message: [summary, detail].filter(Boolean).join(": "),
-			});
-		}
-	}
-	return diagnostics;
-}
-
-function parseTflint(input: CleanseParserInput): CleanseDiagnostic[] {
-	const diagnostics: CleanseDiagnostic[] = [];
-	for (const rootValue of allJsonValues(input)) {
-		const root = toRecord(rootValue);
-		for (const value of toArray(root?.issues)) {
-			const record = toRecord(value);
-			const rule = nestedRecord(record, "rule");
-			const range = nestedRecord(record, "range");
-			const start = nestedRecord(range, "start");
-			const end = nestedRecord(range, "end");
-			addDiagnostic(diagnostics, input, {
-				file: stringField(range, "filename"),
-				line: numberField(start, "line"),
-				column: numberField(start, "column"),
-				endLine: numberField(end, "line"),
-				endColumn: numberField(end, "column"),
-				code: stringField(rule, "name"),
-				severity: stringField(rule, "severity"),
-				message: stringField(record, "message"),
-			});
-		}
-		for (const errorValue of toArray(root?.errors)) {
-			const error = toRecord(errorValue);
-			addDiagnostic(diagnostics, input, {
-				severity: "error",
-				message: stringField(error, "message"),
-			});
-		}
-	}
-	return diagnostics;
-}
-
-function parseActionlint(input: CleanseParserInput): CleanseDiagnostic[] {
-	const diagnostics: CleanseDiagnostic[] = [];
-	for (const root of allJsonValues(input)) {
-		for (const value of toArray(root)) {
-			const record = toRecord(value);
-			addDiagnostic(diagnostics, input, {
-				file: stringField(record, "filepath"),
-				line: numberField(record, "line"),
-				column: numberField(record, "column"),
-				code: stringField(record, "kind"),
-				severity: "error",
-				message: stringField(record, "message"),
-			});
-		}
-	}
-	return diagnostics;
-}
-
-function parseGeneric(input: CleanseParserInput): CleanseDiagnostic[] {
-	const diagnostics: CleanseDiagnostic[] = [];
-	const text = sanitizeText(`${input.stdout}\n${input.stderr}`);
-	for (const line of text.split("\n")) {
-		const trimmed = line.trim();
-		if (!trimmed) continue;
-		const msvc =
-			/^(.*?)\((\d+),(\d+)\):\s*(error|warning|info)(?:\s+([A-Za-z]+\d+))?:\s*(.*?)(?:\s+\[[^\]]+\])?$/i.exec(
-				trimmed,
-			);
-		if (msvc) {
-			addDiagnostic(diagnostics, input, {
-				file: msvc[1],
-				line: Number.parseInt(msvc[2], 10),
-				column: Number.parseInt(msvc[3], 10),
-				severity: msvc[4],
-				code: msvc[5],
-				message: msvc[6],
-			});
-			continue;
-		}
-		const gcc = /^(.*?):(\d+)(?::(\d+))?:\s*(error|warning|info|note)(?:\s*\[([^\]]+)\])?:\s*(.*)$/i.exec(trimmed);
-		if (!gcc) continue;
-		addDiagnostic(diagnostics, input, {
-			file: gcc[1],
-			line: Number.parseInt(gcc[2], 10),
-			column: gcc[3] ? Number.parseInt(gcc[3], 10) : undefined,
-			severity: gcc[4],
-			code: gcc[5],
-			message: gcc[6],
 		});
 	}
 	return diagnostics;
@@ -930,20 +578,369 @@ function parseLocation(value: string): ParsedLocation | undefined {
 	};
 }
 
-function deduplicateDiagnostics(diagnostics: CleanseDiagnostic[]): CleanseDiagnostic[] {
-	const seen = new Set<string>();
-	const unique: CleanseDiagnostic[] = [];
-	for (const diagnostic of diagnostics) {
-		const key = [
-			diagnostic.file ?? "",
-			diagnostic.line ?? "",
-			diagnostic.column ?? "",
-			diagnostic.code ?? "",
-			diagnostic.message,
-		].join("\u0000");
-		if (seen.has(key)) continue;
-		seen.add(key);
-		unique.push(diagnostic);
-	}
-	return unique;
+const GENERIC_FORMATS: readonly LineFormat[] = [
+	{
+		// MSVC / MSBuild: file(line,col): error C1234: message [project]
+		pattern: /^(.*?)\((\d+),(\d+)\):\s*(error|warning|info)(?:\s+([A-Za-z]+\d+))?:\s*(.*?)(?:\s+\[[^\]]+\])?$/i,
+		fields: match => ({
+			file: match[1],
+			line: integer(match[2]),
+			column: integer(match[3]),
+			severity: match[4],
+			code: match[5],
+			message: match[6],
+		}),
+	},
+	{
+		// GCC / clang / mypy: file:line[:col]: severity[ [code]]: message
+		pattern: /^(.*?):(\d+)(?::(\d+))?:\s*(error|warning|info|note)(?:\s*\[([^\]]+)\])?:\s*(.*)$/i,
+		fields: match => ({
+			file: match[1],
+			line: integer(match[2]),
+			column: integer(match[3]),
+			severity: match[4],
+			code: match[5],
+			message: match[6],
+		}),
+	},
+];
+
+function parseGeneric(input: CleanseParserInput): CleanseDiagnostic[] {
+	return parseLines(input, GENERIC_FORMATS);
 }
+
+const GENERIC: ParserSpec = { parse: parseGeneric, stdout: "lines", stderr: "lines" };
+
+const PARSERS: Record<CleanseParserKind, ParserSpec> = {
+	rust: { parse: parseRust, stdout: "json", stderr: "lines" },
+	"rust-test": { parse: parseRustTest, stdout: "json", stderr: "lines" },
+	go: { parse: parseGoVet, fallback: parseGeneric, stdout: "json", stderr: "json" },
+	"go-test": { parse: parseGoTestEvents, fallback: parseGeneric, stdout: "json", stderr: "lines" },
+	staticcheck: jsonFormat({
+		select: root => [root],
+		fields: record => {
+			const location = nestedRecord(record, "location");
+			const end = nestedRecord(record, "end");
+			return {
+				file: stringField(location, "file"),
+				line: numberField(location, "line"),
+				column: numberField(location, "column"),
+				endLine: numberField(end, "line"),
+				endColumn: numberField(end, "column"),
+				code: stringField(record, "code"),
+				severity: stringField(record, "severity") ?? "warning",
+				message: stringField(record, "message"),
+			};
+		},
+	}),
+	golangci: lineFormat({
+		pattern: /^(.+?):(\d+):(\d+):\s+(.*?)\s+\(([A-Za-z0-9_-]+)\)$/,
+		fields: match => ({
+			file: match[1],
+			line: integer(match[2]),
+			column: integer(match[3]),
+			code: match[5],
+			severity: "warning",
+			message: match[4],
+		}),
+	}),
+	ruff: jsonFormat({
+		select: toArray,
+		fields: record => {
+			const location = nestedRecord(record, "location");
+			const endLocation = nestedRecord(record, "end_location");
+			return {
+				file: stringField(record, "filename"),
+				line: numberField(location, "row"),
+				column: numberField(location, "column"),
+				endLine: numberField(endLocation, "row"),
+				endColumn: numberField(endLocation, "column"),
+				code: stringField(record, "code"),
+				severity: "warning",
+				message: stringField(record, "message"),
+				suggestion: stringField(nestedRecord(record, "fix"), "message"),
+			};
+		},
+	}),
+	pyright: jsonFormat({
+		select: rootField("generalDiagnostics"),
+		fields: record => {
+			const range = nestedRecord(record, "range");
+			const start = nestedRecord(range, "start");
+			const end = nestedRecord(range, "end");
+			return {
+				file: stringField(record, "file"),
+				line: zeroBased(numberField(start, "line")),
+				column: zeroBased(numberField(start, "character")),
+				endLine: zeroBased(numberField(end, "line")),
+				endColumn: zeroBased(numberField(end, "character")),
+				code: stringField(record, "rule"),
+				severity: stringField(record, "severity"),
+				message: stringField(record, "message"),
+			};
+		},
+	}),
+	mypy: GENERIC,
+	pylint: jsonFormat({
+		select: toArray,
+		fields: record => ({
+			file: stringField(record, "path"),
+			line: numberField(record, "line"),
+			column: zeroBased(numberField(record, "column")),
+			endLine: numberField(record, "endLine"),
+			endColumn: zeroBased(numberField(record, "endColumn")),
+			code: stringField(record, "symbol") ?? stringField(record, "message-id"),
+			severity: stringField(record, "type"),
+			message: stringField(record, "message"),
+		}),
+	}),
+	flake8: lineFormat({
+		pattern: /^(.+?):(\d+):(\d+):\s+([A-Z]+\d+)\s+(.*)$/,
+		fields: match => ({
+			file: match[1],
+			line: integer(match[2]),
+			column: integer(match[3]),
+			code: match[4],
+			severity: match[4].startsWith("F") || match[4].startsWith("E9") ? "error" : "warning",
+			message: match[5],
+		}),
+	}),
+	ty: lineFormat({
+		pattern: /^(.+?):(\d+):(\d+):\s+(error|warning|info)\[([^\]]+)\]\s+(.*)$/,
+		fields: match => ({
+			file: match[1],
+			line: integer(match[2]),
+			column: integer(match[3]),
+			code: match[5],
+			severity: match[4],
+			message: match[6],
+		}),
+	}),
+	eslint: jsonFormat({
+		select: toArray,
+		nested: "messages",
+		fields: (message, file) => ({
+			file: stringField(file, "filePath"),
+			line: numberField(message, "line"),
+			column: numberField(message, "column"),
+			endLine: numberField(message, "endLine"),
+			endColumn: numberField(message, "endColumn"),
+			code: stringField(message, "ruleId"),
+			severity: numberField(message, "severity"),
+			message: stringField(message, "message"),
+			suggestion: nestedRecord(message, "fix") ? "automatic fix available" : undefined,
+		}),
+	}),
+	biome: jsonFormat({
+		select: rootField("diagnostics"),
+		fields: record => {
+			const location = nestedRecord(record, "location");
+			return {
+				file: stringField(nestedRecord(location, "path"), "file") ?? stringField(location, "path"),
+				code: stringField(record, "category"),
+				severity: stringField(record, "severity"),
+				message:
+					stringField(record, "description") ?? stringField(record, "message") ?? stringField(record, "title"),
+			};
+		},
+	}),
+	oxlint: lineFormat({
+		// Unix format: file:line:col: message [Severity/rule]
+		pattern: /^(.+?):(\d+):(\d+):\s+(.*?)\s+\[(Error|Warning)\/([^\]]+)\]$/i,
+		fields: match => ({
+			file: match[1],
+			line: integer(match[2]),
+			column: integer(match[3]),
+			code: match[6],
+			severity: match[5],
+			message: match[4],
+		}),
+	}),
+	"deno-lint": jsonFormat(
+		{
+			select: rootField("diagnostics"),
+			fields: entry => {
+				const range = nestedRecord(entry, "range");
+				const start = nestedRecord(range, "start");
+				const end = nestedRecord(range, "end");
+				return {
+					file: stringField(entry, "filename"),
+					line: numberField(start, "line"),
+					column: zeroBased(numberField(start, "col")),
+					endLine: numberField(end, "line"),
+					endColumn: zeroBased(numberField(end, "col")),
+					code: stringField(entry, "code"),
+					severity: "warning",
+					message: stringField(entry, "message"),
+					suggestion: stringField(entry, "hint"),
+				};
+			},
+		},
+		{
+			select: rootField("errors"),
+			fields: entry => ({
+				file: stringField(entry, "file_path"),
+				severity: "error",
+				message: stringField(entry, "message"),
+			}),
+		},
+	),
+	stylelint: jsonFormat({
+		select: root => toArray(root).filter(value => stringField(toRecord(value), "source") !== undefined),
+		nested: "warnings",
+		fields: (entry, file) => ({
+			file: stringField(file, "source"),
+			line: numberField(entry, "line"),
+			column: numberField(entry, "column"),
+			endLine: numberField(entry, "endLine"),
+			endColumn: numberField(entry, "endColumn"),
+			code: stringField(entry, "rule"),
+			severity: stringField(entry, "severity"),
+			message: stringField(entry, "text"),
+		}),
+	}),
+	rubocop: jsonFormat({
+		select: rootField("files"),
+		nested: "offenses",
+		fields: (offense, file) => {
+			const location = nestedRecord(offense, "location");
+			return {
+				file: stringField(file, "path"),
+				line: numberField(location, "start_line"),
+				column: numberField(location, "start_column"),
+				endLine: numberField(location, "last_line"),
+				endColumn: numberField(location, "last_column"),
+				code: stringField(offense, "cop_name"),
+				severity: stringField(offense, "severity"),
+				message: stringField(offense, "message"),
+				suggestion: offense?.corrected === true ? "automatic correction available" : undefined,
+			};
+		},
+	}),
+	phpstan: { parse: parsePhpstan, stdout: "json", stderr: "json" },
+	psalm: jsonFormat({
+		select: toArray,
+		fields: record => {
+			const shortcode = numberField(record, "shortcode");
+			return {
+				file: stringField(record, "file_name") ?? stringField(record, "file_path"),
+				line: numberField(record, "line_from"),
+				column: numberField(record, "column_from"),
+				endLine: numberField(record, "line_to"),
+				endColumn: numberField(record, "column_to"),
+				code: stringField(record, "type") ?? (shortcode === undefined ? undefined : String(shortcode)),
+				severity: stringField(record, "severity"),
+				message: stringField(record, "message"),
+			};
+		},
+	}),
+	swiftlint: jsonFormat({
+		select: toArray,
+		fields: record => ({
+			file: stringField(record, "file"),
+			line: numberField(record, "line"),
+			column: numberField(record, "character"),
+			code: stringField(record, "rule_id"),
+			severity: stringField(record, "severity"),
+			message: stringField(record, "reason"),
+		}),
+	}),
+	dart: { parse: parseDart, stdout: "lines", stderr: "lines" },
+	credo: jsonFormat({
+		select: rootField("issues"),
+		fields: record => ({
+			file: stringField(record, "filename"),
+			line: numberField(record, "line_no") ?? numberField(record, "line"),
+			column: numberField(record, "column"),
+			code: stringField(record, "check"),
+			severity: stringField(record, "priority") ?? stringField(record, "category"),
+			message: stringField(record, "message"),
+		}),
+	}),
+	shellcheck: jsonFormat({
+		// `--format=json` emits an array; `json1` wraps it in { comments }.
+		select: root => (Array.isArray(root) ? root : rootField("comments")(root)),
+		fields: record => {
+			const code = numberField(record, "code");
+			return {
+				file: stringField(record, "file"),
+				line: numberField(record, "line"),
+				column: numberField(record, "column"),
+				endLine: numberField(record, "endLine"),
+				endColumn: numberField(record, "endColumn"),
+				code: code === undefined ? undefined : `SC${code}`,
+				severity: stringField(record, "level"),
+				message: stringField(record, "message"),
+				suggestion: record?.fix ? "automatic fix available" : undefined,
+			};
+		},
+	}),
+	hlint: jsonFormat({
+		select: toArray,
+		fields: record => ({
+			file: stringField(record, "file"),
+			line: numberField(record, "startLine"),
+			column: numberField(record, "startColumn"),
+			endLine: numberField(record, "endLine"),
+			endColumn: numberField(record, "endColumn"),
+			code: stringField(record, "hint"),
+			severity: stringField(record, "severity"),
+			message: stringField(record, "hint") ?? stringField(record, "from"),
+			suggestion: stringField(record, "to"),
+		}),
+	}),
+	terraform: jsonFormat({
+		select: rootField("diagnostics"),
+		fields: record => {
+			const range = nestedRecord(record, "range");
+			const start = nestedRecord(range, "start");
+			const end = nestedRecord(range, "end");
+			return {
+				file: stringField(range, "filename"),
+				line: numberField(start, "line"),
+				column: numberField(start, "column"),
+				endLine: numberField(end, "line"),
+				endColumn: numberField(end, "column"),
+				severity: stringField(record, "severity"),
+				message: [stringField(record, "summary"), stringField(record, "detail")].filter(Boolean).join(": "),
+			};
+		},
+	}),
+	tflint: jsonFormat(
+		{
+			select: rootField("issues"),
+			fields: record => {
+				const rule = nestedRecord(record, "rule");
+				const range = nestedRecord(record, "range");
+				const start = nestedRecord(range, "start");
+				const end = nestedRecord(range, "end");
+				return {
+					file: stringField(range, "filename"),
+					line: numberField(start, "line"),
+					column: numberField(start, "column"),
+					endLine: numberField(end, "line"),
+					endColumn: numberField(end, "column"),
+					code: stringField(rule, "name"),
+					severity: stringField(rule, "severity"),
+					message: stringField(record, "message"),
+				};
+			},
+		},
+		{
+			select: rootField("errors"),
+			fields: error => ({ severity: "error", message: stringField(error, "message") }),
+		},
+	),
+	actionlint: jsonFormat({
+		select: toArray,
+		fields: record => ({
+			file: stringField(record, "filepath"),
+			line: numberField(record, "line"),
+			column: numberField(record, "column"),
+			code: stringField(record, "kind"),
+			severity: "error",
+			message: stringField(record, "message"),
+		}),
+	}),
+	generic: GENERIC,
+};

@@ -21,6 +21,7 @@ export const patchEditEntrySchema = type({
 	"diff?": "string",
 });
 
+/** @deprecated Unused alias; use `PatchParams["edits"][number]`. Will be removed in the next major. */
 export type PatchEditEntry = typeof patchEditEntrySchema.infer;
 
 export const patchEditSchema = type({

@@ -100,3 +100,32 @@ export function isJTDDiscriminator(schema: unknown): schema is JTDDiscriminator 
 export function isJTDRef(schema: unknown): schema is JTDRef {
 	return typeof schema === "object" && schema !== null && "ref" in schema;
 }
+
+/** Per-form handlers for {@link visitJtd}; `empty` covers the empty form and anything unrecognized. */
+export interface JTDVisitor<R> {
+	type(schema: JTDType): R;
+	enum(schema: JTDEnum): R;
+	elements(schema: JTDElements): R;
+	values(schema: JTDValues): R;
+	properties(schema: JTDProperties): R;
+	discriminator(schema: JTDDiscriminator): R;
+	ref(schema: JTDRef): R;
+	empty(): R;
+}
+
+/**
+ * Dispatch `schema` to the visitor handler for its JTD form.
+ * `typeFirst` checks the type form before enum/elements (TypeScript rendering order);
+ * otherwise enum and elements win over a co-present `type` (JSON Schema conversion order).
+ */
+export function visitJtd<R>(schema: unknown, visitor: JTDVisitor<R>, typeFirst = false): R {
+	if (typeFirst && isJTDType(schema)) return visitor.type(schema);
+	if (isJTDEnum(schema)) return visitor.enum(schema);
+	if (isJTDElements(schema)) return visitor.elements(schema);
+	if (!typeFirst && isJTDType(schema)) return visitor.type(schema);
+	if (isJTDValues(schema)) return visitor.values(schema);
+	if (isJTDProperties(schema)) return visitor.properties(schema);
+	if (isJTDDiscriminator(schema)) return visitor.discriminator(schema);
+	if (isJTDRef(schema)) return visitor.ref(schema);
+	return visitor.empty();
+}

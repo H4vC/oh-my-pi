@@ -21,7 +21,6 @@ import type {
 	Target,
 } from "puppeteer-core";
 import { JsRuntime, type RuntimeHooks } from "../../eval/js/shared/runtime";
-import { formatScreenshot, resizeImage } from "../../utils/image-resize";
 import { resolveToCwd } from "../path-utils";
 import {
 	bindRunFacade,
@@ -41,6 +40,7 @@ import {
 	type AriaSnapshotOptions,
 	assertSelectorString,
 	captureAriaSnapshot,
+	mapLegacySelector,
 	PLAYWRIGHT_ONLY_SELECTOR_RE,
 	parseAriaRefSelector,
 	resolveAriaRefHandle,
@@ -187,17 +187,17 @@ import {
 } from "./interactions";
 import {
 	captureScreenshotBuffer,
-	createPngDiff,
 	type DiffScreenshotOptions,
 	type DiffScreenshotResult,
 	formatScreenshotLegend,
 	installScreenshotAnnotations,
 	type PdfOptions,
-	pngPixelChangeRatio,
 	type ScreenshotAnnotationTarget,
 	type ScreenshotChangeResult,
-	type ScreenshotHistory,
+	ScreenshotChangeTracker,
 	type ScreenshotOptions,
+	saveScreenshot,
+	saveScreenshotDiff,
 	screenshotQuality,
 	screenshotScope,
 	screenshotThreshold,
@@ -289,8 +289,6 @@ const INTERACTIVE_AX_ROLES = new Set([
 	"searchbox",
 	"treeitem",
 ]);
-
-const LEGACY_SELECTOR_PREFIXES = ["p-aria/", "p-text/", "p-xpath/", "p-pierce/"] as const;
 
 const SELECTOR_HANDLER_PREFIXES = [
 	"aria/",
@@ -486,22 +484,7 @@ export function normalizeSelector(selector: string): string {
 				`Use a puppeteer text selector ("text/Allow all"), an aria selector ("aria/Name"), CSS, or "xpath/...".`,
 		);
 	}
-	if (selector.startsWith("p-") && !LEGACY_SELECTOR_PREFIXES.some(prefix => selector.startsWith(prefix))) {
-		throw new ToolError(
-			`Unsupported selector prefix. Use CSS or puppeteer query handlers (aria/, text/, xpath/, pierce/). Got: ${selector}`,
-		);
-	}
-	if (selector.startsWith("p-text/")) return `text/${selector.slice("p-text/".length)}`;
-	if (selector.startsWith("p-xpath/")) return `xpath/${selector.slice("p-xpath/".length)}`;
-	if (selector.startsWith("p-pierce/")) return `pierce/${selector.slice("p-pierce/".length)}`;
-	if (selector.startsWith("p-aria/")) {
-		const rest = selector.slice("p-aria/".length);
-		const nameMatch = rest.match(/\[\s*name\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\]]+))\s*\]/);
-		const name = nameMatch?.[1] ?? nameMatch?.[2] ?? nameMatch?.[3];
-		if (name) return `aria/${name.trim()}`;
-		return `aria/${rest}`;
-	}
-	return selector;
+	return mapLegacySelector(selector);
 }
 
 function isInteractiveNode(node: SerializedAXNode): boolean {
@@ -1356,6 +1339,12 @@ export class WorkerCore {
 	#unsub: () => void;
 	#isolated: boolean;
 	#uninstallRejectionGuard: () => void;
+	/** Set by {@link terminate}; the inline teardown finishes once the active run settles. */
+	#terminated = false;
+	/** Set once a close handshake starts; {@link terminate} then leaves teardown to it. */
+	#closing = false;
+	/** Session carrying the `Page.frameNavigated` listener, kept so close can remove it. */
+	#frameNavigatedClient?: CDPSession;
 	#mode?: WorkerInitPayload["mode"];
 	#activateForScreenshot = true;
 	#dialogs?: RuntimeDialogController;
@@ -1366,7 +1355,7 @@ export class WorkerCore {
 	#tracing?: BrowserTracingController;
 	#ariaSnapshotBaselines = new Map<string, AriaSnapshotBaseline>();
 	#emulation?: BrowserEmulationController;
-	#screenshotHistory = new Map<string, ScreenshotHistory>();
+	readonly #screenshotChanges = new ScreenshotChangeTracker();
 	#webmcp?: WebMcpController;
 	readonly #recording = new RecordingController();
 	/**
@@ -1384,6 +1373,36 @@ export class WorkerCore {
 			void this.#handleMessage(msg as WorkerInbound);
 		});
 		this.#uninstallRejectionGuard = this.#installRejectionGuard();
+	}
+
+	/**
+	 * Teardown for an inline worker the supervisor terminates without a close handshake — the
+	 * in-process analogue of killing the worker thread. Without it the process-wide rejection
+	 * guard keeps this core, its page, and its CDP connection alive forever. An active run is
+	 * aborted and the guard released only once that run settles.
+	 */
+	terminate(): void {
+		// A close in flight already tears everything down; disconnecting under it would fail its awaits.
+		if (this.#terminated || this.#closing) return;
+		this.#terminated = true;
+		this.#unsub();
+		this.#detachFrameNavigated();
+		const active = this.#active;
+		if (active) {
+			active.ac.abort(postmortem.markExpectedCleanupError(new ToolAbortError()));
+			return;
+		}
+		this.#finishTermination();
+	}
+
+	#finishTermination(): void {
+		this.#uninstallRejectionGuard();
+		if (this.#browser?.connected) void this.#browser.disconnect().catch(() => undefined);
+	}
+
+	#detachFrameNavigated(): void {
+		this.#frameNavigatedClient?.off("Page.frameNavigated", this.#onFrameNavigated);
+		this.#frameNavigatedClient = undefined;
 	}
 
 	#installRejectionGuard(): () => void {
@@ -1513,7 +1532,8 @@ export class WorkerCore {
 				this.#observeDialogs();
 				if (payload.dialogs) this.#applyDialogPolicy(payload.dialogs);
 			}
-			this.#page.mainFrame().client.on("Page.frameNavigated", this.#onFrameNavigated);
+			this.#frameNavigatedClient = this.#page.mainFrame().client;
+			this.#frameNavigatedClient.on("Page.frameNavigated", this.#onFrameNavigated);
 			if (payload.mode === "headless" || payload.emulateFocus) {
 				// Background Chromium tabs stop producing frames, stalling rAF,
 				// IntersectionObserver, and input acknowledgements. Keep owned tabs
@@ -1552,6 +1572,11 @@ export class WorkerCore {
 				await page.close().catch(() => undefined);
 			}
 			this.#transport.send({ type: "init-failed", error: errorPayload(error) });
+		}
+		// Terminated while init was still running: the listeners and connection it just set up are orphaned.
+		if (this.#terminated) {
+			this.#detachFrameNavigated();
+			if (!this.#active) this.#finishTermination();
 		}
 	}
 
@@ -1809,6 +1834,7 @@ export class WorkerCore {
 			}
 			failure = this.#foldFloatingRejections(active, failure);
 			if (this.#active?.id === msg.id) this.#active = null;
+			if (this.#terminated && !this.#active) this.#finishTermination();
 		}
 		if (failure) {
 			this.#transport.send({ type: "result", id: msg.id, ok: false, error: errorPayload(failure.error) });
@@ -2795,64 +2821,36 @@ export class WorkerCore {
 			parseAriaRefSelector(selector) !== null
 				? await this.#resolveAriaRef(selector)
 				: asElementHandle(await untilAborted(signal, () => page.$(normalizeSelector(selector))));
-		let comparisonBuffer: Uint8Array;
-		let buffer: Uint8Array;
+		const scope = screenshotScope(opts);
+		let comparison: Uint8Array | undefined;
+		let changeResult: ScreenshotChangeResult | undefined;
+		let buffer: Uint8Array | undefined;
 		try {
-			comparisonBuffer = await captureScreenshotBuffer(page, opts, signal, resolveSelector, "png");
-			buffer =
-				captureFormat === "png"
-					? comparisonBuffer
-					: await captureScreenshotBuffer(page, opts, signal, resolveSelector, captureFormat);
+			// The PNG comparison capture doubles as the result when no other format was requested;
+			// an unchanged capture skips the formatted one entirely.
+			if (changeDetection) {
+				comparison = await captureScreenshotBuffer(page, opts, signal, resolveSelector, "png");
+				changeResult = this.#screenshotChanges.compare(scope, comparison, threshold);
+			}
+			if (!changeResult || changeResult.changed) {
+				buffer =
+					comparison && captureFormat === "png"
+						? comparison
+						: await captureScreenshotBuffer(page, opts, signal, resolveSelector, captureFormat);
+			}
 		} finally {
 			await cleanupAnnotations();
 		}
-		let changeResult: ScreenshotChangeResult | undefined;
-		if (changeDetection) {
-			const scope = screenshotScope(opts);
-			const previous = this.#screenshotHistory.get(scope);
-			const pixelChangeRatio = previous ? pngPixelChangeRatio(previous.png, comparisonBuffer) : 1;
-			const changed = !previous || pixelChangeRatio > threshold;
-			const revision = previous ? previous.revision + (changed ? 1 : 0) : 1;
-			this.#screenshotHistory.set(scope, { png: comparisonBuffer, revision });
-			changeResult = { changed, revision, pixelChangeRatio };
-			if (!changed) return changeResult;
+		if (comparison && changeResult) {
+			this.#screenshotChanges.record(scope, comparison, changeResult.revision);
+			if (!changeResult.changed) return changeResult;
 		}
-		const resized = await resizeImage(
-			{ type: "image", data: buffer.toBase64(), mimeType: captureMime },
-			{ maxWidth: 1024, maxHeight: 1024, maxBytes: 150 * 1024, jpegQuality: 70, excludeWebP: session.excludeWebP },
-		);
-		const preserveFormat = opts.format !== undefined;
-		const saveFullRes = !!session.browserScreenshotDir || preserveFormat;
-		const savedBuffer = saveFullRes ? buffer : resized.buffer;
-		const savedMimeType = saveFullRes ? captureMime : resized.mimeType;
-		const ext = savedMimeType === "image/webp" ? "webp" : savedMimeType === "image/jpeg" ? "jpg" : "png";
-		const dest = session.browserScreenshotDir
-			? path.join(
-					session.browserScreenshotDir,
-					`screenshot-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, -1)}.${ext}`,
-				)
-			: path.join(os.tmpdir(), `omp-sshots-${Snowflake.next()}.${ext}`);
-		await fs.promises.mkdir(path.dirname(dest), { recursive: true });
-		await Bun.write(dest, savedBuffer);
-		screenshots.push({
-			dest,
-			mimeType: savedMimeType,
-			bytes: savedBuffer.length,
-			width: resized.width,
-			height: resized.height,
+		const dest = await saveScreenshot({ session, output, screenshots }, buffer!, {
+			mimeType: captureMime,
+			preserveFormat: opts.format !== undefined,
+			silent: opts.silent,
+			notes: opts.annotate ? [formatScreenshotLegend(annotationTargets)] : undefined,
 		});
-		if (!opts.silent) {
-			const lines = formatScreenshot({
-				saveFullRes,
-				savedMimeType,
-				savedByteLength: savedBuffer.length,
-				dest,
-				resized,
-			});
-			if (opts.annotate) lines.push(formatScreenshotLegend(annotationTargets));
-			output.push({ type: "text", text: lines.join("\n") });
-			output.push({ type: "image", data: resized.data, mimeType: resized.mimeType });
-		}
 		if (changeResult) return { ...changeResult, path: dest };
 		return dest;
 	}
@@ -2867,34 +2865,9 @@ export class WorkerCore {
 	): Promise<DiffScreenshotResult> {
 		const page = this.#requirePage();
 		await preparePageForScreenshot(page, signal, this.#activateForScreenshot);
-		const absoluteBaseline = resolveToCwd(baselinePath, session.cwd);
-		const baseline = await untilAborted(signal, () => fs.promises.readFile(absoluteBaseline));
-		const current = await captureScreenshotBuffer(page, {}, signal, async () => null, "png");
-		const diff = createPngDiff(baseline, current);
-		const threshold = screenshotThreshold(opts.threshold);
-		const changed = diff.pixelChangeRatio > threshold;
-		const diffPath = opts.output
-			? resolveToCwd(opts.output, session.cwd)
-			: path.join(os.tmpdir(), `omp-screenshot-diff-${Snowflake.next()}.png`);
-		await fs.promises.mkdir(path.dirname(diffPath), { recursive: true });
-		await Bun.write(diffPath, diff.png);
-		const resized = await resizeImage(
-			{ type: "image", data: diff.png.toBase64(), mimeType: "image/png" },
-			{ maxWidth: 1024, maxHeight: 1024, maxBytes: 150 * 1024, jpegQuality: 70, excludeWebP: session.excludeWebP },
+		return await saveScreenshotDiff({ session, output, screenshots }, signal, baselinePath, opts, () =>
+			captureScreenshotBuffer(page, {}, signal, async () => null, "png"),
 		);
-		screenshots.push({
-			dest: diffPath,
-			mimeType: "image/png",
-			bytes: diff.png.length,
-			width: resized.width,
-			height: resized.height,
-		});
-		output.push({
-			type: "text",
-			text: `Screenshot diff: ${diff.pixelChangeRatio.toFixed(6)} changed-pixel ratio (${changed ? "changed" : "unchanged"}); saved to ${diffPath}`,
-		});
-		output.push({ type: "image", data: resized.data, mimeType: resized.mimeType });
-		return { pixelChangeRatio: diff.pixelChangeRatio, changed, diffPath };
 	}
 
 	async #pdf(session: SessionSnapshot, signal: AbortSignal | undefined, opts: PdfOptions = {}): Promise<string> {
@@ -3122,8 +3095,10 @@ export class WorkerCore {
 	}
 
 	async #close(): Promise<void> {
+		this.#closing = true;
 		this.#unsub();
 		this.#uninstallRejectionGuard();
+		this.#detachFrameNavigated();
 		this.#clearElementCache();
 		const page = this.#page;
 		await this.#recording.close().catch(error => {

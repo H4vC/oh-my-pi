@@ -2,12 +2,18 @@ import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
 
 const NON_SERIALIZABLE_RUN_ARGUMENT = "Run argument is not JSON-serializable; pass plain data";
 
-/** Marker that renders a serialized function as an executable run argument. */
+/**
+ * Marker that renders a serialized function as an executable run argument.
+ * @deprecated Unused type; the wire shape is unchanged. Will be removed in the next major.
+ */
 export interface FnArgMarker {
 	__omp_fn: string;
 }
 
-/** Marker that renders a serialized regular expression as an executable run argument. */
+/**
+ * Marker that renders a serialized regular expression as an executable run argument.
+ * @deprecated Unused type; the wire shape is unchanged. Will be removed in the next major.
+ */
 export interface RegExpArgMarker {
 	__omp_re: {
 		source: string;

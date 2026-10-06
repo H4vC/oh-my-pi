@@ -9,6 +9,7 @@ export interface CmuxKind {
 	surface?: string;
 }
 
+/** @deprecated Unused cmux RPC result type; no replacement. Will be removed in the next major. */
 export interface CmuxOpenSplitResult {
 	surface_id?: unknown;
 	url?: unknown;

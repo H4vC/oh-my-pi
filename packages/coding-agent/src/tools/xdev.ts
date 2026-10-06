@@ -371,7 +371,10 @@ export function renderXdevPromptDocs(docs: XdevPromptDocs, listedElsewhere?: Rea
 	return [...docs.sections, catalogSection].join("\n\n");
 }
 
-/** Docs + schema for mounted devices under the configured prompt-doc policy. */
+/**
+ * Docs + schema for mounted devices under the configured prompt-doc policy.
+ * @deprecated One-line wrapper; use `renderXdevPromptDocs(planXdevPromptDocs(state, mode, inlinePatterns))`. Will be removed in the next major.
+ */
 export function xdevDocsAll(
 	state: XdevState,
 	mode: XdevDocsMode = "inline",

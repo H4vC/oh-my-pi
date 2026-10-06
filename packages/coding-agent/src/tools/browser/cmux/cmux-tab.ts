@@ -1,9 +1,5 @@
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
 import { Snowflake, untilAborted } from "@oh-my-pi/pi-utils";
 import { JsRuntime } from "../../../eval/js/shared/runtime";
-import { formatScreenshot, resizeImage } from "../../../utils/image-resize";
 import { resolveToCwd } from "../../path-utils";
 import { throwIfAborted } from "../../tool-errors";
 import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
@@ -66,16 +62,17 @@ import {
 	diffAriaSnapshot,
 	postProcessAriaSnapshot,
 } from "../snapshot-plus";
+import { readUploadPayload } from "../interactions";
 import {
-	createPngDiff,
 	type DiffScreenshotOptions,
 	type DiffScreenshotResult,
 	type PdfOptions,
 	type ScreenshotOptions,
-	screenshotThreshold,
+	saveScreenshot,
+	saveScreenshotDiff,
 } from "../screenshot";
 import type { InProcessRunContext, InProcessRunTab } from "../in-process-run";
-import type { Observation, ReadyInfo, ScreenshotResult, SessionSnapshot } from "../tab-protocol";
+import type { Observation, ReadyInfo, SessionSnapshot } from "../tab-protocol";
 import {
 	type CmuxEvalResult,
 	type CmuxGeometry,
@@ -142,10 +139,9 @@ interface BoundingBox {
 	height: number;
 }
 
-interface FilePayload {
-	name: string;
-	type: string;
-	data: string;
+/** The error every cmux method without a daemon equivalent throws. */
+function cmuxUnsupported(feature: string): ToolError {
+	return new ToolError(`${feature} is not supported on the cmux backend`);
 }
 
 type CmuxCaptureEntry = BrowserConsoleEntry | BrowserErrorEntry;
@@ -519,7 +515,7 @@ export class CmuxTab implements InProcessRunTab {
 	async emulate(options: BrowserEmulateOptions = {}): Promise<BrowserEmulateOptions> {
 		for (const key in options) {
 			if (key !== "viewport") {
-				throw new ToolError(`tab.emulate() option ${JSON.stringify(key)} is not supported on the cmux backend`);
+				throw cmuxUnsupported(`tab.emulate() option ${JSON.stringify(key)}`);
 			}
 		}
 		if (options.viewport) {
@@ -534,23 +530,23 @@ export class CmuxTab implements InProcessRunTab {
 	}
 
 	async devices(): Promise<string[]> {
-		throw new ToolError("tab.devices() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.devices()");
 	}
 
 	async clipboardRead(): Promise<ClipboardReadResult> {
-		throw new ToolError("tab.clipboardRead() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.clipboardRead()");
 	}
 
 	async clipboardWrite(_text: string): Promise<ClipboardActionResult> {
-		throw new ToolError("tab.clipboardWrite() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.clipboardWrite()");
 	}
 
 	async clipboardCopy(): Promise<ClipboardActionResult> {
-		throw new ToolError("tab.clipboardCopy() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.clipboardCopy()");
 	}
 
 	async clipboardPaste(): Promise<ClipboardActionResult> {
-		throw new ToolError("tab.clipboardPaste() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.clipboardPaste()");
 	}
 
 	url(): string {
@@ -670,11 +666,11 @@ export class CmuxTab implements InProcessRunTab {
 	}
 
 	async setCookies(..._cookies: unknown[]): Promise<void> {
-		throw new ToolError("tab.setCookies() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.setCookies()");
 	}
 
 	async clearCookies(_options?: { names?: string[] }): Promise<void> {
-		throw new ToolError("tab.clearCookies() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.clearCookies()");
 	}
 
 	async storage(
@@ -742,11 +738,11 @@ export class CmuxTab implements InProcessRunTab {
 	}
 
 	async saveState(_path?: string): Promise<string> {
-		throw new ToolError("tab.saveState() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.saveState()");
 	}
 
 	async loadState(_path: string): Promise<{ loadedOrigins: string[]; skippedOrigins: string[] }> {
-		throw new ToolError("tab.loadState() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.loadState()");
 	}
 
 	async goto(url: string, opts?: { waitUntil?: WaitUntil; timeoutMs?: number }): Promise<void> {
@@ -788,23 +784,23 @@ export class CmuxTab implements InProcessRunTab {
 	}
 
 	async frames(): Promise<never> {
-		throw new ToolError("tab.frames() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.frames()");
 	}
 
 	async frame(_selectorOrNameOrUrl: string): Promise<never> {
-		throw new ToolError("tab.frame() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.frame()");
 	}
 
 	async dialog(): Promise<never> {
-		throw new ToolError("tab.dialog() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.dialog()");
 	}
 
 	async handleDialog(_opts: { accept: boolean; text?: string }): Promise<never> {
-		throw new ToolError("tab.handleDialog() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.handleDialog()");
 	}
 
 	async setDialogs(_policy: "accept" | "dismiss" | null): Promise<never> {
-		throw new ToolError("tab.setDialogs() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.setDialogs()");
 	}
 
 	async #waitAfterHistoryNavigation(waitUntil: WaitUntil | undefined): Promise<void> {
@@ -820,7 +816,7 @@ export class CmuxTab implements InProcessRunTab {
 	async observe(opts?: ObserveOptions): Promise<Observation> {
 		void opts?.viewportOnly;
 		if (opts?.selector) {
-			throw new ToolError("tab.observe({ selector }) is not supported on the cmux backend");
+			throw cmuxUnsupported("tab.observe({ selector })");
 		}
 		const timeoutMs = Math.min(this.#runContext?.timeoutMs ?? 30_000, 30_000);
 		const [snapshot, geometry] = await Promise.all([
@@ -1066,12 +1062,12 @@ export class CmuxTab implements InProcessRunTab {
 
 	async screenshot(opts: ScreenshotOptions = {}): Promise<string> {
 		const context = this.#requireRunContext("tab.screenshot()");
-		if (opts.annotate) throw new ToolError("tab.screenshot({ annotate: true }) is not supported on the cmux backend");
+		if (opts.annotate) throw cmuxUnsupported("tab.screenshot({ annotate: true })");
 		if (opts.ifChanged || opts.threshold !== undefined) {
-			throw new ToolError("tab.screenshot() change detection is not supported on the cmux backend");
+			throw cmuxUnsupported("tab.screenshot() change detection");
 		}
 		if (opts.format === "jpeg" || opts.quality !== undefined) {
-			throw new ToolError("tab.screenshot() JPEG encoding is not supported on the cmux backend");
+			throw cmuxUnsupported("tab.screenshot() JPEG encoding");
 		}
 		// The cmux daemon's `browser.screenshot` captures the surface viewport
 		// only — it has no element-clip or full-page mode, and Bun.Image cannot
@@ -1090,95 +1086,24 @@ export class CmuxTab implements InProcessRunTab {
 			captureNotes.push("fullPage is unavailable on this surface — the image is the viewport only");
 		}
 		const result = await this.#captureScreenshotPng(context.timeoutMs);
-		const buffer = Buffer.from(result.png_base64, "base64");
-		const captureMime = "image/png";
-		const resized = await resizeImage(
-			{ type: "image", data: result.png_base64, mimeType: captureMime },
-			{
-				maxWidth: 1024,
-				maxHeight: 1024,
-				maxBytes: 150 * 1024,
-				jpegQuality: 70,
-				excludeWebP: context.session.excludeWebP,
-			},
-		);
-		const saveFullRes = !!context.session.browserScreenshotDir;
-		const savedBuffer = saveFullRes ? buffer : Buffer.from(resized.buffer);
-		const savedMimeType = saveFullRes ? captureMime : resized.mimeType;
-		const ext = savedMimeType === "image/webp" ? "webp" : savedMimeType === "image/jpeg" ? "jpg" : "png";
-		const dest = context.session.browserScreenshotDir
-			? path.join(
-					context.session.browserScreenshotDir,
-					`screenshot-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, -1)}.${ext}`,
-				)
-			: path.join(os.tmpdir(), `omp-sshots-${Snowflake.next()}.${ext}`);
-		await fs.promises.mkdir(path.dirname(dest), { recursive: true });
-		await Bun.write(dest, savedBuffer);
-		const info: ScreenshotResult = {
-			dest,
-			mimeType: savedMimeType,
-			bytes: savedBuffer.length,
-			width: resized.width,
-			height: resized.height,
-		};
-		context.screenshots.push(info);
-		if (!opts.silent) {
-			const lines = formatScreenshot({
-				saveFullRes,
-				savedMimeType,
-				savedByteLength: savedBuffer.length,
-				dest,
-				resized,
-			});
-			if (captureNotes.length > 0) {
-				lines.push(`[cmux surface: ${captureNotes.join("; ")}]`);
-			}
-			context.output.push({ type: "text", text: lines.join("\n") });
-			context.output.push({ type: "image", data: resized.data, mimeType: resized.mimeType });
-		}
-		return dest;
+		return await saveScreenshot(context, Buffer.from(result.png_base64, "base64"), {
+			mimeType: "image/png",
+			base64: result.png_base64,
+			silent: opts.silent,
+			notes: captureNotes.length > 0 ? [`[cmux surface: ${captureNotes.join("; ")}]`] : undefined,
+		});
 	}
 
 	async diffScreenshot(baselinePath: string, opts: DiffScreenshotOptions = {}): Promise<DiffScreenshotResult> {
 		const context = this.#requireRunContext("tab.diffScreenshot()");
-		const absoluteBaseline = resolveToCwd(baselinePath, context.session.cwd);
-		const baseline = await untilAborted(context.signal, () => fs.promises.readFile(absoluteBaseline));
-		const capture = await this.#captureScreenshotPng(context.timeoutMs);
-		const diff = createPngDiff(baseline, Buffer.from(capture.png_base64, "base64"));
-		const threshold = screenshotThreshold(opts.threshold);
-		const changed = diff.pixelChangeRatio > threshold;
-		const diffPath = opts.output
-			? resolveToCwd(opts.output, context.session.cwd)
-			: path.join(os.tmpdir(), `omp-screenshot-diff-${Snowflake.next()}.png`);
-		await fs.promises.mkdir(path.dirname(diffPath), { recursive: true });
-		await Bun.write(diffPath, diff.png);
-		const resized = await resizeImage(
-			{ type: "image", data: diff.png.toString("base64"), mimeType: "image/png" },
-			{
-				maxWidth: 1024,
-				maxHeight: 1024,
-				maxBytes: 150 * 1024,
-				jpegQuality: 70,
-				excludeWebP: context.session.excludeWebP,
-			},
-		);
-		context.screenshots.push({
-			dest: diffPath,
-			mimeType: "image/png",
-			bytes: diff.png.length,
-			width: resized.width,
-			height: resized.height,
+		return await saveScreenshotDiff(context, context.signal, baselinePath, opts, async () => {
+			const capture = await this.#captureScreenshotPng(context.timeoutMs);
+			return Buffer.from(capture.png_base64, "base64");
 		});
-		context.output.push({
-			type: "text",
-			text: `Screenshot diff: ${diff.pixelChangeRatio.toFixed(6)} changed-pixel ratio (${changed ? "changed" : "unchanged"}); saved to ${diffPath}`,
-		});
-		context.output.push({ type: "image", data: resized.data, mimeType: resized.mimeType });
-		return { pixelChangeRatio: diff.pixelChangeRatio, changed, diffPath };
 	}
 
 	async pdf(_opts: PdfOptions = {}): Promise<string> {
-		throw new ToolError("tab.pdf() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.pdf()");
 	}
 
 	async waitForUrl(pattern: string | RegExp, opts?: { timeout?: number }): Promise<string> {
@@ -1211,17 +1136,17 @@ export class CmuxTab implements InProcessRunTab {
 
 	/** Init scripts require CDP document-start registration. */
 	async addInitScript(_source: string): Promise<{ id: string }> {
-		throw new ToolError("tab.addInitScript() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.addInitScript()");
 	}
 
 	/** Init-script removal requires CDP document-start registration. */
 	async removeInitScript(_id: string): Promise<void> {
-		throw new ToolError("tab.removeInitScript() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.removeInitScript()");
 	}
 
 	/** Init-script enumeration requires CDP document-start registration. */
 	async initScripts(): Promise<Array<{ id: string; source: string }>> {
-		throw new ToolError("tab.initScripts() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.initScripts()");
 	}
 
 	/** Download completion events require the Chromium browser CDP domain. */
@@ -1231,24 +1156,24 @@ export class CmuxTab implements InProcessRunTab {
 		url: string;
 		bytes: number;
 	}> {
-		throw new ToolError("tab.waitForDownload() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.waitForDownload()");
 	}
 
 	/** Download history requires the Chromium browser CDP domain. */
 	async downloads(): Promise<Array<{ path: string; suggestedFilename: string; url: string; bytes: number }>> {
-		throw new ToolError("tab.downloads() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.downloads()");
 	}
 
 	async route(_pattern: NetworkPattern, _options: NetworkRouteOptions = {}): Promise<void> {
-		throw new ToolError("tab.route() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.route()");
 	}
 
 	async unroute(_pattern?: NetworkPattern): Promise<void> {
-		throw new ToolError("tab.unroute() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.unroute()");
 	}
 
 	async routes(): Promise<NetworkRouteDescription[]> {
-		throw new ToolError("tab.routes() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.routes()");
 	}
 
 	async requests(options: NetworkRequestsOptions = {}): Promise<NetworkRequestRecord[]> {
@@ -1284,19 +1209,19 @@ export class CmuxTab implements InProcessRunTab {
 	}
 
 	async harStart(_options: { content?: HarContentPolicy } = {}): Promise<void> {
-		throw new ToolError("tab.harStart() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.harStart()");
 	}
 
 	async harStop(_options: { path?: string } = {}): Promise<string> {
-		throw new ToolError("tab.harStop() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.harStop()");
 	}
 
 	async allowedDomains(): Promise<string[]> {
-		throw new ToolError("tab.allowedDomains() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.allowedDomains()");
 	}
 
 	async webmcpList(_options: WebMcpListOptions = {}): Promise<WebMcpListResult> {
-		throw new ToolError("tab.webmcpList() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.webmcpList()");
 	}
 
 	async webmcpInvoke(
@@ -1304,11 +1229,11 @@ export class CmuxTab implements InProcessRunTab {
 		_params: Record<string, unknown>,
 		_options: WebMcpInvokeOptions = {},
 	): Promise<WebMcpInvokeResult> {
-		throw new ToolError("tab.webmcpInvoke() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.webmcpInvoke()");
 	}
 
 	async webmcpEvents(_options: WebMcpEventsOptions = {}): Promise<WebMcpEventsResult> {
-		throw new ToolError("tab.webmcpEvents() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.webmcpEvents()");
 	}
 
 	/** Collect available navigation and performance entries on the cmux surface. */
@@ -1350,27 +1275,27 @@ export class CmuxTab implements InProcessRunTab {
 
 	/** Report that React hook installation is unavailable on cmux surfaces. */
 	async reactEnable(): Promise<never> {
-		throw new ToolError("tab.reactEnable() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.reactEnable()");
 	}
 
 	/** Report that React tree inspection is unavailable on cmux surfaces. */
 	async reactTree(_options?: unknown): Promise<never> {
-		throw new ToolError("tab.reactTree() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.reactTree()");
 	}
 
 	/** Report that React fiber inspection is unavailable on cmux surfaces. */
 	async reactInspect(_id: number): Promise<never> {
-		throw new ToolError("tab.reactInspect() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.reactInspect()");
 	}
 
 	/** Report that React render recording is unavailable on cmux surfaces. */
 	async reactRenders(_options: unknown): Promise<never> {
-		throw new ToolError("tab.reactRenders() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.reactRenders()");
 	}
 
 	/** Report that Suspense inspection is unavailable on cmux surfaces. */
 	async reactSuspense(_options?: unknown): Promise<never> {
-		throw new ToolError("tab.reactSuspense() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.reactSuspense()");
 	}
 
 	async console(options: BrowserConsoleOptions = {}): Promise<BrowserCaptureResult<BrowserConsoleEntry>> {
@@ -1397,21 +1322,21 @@ export class CmuxTab implements InProcessRunTab {
 
 	async traceStart(options: { screenshots?: boolean; categories?: string[] } = {}): Promise<void> {
 		void options;
-		throw new ToolError("tab.traceStart() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.traceStart()");
 	}
 
 	async traceStop(options: { path?: string } = {}): Promise<string> {
 		void options;
-		throw new ToolError("tab.traceStop() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.traceStop()");
 	}
 
 	async profileStart(): Promise<void> {
-		throw new ToolError("tab.profileStart() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.profileStart()");
 	}
 
 	async profileStop(options: { path?: string } = {}): Promise<string> {
 		void options;
-		throw new ToolError("tab.profileStop() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.profileStop()");
 	}
 
 	async metrics(): Promise<Record<string, number> & { domContentLoaded: number; load: number }> {
@@ -1429,21 +1354,21 @@ export class CmuxTab implements InProcessRunTab {
 	async recordStart(path: string, options?: RecordingOptions): Promise<RecordingStartResult> {
 		void path;
 		void options;
-		throw new ToolError("tab.recordStart() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.recordStart()");
 	}
 
 	async recordStop(): Promise<RecordingStopResult> {
-		throw new ToolError("tab.recordStop() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.recordStop()");
 	}
 
 	async recordRestart(path: string, options?: RecordingOptions): Promise<RecordingStartResult> {
 		void path;
 		void options;
-		throw new ToolError("tab.recordRestart() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.recordRestart()");
 	}
 
 	async recording(): Promise<RecordingStatus> {
-		throw new ToolError("tab.recording() is not supported on the cmux backend");
+		throw cmuxUnsupported("tab.recording()");
 	}
 
 	async text(selector: string): Promise<string | null> {
@@ -1600,13 +1525,8 @@ export class CmuxTab implements InProcessRunTab {
 
 	async uploadFile(selector: string, ...filePaths: string[]): Promise<void> {
 		if (!filePaths.length) throw new ToolError("tab.uploadFile() requires at least one file path");
-		const files: FilePayload[] = [];
-		for (const filePath of filePaths) {
-			const absolute = resolveToCwd(filePath, this.#requireRunContext("tab.uploadFile()").session.cwd);
-			const file = Bun.file(absolute);
-			const data = Buffer.from(await file.arrayBuffer()).toString("base64");
-			files.push({ name: path.basename(absolute), type: file.type || "application/octet-stream", data });
-		}
+		const cwd = this.#requireRunContext("tab.uploadFile()").session.cwd;
+		const files = await Promise.all(filePaths.map(filePath => readUploadPayload(resolveToCwd(filePath, cwd))));
 		await this.#selectorAction(selector, "uploadFile", { files });
 	}
 

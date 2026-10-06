@@ -1948,7 +1948,7 @@ async function spawnInlineWorker(): Promise<WorkerHandle> {
 		close: () => {},
 	};
 	const { WorkerCore } = await import("./tab-worker");
-	new WorkerCore(workerTransport, false);
+	const core = new WorkerCore(workerTransport, false);
 	return {
 		mode: "inline",
 		send: msg =>
@@ -1960,7 +1960,9 @@ async function spawnInlineWorker(): Promise<WorkerHandle> {
 			return () => hostListeners.delete(handler);
 		},
 		onError: () => () => {},
-		async terminate() {},
+		async terminate() {
+			core.terminate();
+		},
 	};
 }
 

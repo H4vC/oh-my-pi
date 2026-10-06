@@ -1,9 +1,16 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { inflateSync } from "node:zlib";
 
-import { untilAborted } from "@oh-my-pi/pi-utils";
+import { Snowflake, untilAborted } from "@oh-my-pi/pi-utils";
 import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
 import type { ElementHandle, ElementScreenshotOptions, Page } from "puppeteer-core";
+import { formatScreenshot, type ResizedImage, resizeImage } from "../../utils/image-resize";
 import { encodeRawPng } from "../../utils/png-encode";
+import { resolveToCwd } from "../path-utils";
+import type { RunOutput } from "./run-output";
+import type { ScreenshotResult, SessionSnapshot } from "./tab-protocol";
 
 /** Options accepted by tab.screenshot(). */
 export interface ScreenshotOptions {
@@ -396,4 +403,151 @@ export function createPngDiff(baseline: Uint8Array, current: Uint8Array): { png:
 		png: encodePng({ width, height, pixels }),
 		pixelChangeRatio: width * height === 0 ? 0 : changed / (width * height),
 	};
+}
+
+/** Scopes (page, full page, each selector) whose latest PNG is kept for change detection. */
+const SCREENSHOT_HISTORY_LIMIT = 4;
+
+/**
+ * Bounded per-scope PNG history behind `tab.screenshot({ ifChanged | threshold })`. Keeps the
+ * {@link SCREENSHOT_HISTORY_LIMIT} most recently captured scopes; an evicted scope restarts at revision 1.
+ */
+export class ScreenshotChangeTracker {
+	readonly #entries = new Map<string, ScreenshotHistory>();
+
+	/** Compare `png` with the scope's previous capture without recording it. */
+	compare(scope: string, png: Uint8Array, threshold: number): ScreenshotChangeResult {
+		const previous = this.#entries.get(scope);
+		const pixelChangeRatio = previous ? pngPixelChangeRatio(previous.png, png) : 1;
+		const changed = !previous || pixelChangeRatio > threshold;
+		const revision = previous ? previous.revision + (changed ? 1 : 0) : 1;
+		return { changed, revision, pixelChangeRatio };
+	}
+
+	/** Record `png` as the scope's latest capture, evicting the least recently captured scope past the limit. */
+	record(scope: string, png: Uint8Array, revision: number): void {
+		this.#entries.delete(scope);
+		this.#entries.set(scope, { png, revision });
+		if (this.#entries.size <= SCREENSHOT_HISTORY_LIMIT) return;
+		const oldest = this.#entries.keys().next();
+		if (!oldest.done) this.#entries.delete(oldest.value);
+	}
+}
+
+/** Where a browser run persists and reports its screenshots. */
+export interface ScreenshotSink {
+	session: SessionSnapshot;
+	output: RunOutput;
+	screenshots: ScreenshotResult[];
+}
+
+/** Options for {@link saveScreenshot}. */
+export interface SaveScreenshotOptions {
+	/** Encoding of the captured bytes. */
+	mimeType: "image/png" | "image/jpeg";
+	/** Base64 of the captured bytes when the backend already delivered them encoded. */
+	base64?: string;
+	/** Save the captured bytes rather than the model-sized copy (always when a screenshot dir is set). */
+	preserveFormat?: boolean;
+	/** Persist and record without emitting the caption and image. */
+	silent?: boolean;
+	/** Caption lines appended after the standard summary. */
+	notes?: readonly string[];
+	/** File stem under the screenshot dir (`<stem>-<iso time>.<ext>`); default `screenshot`. */
+	dirStem?: string;
+	/** File stem in the temp dir (`<stem>-<id>.<ext>`); default `omp-sshots`. */
+	tmpStem?: string;
+}
+
+/** Downscale an image to the browser tool's model budget (1024px box, 150 KiB). */
+function resizeForModel(
+	bytes: Uint8Array,
+	mimeType: string,
+	session: SessionSnapshot,
+	base64?: string,
+): Promise<ResizedImage> {
+	return resizeImage(
+		{ bytes, mimeType, data: base64 },
+		{ maxWidth: 1024, maxHeight: 1024, maxBytes: 150 * 1024, jpegQuality: 70, excludeWebP: session.excludeWebP },
+	);
+}
+
+/** Persist a captured screenshot, record it on `sink`, and emit its caption and model-sized image. */
+export async function saveScreenshot(
+	sink: ScreenshotSink,
+	bytes: Uint8Array,
+	opts: SaveScreenshotOptions,
+): Promise<string> {
+	const { session } = sink;
+	const resized = await resizeForModel(bytes, opts.mimeType, session, opts.base64);
+	const saveFullRes = !!session.browserScreenshotDir || opts.preserveFormat === true;
+	const savedBuffer = saveFullRes ? bytes : resized.buffer;
+	const savedMimeType = saveFullRes ? opts.mimeType : resized.mimeType;
+	const ext = savedMimeType === "image/webp" ? "webp" : savedMimeType === "image/jpeg" ? "jpg" : "png";
+	const dest = session.browserScreenshotDir
+		? path.join(
+				session.browserScreenshotDir,
+				`${opts.dirStem ?? "screenshot"}-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, -1)}.${ext}`,
+			)
+		: path.join(os.tmpdir(), `${opts.tmpStem ?? "omp-sshots"}-${Snowflake.next()}.${ext}`);
+	await fs.promises.mkdir(path.dirname(dest), { recursive: true });
+	await Bun.write(dest, savedBuffer);
+	sink.screenshots.push({
+		dest,
+		mimeType: savedMimeType,
+		bytes: savedBuffer.length,
+		width: resized.width,
+		height: resized.height,
+	});
+	if (!opts.silent) {
+		const lines = formatScreenshot({
+			saveFullRes,
+			savedMimeType,
+			savedByteLength: savedBuffer.length,
+			dest,
+			resized,
+		});
+		if (opts.notes) lines.push(...opts.notes);
+		sink.output.push({ type: "text", text: lines.join("\n") });
+		sink.output.push({ type: "image", data: resized.data, mimeType: resized.mimeType });
+	}
+	return dest;
+}
+
+/**
+ * Diff a fresh PNG `capture()` against the PNG at `baselinePath`, save the highlighted diff, and emit it.
+ * Backs `tab.diffScreenshot()` on every backend.
+ */
+export async function saveScreenshotDiff(
+	sink: ScreenshotSink,
+	signal: AbortSignal | undefined,
+	baselinePath: string,
+	opts: DiffScreenshotOptions,
+	capture: () => Promise<Uint8Array>,
+): Promise<DiffScreenshotResult> {
+	const { session } = sink;
+	const absoluteBaseline = resolveToCwd(baselinePath, session.cwd);
+	const baseline = await untilAborted(signal, () => fs.promises.readFile(absoluteBaseline));
+	const current = await capture();
+	const diff = createPngDiff(baseline, current);
+	const changed = diff.pixelChangeRatio > screenshotThreshold(opts.threshold);
+	const diffPath = opts.output
+		? resolveToCwd(opts.output, session.cwd)
+		: path.join(os.tmpdir(), `omp-screenshot-diff-${Snowflake.next()}.png`);
+	await fs.promises.mkdir(path.dirname(diffPath), { recursive: true });
+	await Bun.write(diffPath, diff.png);
+	const resized = await resizeForModel(diff.png, "image/png", session);
+	sink.screenshots.push({
+		dest: diffPath,
+		mimeType: "image/png",
+		bytes: diff.png.length,
+		width: resized.width,
+		height: resized.height,
+	});
+	sink.output.push({
+		type: "text",
+		text: `Screenshot diff: ${diff.pixelChangeRatio.toFixed(6)} changed-pixel ratio (${changed ? "changed" : "unchanged"}); saved to ${diffPath}`,
+	});
+	sink.output.push({ type: "image", data: resized.data, mimeType: resized.mimeType });
+	return { pixelChangeRatio: diff.pixelChangeRatio, changed, diffPath };
 }

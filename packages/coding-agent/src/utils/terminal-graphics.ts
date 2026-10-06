@@ -15,6 +15,8 @@ const MAX_FRAME_CHARS = MAX_BASE64_CHARS + 4096;
 const MAX_FRAME_PARTS = 8192;
 const MAX_KITTY_CHUNKS = 8192;
 const MAX_SIXEL_CHARS = MAX_IMAGE_INPUT_BYTES;
+/** Any byte sequence that can start (or begin to start) a Kitty APC or sixel DCS frame. */
+const GRAPHICS_INTRODUCER = /\x1b[_P]|[\x90\x9f]/u;
 
 type FrameKind = "kitty" | "sixel";
 type ParserMode = "ground" | FrameKind | "discard";
@@ -54,6 +56,16 @@ export class TerminalGraphicsDecoder {
 
 	push(chunk: string): string {
 		if (!chunk && !this.#groundPrefix) return "";
+		// Graphics are rare: a ground-state chunk with no introducer candidate (and
+		// no trailing ESC that could start one) passes through without a scan.
+		if (
+			this.#mode === "ground" &&
+			!this.#groundPrefix &&
+			chunk.charCodeAt(chunk.length - 1) !== 0x1b &&
+			!GRAPHICS_INTRODUCER.test(chunk)
+		) {
+			return chunk;
+		}
 		let input = this.#groundPrefix + chunk;
 		this.#groundPrefix = "";
 		let output = "";
@@ -311,7 +323,11 @@ export class TerminalGraphicsDecoder {
 	}
 }
 
-/** Encode an image as a Kitty direct PNG transmission. */
+/**
+ * Encode an image as a Kitty direct PNG transmission.
+ *
+ * @deprecated No production caller; only tests use it to build graphics fixtures. Will be removed in the next major.
+ */
 export async function encodeTerminalImage(image: ImageContent): Promise<string> {
 	const sourceBytes = Buffer.from(image.data, "base64");
 	if (sourceBytes.length > MAX_IMAGE_INPUT_BYTES) throw new Error("Terminal image exceeds the 20 MiB limit");

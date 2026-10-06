@@ -4,7 +4,7 @@ import type { AgentTool, AgentToolContext, AgentToolResult, AgentToolUpdateCallb
 import type { ToolExample } from "@oh-my-pi/pi-ai";
 import { type AstFindMatch, astGrep, type ShellFilesystem } from "@oh-my-pi/pi-natives";
 
-import { prompt, untilAborted } from "@oh-my-pi/pi-utils";
+import { countNewlines, prompt, untilAborted } from "@oh-my-pi/pi-utils";
 import { getEditStore } from "../edit/store";
 
 import { sessionResolveContext } from "../internal-urls/context";
@@ -134,13 +134,18 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 	readonly label = "AST Grep";
 	readonly summary = "Search code with AST patterns (structural grep)";
 	get description(): string {
-		return prompt.render(astGrepDescription, {
-			eagerDelegation: sessionDelegationBias(this.session) === "eager",
-			scoutAvailable: isScoutSpawnable(
-				cfgTaskDisabledAgents.get(this.session.settings),
-				this.session.getSessionSpawns?.() ?? "*",
-			),
-		});
+		const eagerDelegation = sessionDelegationBias(this.session) === "eager";
+		const scoutAvailable = isScoutSpawnable(
+			cfgTaskDisabledAgents.get(this.session.settings),
+			this.session.getSessionSpawns?.() ?? "*",
+		);
+		// Both render inputs are booleans; pack them so repeat reads skip the template render.
+		const key = (eagerDelegation ? 1 : 0) | (scoutAvailable ? 2 : 0);
+		if (key !== this.#descriptionKey) {
+			this.#description = prompt.render(astGrepDescription, { eagerDelegation, scoutAvailable });
+			this.#descriptionKey = key;
+		}
+		return this.#description;
 	}
 	readonly parameters = astGrepSchema;
 	readonly strict = true;
@@ -168,6 +173,8 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 		},
 	];
 	readonly loadMode = "discoverable";
+	#descriptionKey = -1;
+	#description = "";
 
 	constructor(private readonly session: ToolSession) {}
 
@@ -285,14 +292,18 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 			const useHashLines = resolveFileDisplayMode(this.session).hashLines;
 			const hashContexts = new Map<string, { tag: string; path: string }>();
 			if (useHashLines) {
-				for (const relativePath of fileList) {
-					// Immutable schemes get no host file; mutable URLs (`local://`) bind to their backing file.
-					const snapshotPath = await resultSnapshotPath(relativePath, this.session.cwd, resolveContext);
+				// Immutable schemes get no host file; mutable URLs (`local://`) bind to their backing file.
+				const snapshotPaths = await Promise.all(
+					fileList.map(relativePath => resultSnapshotPath(relativePath, this.session.cwd, resolveContext)),
+				);
+				const store = getEditStore(this.session);
+				for (let index = 0; index < fileList.length; index++) {
+					const snapshotPath = snapshotPaths[index];
 					if (snapshotPath === undefined) continue;
 					// Whole-file content tag: any anchor validates while the file is
 					// unchanged; over-cap / unreadable files get no tag (plain output).
-					const tag = getEditStore(this.session).recordSnapshotFile(snapshotPath);
-					if (tag) hashContexts.set(relativePath, { tag, path: snapshotPath });
+					const tag = store.recordSnapshotFile(snapshotPath);
+					if (tag) hashContexts.set(fileList[index], { tag, path: snapshotPath });
 				}
 			}
 			const outputLines: string[] = [];
@@ -303,8 +314,7 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 				const fileMatches = matchesByFile.get(relativePath) ?? [];
 				const hashContext = hashContexts.get(relativePath);
 				const lineNumberWidth = fileMatches.reduce((width, match) => {
-					const lineCount = match.text.split("\n").length;
-					const endLine = match.startLine + lineCount - 1;
+					const endLine = match.startLine + countNewlines(match.text);
 					return Math.max(width, String(match.startLine).length, String(endLine).length);
 				}, 0);
 				for (const match of fileMatches) {

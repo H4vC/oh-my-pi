@@ -335,6 +335,7 @@ export const imageGenTool: CustomTool<typeof imageGenSchema, ImageGenToolDetails
 	},
 };
 
+/** @deprecated Parameters are ignored; use `imageGenTool`. Will be removed in the next major. */
 export async function getImageGenTools(
 	_modelRegistry?: ModelRegistry,
 	_activeModel?: Model,
@@ -342,6 +343,7 @@ export async function getImageGenTools(
 	return [imageGenTool];
 }
 
+/** @deprecated Parameters are ignored; use `imageGenTool`. Will be removed in the next major. */
 export async function getImageGenToolsWithRegistry(
 	_modelRegistry: ModelRegistry,
 	_activeModel?: Model,

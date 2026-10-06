@@ -21,10 +21,7 @@ import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
 
 const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
 
-/** POSIX absolute, Windows drive, or UNC (`\\server\share` / `//server/share`). */
-export function isFilesystemSourcePath(value: string): boolean {
-	return path.posix.isAbsolute(value) || path.win32.isAbsolute(value);
-}
+export { isFilesystemSourcePath } from "@oh-my-pi/pi-utils";
 const NARROW_NO_BREAK_SPACE = "\u202F";
 
 function normalizeUnicodeSpaces(str: string): string {
@@ -250,6 +247,13 @@ export async function probeLiteralPathExists(filePath: string, cwd: string): Pro
 	}
 }
 
+type LiteralProbe = "exists" | "missing" | "unknown";
+
+/** Shared verdict for the literal-preferring split once the probe has resolved. */
+function preferLiteral(rawPath: string, strict: { path: string; sel?: string }, probe: LiteralProbe) {
+	return probe === "exists" || (probe === "unknown" && process.platform !== "win32") ? { path: rawPath } : strict;
+}
+
 /**
  * Async sibling of {@link splitPathAndSel} that prefers a literal filesystem
  * path over selector interpretation. Selector-shaped tails may be POSIX
@@ -264,8 +268,7 @@ export async function splitPathAndSelPreferringLiteral(
 ): Promise<{ path: string; sel?: string }> {
 	const strict = splitPathAndSel(rawPath);
 	if (strict.sel === undefined) return strict;
-	const probe = await probeLiteralPathExists(rawPath, cwd);
-	return probe === "exists" || (probe === "unknown" && process.platform !== "win32") ? { path: rawPath } : strict;
+	return preferLiteral(rawPath, strict, await probeLiteralPathExists(rawPath, cwd));
 }
 
 /**
@@ -293,8 +296,7 @@ export function probeLiteralPathExistsSync(filePath: string, cwd: string): "exis
 export function splitPathAndSelPreferringLiteralSync(rawPath: string, cwd: string): { path: string; sel?: string } {
 	const strict = splitPathAndSel(rawPath);
 	if (strict.sel === undefined) return strict;
-	const probe = probeLiteralPathExistsSync(rawPath, cwd);
-	return probe === "exists" || (probe === "unknown" && process.platform !== "win32") ? { path: rawPath } : strict;
+	return preferLiteral(rawPath, strict, probeLiteralPathExistsSync(rawPath, cwd));
 }
 
 function assertNotInternalUrl(expanded: string, original: string): void {

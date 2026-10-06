@@ -21,6 +21,7 @@ import {
 	resolveOutputSinkArtifactMaxBytes,
 	resolveOutputSinkHeadBytes,
 } from "../tools/output-meta";
+import { quotePosixPath } from "@oh-my-pi/pi-utils/shell-quote";
 import { getOrCreateSnapshot } from "../utils/shell-snapshot";
 import { TerminalGraphicsDecoder } from "../utils/terminal-graphics";
 import { loadDirenvEnv } from "./direnv";
@@ -39,6 +40,12 @@ export interface BashExecutorOptions {
 	/** Milliseconds before aborting the command; 0 disables the executor deadline. */
 	timeout?: number;
 	onChunk?: (chunk: string) => void;
+	/**
+	 * Receives the sink's current inline view ({@link OutputSink.preview}: the
+	 * body the final result will carry so far) at the `onChunk` cadence. Use it
+	 * for live previews instead of re-buffering `onChunk` chunks.
+	 */
+	onPreview?: (text: string) => void;
 	chunkThrottleMs?: number;
 	signal?: AbortSignal;
 	/** Session key suffix to isolate shell sessions per agent */
@@ -231,18 +238,6 @@ async function retainShellWithLiveBackgroundJobs(shell: Shell): Promise<void> {
 	interval.unref?.();
 }
 
-/**
- * A timer promise that resolves after {@link QUARANTINE_CLEANUP_TIMEOUT_MS}.
- * Used to bound quarantine cleanup; the timer is unref'd so it never keeps the
- * process alive on its own.
- */
-function quarantineCleanupDeadline(): Promise<void> {
-	const { promise, resolve } = Promise.withResolvers<void>();
-	const timer = setTimeout(resolve, QUARANTINE_CLEANUP_TIMEOUT_MS);
-	timer.unref?.();
-	return promise;
-}
-
 function quarantineShellSession(
 	sessionKey: string,
 	runPromise: Promise<ShellRunResult>,
@@ -253,8 +248,11 @@ function quarantineShellSession(
 		? Promise.allSettled([runPromise, abortCleanupPromise])
 		: Promise.allSettled([runPromise]);
 	// Defensive bound: a never-settling `runPromise` must not pin the quarantine
-	// record for the life of the process (#10308).
-	const cleanup = Promise.race([settled, quarantineCleanupDeadline()]);
+	// record for the life of the process (#10308). The deadline timer is unref'd
+	// so it never keeps the process alive on its own.
+	const { promise: deadline, resolve: expire } = Promise.withResolvers<void>();
+	setTimeout(expire, QUARANTINE_CLEANUP_TIMEOUT_MS).unref?.();
+	const cleanup = Promise.race([settled, deadline]);
 	shellSessionQuarantines.set(sessionKey, cleanup);
 	void cleanup
 		.finally(() => {
@@ -282,12 +280,6 @@ export function releaseShellSessions(agentSessionKey: string | undefined): void 
 		shellSessions.delete(key);
 		if (!shellSessionsInUse.has(key)) void retainShellWithLiveBackgroundJobs(shell);
 	}
-}
-
-function resolveShellCwd(cwd: string | undefined): string | undefined {
-	// Preserve the caller's logical cwd string. Brush uses this value to update `PWD` and its
-	// internal working directory, so realpathing here collapses symlinks before the shell sees them.
-	return cwd;
 }
 
 /** Translate `ShellMinimizerSettings` into native `MinimizerOptions`, or `undefined` when disabled. */
@@ -402,12 +394,8 @@ function ensureInteractiveShellArgs(shell: string, args: string[]): string[] {
 	return [...effectiveArgs, "-i"];
 }
 
-function quoteShellArg(value: string): string {
-	return `'${value.replace(/'/g, "'\\''")}'`;
-}
-
 function buildUserShellCommand(shell: string, args: string[], command: string): string {
-	return [shell, ...ensureInteractiveShellArgs(shell, args), command].map(quoteShellArg).join(" ");
+	return [shell, ...ensureInteractiveShellArgs(shell, args), command].map(quotePosixPath).join(" ");
 }
 
 function resolveUserShellConfig(settings: Settings, baseConfig: ShellConfig): ShellConfig {
@@ -531,11 +519,11 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 		supportsAutoUserShell(shell) &&
 		$env.PI_NO_PTY !== "1" &&
 		!isPersistentShellCdCommand(command);
-	const snapshotPath = bashShell ? await getOrCreateSnapshot(shell, shellEnv) : null;
-
 	const minimizer = buildMinimizerOptions(cfgShellMinimizer.get(settings));
 
-	const commandCwd = resolveShellCwd(options?.cwd);
+	// Keep the caller's logical cwd string: brush uses it to update `PWD`, so
+	// realpathing here would collapse symlinks before the shell sees them.
+	const commandCwd = options?.cwd;
 	const virtualCwd = commandCwd !== undefined && URL_CWD_RE.test(commandCwd);
 	if (virtualCwd && (usePty || !options?.filesystem)) {
 		throw new Error(`Working directory ${commandCwd} needs the embedded shell with an injected filesystem`);
@@ -545,15 +533,19 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 	// signal + timeout so an aborted / short-timeout call can't hang on a cold
 	// `.envrc` load before the abort listener is installed. The helper applies
 	// the configured shell `prefix` after any `unset -v` it prepends. A URL cwd
-	// has no `.envrc` on the host.
-	const preflight = await applyDirenvPreflight(command, commandCwd ?? process.cwd(), {
-		callerEnv: options?.env,
-		signal: options?.signal,
-		timeoutMs: cfgBashDirenvLoadTimeoutMs.get(settings),
-		callerTimeoutMs: options?.timeout,
-		direnvSetting: virtualCwd ? "off" : cfgBashDirenv.get(settings),
-		commandPrefix: prefix,
-	});
+	// has no `.envrc` on the host. The rc snapshot is independent, so both load
+	// concurrently.
+	const [snapshotPath, preflight] = await Promise.all([
+		bashShell ? getOrCreateSnapshot(shell, shellEnv) : null,
+		applyDirenvPreflight(command, commandCwd ?? process.cwd(), {
+			callerEnv: options?.env,
+			signal: options?.signal,
+			timeoutMs: cfgBashDirenvLoadTimeoutMs.get(settings),
+			callerTimeoutMs: options?.timeout,
+			direnvSetting: virtualCwd ? "off" : cfgBashDirenv.get(settings),
+			commandPrefix: prefix,
+		}),
+	]);
 	const commandEnv = buildNonInteractiveEnv(preflight.env);
 	const runCdInPersistentShell = options?.useUserShell === true && !prefix && isPersistentShellCdCommand(command);
 	// Never wrap in cmd.exe: it is only the Windows no-bash fallback for spawn
@@ -565,14 +557,22 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 
 	// Create output sink for truncation and artifact handling
 	const graphics = new TerminalGraphicsDecoder();
-	const sink = new OutputSink({
-		onChunk: usePty ? undefined : options?.onChunk,
+	const onChunk = usePty ? undefined : options?.onChunk;
+	const onPreview = usePty ? undefined : options?.onPreview;
+	const sink: OutputSink = new OutputSink({
+		onChunk:
+			onChunk || onPreview
+				? chunk => {
+						onChunk?.(chunk);
+						onPreview?.(sink.preview());
+					}
+				: undefined,
 		artifactPath: options?.artifactPath,
 		artifactId: options?.artifactId,
 		headBytes: resolveOutputSinkHeadBytes(settings),
 		artifactMaxBytes: resolveOutputSinkArtifactMaxBytes(settings),
 		maxColumns: resolveOutputMaxColumns(settings),
-		chunkThrottleMs: !usePty && options?.onChunk ? (options.chunkThrottleMs ?? 50) : 0,
+		chunkThrottleMs: onChunk || onPreview ? (options?.chunkThrottleMs ?? 50) : 0,
 	});
 
 	// sink.push() is synchronous — buffer management, counters, and onChunk

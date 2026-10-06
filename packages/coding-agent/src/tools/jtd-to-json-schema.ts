@@ -9,16 +9,7 @@
  */
 
 import { isRecord } from "@oh-my-pi/pi-utils";
-import type { JTDPrimitive } from "./jtd-utils.js";
-import {
-	isJTDDiscriminator,
-	isJTDElements,
-	isJTDEnum,
-	isJTDProperties,
-	isJTDRef,
-	isJTDType,
-	isJTDValues,
-} from "./jtd-utils.js";
+import { type JTDPrimitive, type JTDVisitor, visitJtd } from "./jtd-utils.js";
 
 const primitiveMap: Record<JTDPrimitive, string> = {
 	boolean: "boolean",
@@ -41,41 +32,23 @@ function convertSchema(schema: unknown): unknown {
 }
 
 function convertSchemaForm(schema: unknown): unknown {
+	return visitJtd(schema, jsonSchemaVisitor);
+}
+
+const jsonSchemaVisitor: JTDVisitor<unknown> = {
 	// Enum form: { enum: ["a", "b"] } → { enum: ["a", "b"] }
-	if (isJTDEnum(schema)) {
-		return { enum: schema.enum };
-	}
-
+	enum: schema => ({ enum: schema.enum }),
 	// Elements form: { elements: { type: "string" } } → { type: "array", items: ... }
-	if (isJTDElements(schema)) {
-		return {
-			type: "array",
-			items: convertSchema(schema.elements),
-		};
-	}
-
+	elements: schema => ({ type: "array", items: convertSchema(schema.elements) }),
 	// Type form: { type: "string" } → { type: "string" }
-	if (isJTDType(schema)) {
-		const jsonType = primitiveMap[schema.type as JTDPrimitive];
-		if (!jsonType) {
-			return { type: schema.type };
-		}
-		return { type: jsonType };
-	}
+	type: schema => ({ type: primitiveMap[schema.type as JTDPrimitive] || schema.type }),
 	// Values form: { values: { type: "string" } } → { type: "object", additionalProperties: ... }
-	if (isJTDValues(schema)) {
-		return {
-			type: "object",
-			additionalProperties: convertSchema(schema.values),
-		};
-	}
-
+	values: schema => ({ type: "object", additionalProperties: convertSchema(schema.values) }),
 	// Properties form: { properties: {...}, optionalProperties: {...} }
-	if (isJTDProperties(schema)) {
+	properties(schema) {
 		const properties: Record<string, unknown> = {};
 		const required: string[] = [];
 
-		// Required properties
 		if (schema.properties) {
 			for (const [key, value] of Object.entries(schema.properties)) {
 				properties[key] = convertSchema(value);
@@ -83,7 +56,6 @@ function convertSchemaForm(schema: unknown): unknown {
 			}
 		}
 
-		// Optional properties
 		if (schema.optionalProperties) {
 			for (const [key, value] of Object.entries(schema.optionalProperties)) {
 				properties[key] = convertSchema(value);
@@ -101,10 +73,9 @@ function convertSchemaForm(schema: unknown): unknown {
 		}
 
 		return result;
-	}
-
+	},
 	// Discriminator form: { discriminator: "type", mapping: { ... } }
-	if (isJTDDiscriminator(schema)) {
+	discriminator(schema) {
 		const oneOf: unknown[] = [];
 
 		for (const [tag, props] of Object.entries(schema.mapping)) {
@@ -126,16 +97,12 @@ function convertSchemaForm(schema: unknown): unknown {
 		}
 
 		return { oneOf };
-	}
-
+	},
 	// Ref form: { ref: "MyType" } → { $ref: "#/$defs/MyType" }
-	if (isJTDRef(schema)) {
-		return { $ref: `#/$defs/${schema.ref}` };
-	}
-
+	ref: schema => ({ $ref: `#/$defs/${schema.ref}` }),
 	// Empty form: {} → {} (accepts anything)
-	return {};
-}
+	empty: () => ({}),
+};
 
 const jtdOnlyPrimitiveTypes: Record<string, true> = {
 	timestamp: true,

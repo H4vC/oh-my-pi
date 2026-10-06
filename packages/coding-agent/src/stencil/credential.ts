@@ -1,6 +1,6 @@
 import { STREAM_AUTH_ENV, STREAM_AUTH_PROVIDER } from "@oh-my-pi/pi-wire";
-import { discoverAuthStorage } from "../sdk";
-import type { AuthStorage } from "../session/auth-storage";
+import { discoverAuthStorage } from "../session/auth-discovery";
+import type { AuthStorage } from "@oh-my-pi/pi-ai";
 
 /**
  * Bearer credential presented to Stencil services (`omp stream`, `omp clip`,

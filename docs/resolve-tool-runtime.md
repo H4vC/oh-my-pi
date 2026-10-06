@@ -6,7 +6,7 @@ Pending previews and plan approval do not use a `resolve` tool. They finalize th
 - `xd://reject` — discard the pending staged preview; body = a one-sentence reason
 - `xd://propose` — submit a plan for approval while plan mode is active; body = the plan slug (`<slug>` for `local://<slug>-plan.md`)
 
-These are internal URLs, not filesystem paths. `read xd://resolve`, `read xd://reject`, and `read xd://propose` return a one-line usage hint. Bodies are trimmed plain text, not JSON; the runtime does not enforce sentence count or a nonempty reason. Completed device writes carry `details.xdev` metadata; `writeDeviceDispatch()` exposes the envelope and `resolveDispatchDetails()` extracts apply/discard details from `xdev.inner`.
+These are internal URLs, not filesystem paths. `read xd://resolve`, `read xd://reject`, and `read xd://propose` return a one-line usage hint. Bodies are trimmed plain text, not JSON; the runtime does not enforce sentence count or a nonempty reason. Completed device writes carry `details.xdev` metadata; `writeDeviceDispatch()` exposes the envelope and apply/discard details live in `xdev.inner` (`resolveDispatchDetails()` is deprecated and will be removed in the next major).
 
 ## Preview flows
 

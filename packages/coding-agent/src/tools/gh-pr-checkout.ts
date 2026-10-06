@@ -127,6 +127,7 @@ export function selectPrCloneUrl(originUrl: string | undefined, repo: Pick<GhRep
 	return normalizeOptionalString(repo.sshUrl) ?? normalizeOptionalString(repo.url) ?? "";
 }
 
+/** @deprecated Unused; list remotes via `vcs.requireGit(repoRoot).remoteList()`/`remoteUrl()`. Will be removed in the next major. */
 export async function getRemoteUrls(repoRoot: string, signal?: AbortSignal): Promise<Map<string, string>> {
 	const repo = vcs.requireGit(repoRoot);
 	const remotes = await repo.remoteList(signal);
@@ -138,6 +139,7 @@ export async function getRemoteUrls(repoRoot: string, signal?: AbortSignal): Pro
 	return urls;
 }
 
+/** @deprecated Unused outside the `gh_pr_checkout` tool; use the `gh_pr_checkout` tool. Will be removed in the next major. */
 export async function ensurePrRemote(
 	repoRoot: string,
 	data: GhPrViewData,

@@ -4,7 +4,15 @@ import type { TUI } from "@oh-my-pi/pi-tui";
 import { logger } from "@oh-my-pi/pi-utils";
 import { STREAM_FLUSH_INTERVAL_MS, StreamPaintEncoder } from "./paint-encoder";
 import { streamSocketEndpoint } from "./paths";
-import { encodeStreamFrame, STREAM_LOCAL_PROTO, type StreamSessionFrame, type StreamStreamerFrame } from "./protocol";
+import {
+	decodeStreamFrame,
+	encodeStreamFrame,
+	isStreamerFrame,
+	STREAM_LOCAL_PROTO,
+	StreamLineReader,
+	type StreamSessionFrame,
+	type StreamStreamerFrame,
+} from "./protocol";
 import type { StreamRedactor } from "./redactor";
 
 const CONNECT_TIMEOUT_MS = 500;
@@ -50,17 +58,6 @@ function logConnectFailure(error: unknown): void {
 	logger.debug("stream: local publisher connection failed", { error: String(error) });
 }
 
-function parseFrame(line: string): StreamStreamerFrame | null {
-	try {
-		const value: unknown = JSON.parse(line);
-		if (!value || typeof value !== "object" || !("t" in value) || typeof value.t !== "string") return null;
-		return value as StreamStreamerFrame;
-	} catch {
-		logger.debug("stream: ignoring malformed local frame");
-		return null;
-	}
-}
-
 async function openStreamSocket(options: Omit<StreamPublisherOptions, "redactor">): Promise<OpenedStreamSocket | null> {
 	let endpoint: string;
 	try {
@@ -71,7 +68,7 @@ async function openStreamSocket(options: Omit<StreamPublisherOptions, "redactor"
 	}
 
 	const socket = net.createConnection(endpoint);
-	let input = "";
+	const lines = new StreamLineReader();
 	let settled = false;
 	let frameHandler: ((frame: StreamStreamerFrame) => void) | undefined;
 	const queuedFrames: StreamStreamerFrame[] = [];
@@ -108,39 +105,42 @@ async function openStreamSocket(options: Omit<StreamPublisherOptions, "redactor"
 		};
 		socket.write(encodeStreamFrame(hello));
 	});
-	socket.on("data", chunk => {
-		input += chunk.toString("utf8");
-		for (;;) {
-			const newline = input.indexOf("\n");
-			if (newline < 0) break;
-			const line = input.slice(0, newline);
-			input = input.slice(newline + 1);
-			if (!line) continue;
-			const frame = parseFrame(line);
-			if (!frame) continue;
-			if (!settled) {
-				if (frame.t !== "welcome") {
-					finishNull(new Error("streamer did not welcome session"));
-					return;
-				}
-				if (frame.proto !== STREAM_LOCAL_PROTO) {
-					finishNull(new Error(`streamer protocol mismatch: ${frame.proto}`));
-					return;
-				}
-				settled = true;
-				clearTimeout(timer);
-				resolve({
-					socket,
-					takeQueuedFrames: () => queuedFrames.splice(0),
-					setFrameHandler: handler => {
-						frameHandler = handler;
-					},
-				});
-				continue;
-			}
-			if (frameHandler) frameHandler(frame);
-			else queuedFrames.push(frame);
+	const handleLine = (line: string): boolean => {
+		if (!line) return true;
+		const frame = decodeStreamFrame(line, isStreamerFrame);
+		if (!frame) {
+			logger.debug("stream: ignoring malformed local frame");
+			return true;
 		}
+		if (!settled) {
+			if (frame.t !== "welcome") {
+				finishNull(new Error("streamer did not welcome session"));
+				return false;
+			}
+			if (frame.proto !== STREAM_LOCAL_PROTO) {
+				finishNull(new Error(`streamer protocol mismatch: ${frame.proto}`));
+				return false;
+			}
+			settled = true;
+			clearTimeout(timer);
+			resolve({
+				socket,
+				takeQueuedFrames: () => queuedFrames.splice(0),
+				setFrameHandler: handler => {
+					frameHandler = handler;
+				},
+			});
+			return true;
+		}
+		if (frameHandler) frameHandler(frame);
+		else queuedFrames.push(frame);
+		return true;
+	};
+	socket.on("data", chunk => {
+		if (socket.destroyed || lines.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk), handleLine)) return;
+		// Handshake failures already settled; anything else is an oversized line.
+		if (!settled) finishNull(new Error("streamer sent an oversized frame"));
+		else socket.destroy();
 	});
 	socket.once("close", () => {
 		if (!settled) finishNull();

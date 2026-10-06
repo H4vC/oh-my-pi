@@ -345,7 +345,7 @@ interface BrowserScreenshotOptions {
 	format?: "png" | "jpeg";
 	/** JPEG quality from 0 to 100; valid only with `format: "jpeg"`. */
 	quality?: number;
-	/** Emit and save only when pixels changed since this scope's previous capture. */
+	/** Emit and save only when pixels changed since this scope's previous capture (the 4 most recent scopes are remembered). */
 	ifChanged?: boolean;
 	/** Minimum changed-pixel ratio from 0 to 1; implies `ifChanged`. */
 	threshold?: number;

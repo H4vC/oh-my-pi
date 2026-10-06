@@ -106,7 +106,10 @@ export function writeDeviceDispatch(toolName: string, result: unknown): XdevDisp
 /** Handler installed by plan mode; `xd://propose` dispatches the written plan title to it. */
 export type PlanProposalHandler = (title: string) => Promise<AgentToolResult<unknown>>;
 
-/** Parse a completed `write` dispatch targeting `xd://resolve` or `xd://reject`. */
+/**
+ * Parse a completed `write` dispatch targeting `xd://resolve` or `xd://reject`.
+ * @deprecated Unused; use `writeDeviceDispatch()` and read `xdev.inner`. Will be removed in the next major.
+ */
 export function resolveDispatchDetails(toolName: string, result: unknown): ResolveDetails | undefined {
 	const dispatch = writeDeviceDispatch(toolName, result);
 	if (!dispatch || (dispatch.tool !== RESOLVE_DEVICE_NAME && dispatch.tool !== REJECT_DEVICE_NAME)) return undefined;

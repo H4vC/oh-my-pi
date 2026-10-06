@@ -51,7 +51,10 @@ export function reportIssueDeviceUsage(): string {
 	return `Write \`<tool>: <concise description>\` as plain text to ${REPORT_ISSUE_DEVICE_PATH}. A two-line fallback also works: tool name on line 1, report body below.`;
 }
 
-/** Whether a tool call writes to `xd://report_issue`. */
+/**
+ * Whether a tool call writes to `xd://report_issue`.
+ * @deprecated Unused; compare the write path against `REPORT_ISSUE_DEVICE_PATH`. Will be removed in the next major.
+ */
 export function isReportIssueToolCall(toolCall: { name: string; arguments?: Record<string, unknown> }): boolean {
 	if (toolCall.name !== "write") return false;
 	const args = toolCall.arguments;
