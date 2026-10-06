@@ -7,6 +7,8 @@ import { SelectListSheet } from "../native/picker";
 
 /**
  * Component that renders a queue mode selector with borders
+ *
+ * @deprecated Unused since queue mode moved to the `steeringMode`/`followUpMode` settings; use the settings selector. Will be removed in the next major.
  */
 export class QueueModeSelectorComponent extends OverlayPanel {
 	#selectList: SelectList;

@@ -57,7 +57,10 @@ export function daemonLabel(daemon: DaemonSnapshot): string {
 	return `${daemon.name}: ${daemon.state}${pid}${exit}`;
 }
 
-/** Colored STATE cell, e.g. `ready`, `exited(143)`. */
+/**
+ * Colored STATE cell, e.g. `ready`, `exited(143)`.
+ * @deprecated Only used within this module; use {@link tableCells}. Will become module-private in the next major.
+ */
 export function stateCell(row: PsDaemonRow): string {
 	const { snapshot } = row;
 	let text: string = snapshot.state;
@@ -82,7 +85,10 @@ export function flagsCell(row: PsDaemonRow): string {
 	return parts.join(",");
 }
 
-/** Display elapsed runtime, or a dash for a terminal process. */
+/**
+ * Display elapsed runtime, or a dash for a terminal process.
+ * @deprecated Only used within this module; use {@link tableCells}. Will become module-private in the next major.
+ */
 export function uptimeCell(snapshot: DaemonSnapshot): string {
 	if (TERMINAL_STATES[snapshot.state]) return "-";
 	return formatDuration(Date.now() - snapshot.startedAt);

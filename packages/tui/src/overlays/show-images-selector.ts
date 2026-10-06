@@ -7,6 +7,8 @@ import { SelectListSheet } from "../native/picker";
 
 /**
  * Component that renders a show images selector with borders
+ *
+ * @deprecated Unused; image display is the `terminal.showImages` boolean in the settings selector. Will be removed in the next major.
  */
 export class ShowImagesSelectorComponent extends OverlayPanel {
 	#selectList: SelectList;

@@ -710,7 +710,10 @@ export interface GhFailedJobLog {
 	available: boolean;
 }
 
-/** Choose the terminal conclusion or current job state. */
+/**
+ * Choose the terminal conclusion or current job state.
+ * @deprecated Internal helper of the GitHub renderer; will become module-private in the next major.
+ */
 export function formatJobState(job: GhRunJobSnapshot): string {
 	return job.conclusion ?? job.status ?? "unknown";
 }

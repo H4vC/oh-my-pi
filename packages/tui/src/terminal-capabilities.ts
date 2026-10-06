@@ -1,5 +1,6 @@
 import { encodeSixel } from "@oh-my-pi/pi-natives";
 import { $env, isBunTestRuntime, isTerminalHeadless, isWsl } from "@oh-my-pi/pi-utils/env";
+import { parseImageMetadata } from "@oh-my-pi/pi-utils/mime";
 import { writeTerminalSequence } from "./active-terminal";
 import { sendDesktopNotification, shouldDeliverDesktopNotification } from "./desktop-notify";
 import {
@@ -144,6 +145,7 @@ export class TerminalInfo {
 		public readonly trueColor: boolean,
 		public readonly hyperlinks: boolean,
 		public readonly notifyProtocol: NotifyProtocol = NotifyProtocol.Bell,
+		/** @deprecated DECCARA fills are unused since the renderer rewrite; nothing reads this. Will be removed in the next major. */
 		public readonly deccara: boolean = false,
 		readonly supportsScreenToScrollback: boolean = false,
 		/** Renders the Kitty OSC 66 text-sizing protocol (scaled spans). Kitty only. */
@@ -448,6 +450,7 @@ export function shouldEnableSynchronizedOutputByDefault(
  * Disabled under tmux/screen/zellij multiplexers — screen-coordinate rectangle
  * protocols are not safe to assume through a multiplexer — and via the
  * `PI_NO_DECCARA` kill switch. Pure helper for tests and `TERMINAL` construction.
+ * @deprecated DECCARA fills are unused since the renderer rewrite; no replacement. Will be removed in the next major.
  */
 export function detectRectangularSgrSupport(terminalId: TerminalId, env: NodeJS.ProcessEnv = Bun.env): boolean {
 	if (terminalId !== "kitty") return false;
@@ -801,6 +804,7 @@ export const TERMINAL_ID: TerminalId = detectTerminalId(Bun.env);
 export interface RuntimeTerminal extends TerminalInfo {
 	imageProtocol: ImageProtocol | null;
 	hyperlinks: boolean;
+	/** @deprecated DECCARA fills are unused since the renderer rewrite; nothing reads this. Will be removed in the next major. */
 	deccara: boolean;
 	supportsScreenToScrollback: boolean;
 	/** Whether OSC 66 text sizing is currently enabled. */
@@ -865,6 +869,7 @@ export function setTerminalImageProtocol(imageProtocol: ImageProtocol | null): v
  * Override DECCARA rectangular-SGR capability at runtime. Used by tests to
  * exercise the optimizer and fallback paths deterministically — the default is
  * resolved once at import and force-disabled under the test runtime.
+ * @deprecated DECCARA fills are unused since the renderer rewrite; this is a no-op for rendering. Will be removed in the next major.
  */
 export function setTerminalDeccara(enabled: boolean): void {
 	TERMINAL.deccara = enabled;
@@ -875,7 +880,10 @@ export function setTerminalGlyphProtocol(supported: boolean): void {
 	TERMINAL.glyphProtocol = supported;
 }
 
-/** Override screen-to-scrollback clear support for targeted renderer tests. */
+/**
+ * Override screen-to-scrollback clear support for targeted renderer tests.
+ * @deprecated Unused by the renderer and its tests; no replacement. Will be removed in the next major.
+ */
 export function setTerminalScreenToScrollback(enabled: boolean): void {
 	TERMINAL.supportsScreenToScrollback = enabled;
 }
@@ -1128,6 +1136,7 @@ export function encodeKittyDeleteAllImages(): string {
  * and registry entry but keeps the transmitted data, so a later `a=p` under a
  * fresh placement id needs no retransmit. Used to clear stale placement-epoch
  * entries after a destructive history clear.
+ * @deprecated Unused since the renderer rewrite; use {@link encodeKittyDeleteImage}. Will be removed in the next major.
  */
 export function encodeKittyDeletePlacement(imageId: number, placementId: number): string {
 	return wrapTmuxPassthroughIfNeeded(`\x1b_Ga=d,d=i,i=${imageId},p=${placementId},q=2\x1b\\`);
@@ -1158,6 +1167,7 @@ export function encodeITerm2(
 	return `\x1b]1337;File=${params.join(";")}:${base64Data}\x07`;
 }
 
+/** @deprecated Unused; size images with {@link renderImage}'s fit options instead. Will be removed in the next major. */
 export function calculateImageRows(
 	imageDimensions: ImageDimensions,
 	targetWidthCells: number,
@@ -1199,6 +1209,12 @@ function calculateImageFit(
 	};
 }
 
+// Enough decoded bytes to reach a JPEG SOF marker behind typical EXIF/ICC
+// segments; PNG/GIF/WebP need only the first 30 bytes. A multiple of 4 so the
+// base64 slice decodes cleanly.
+const IMAGE_HEADER_BASE64_CHARS = 4 * Math.ceil((64 * 1024) / 3);
+
+/** @deprecated Duplicates the pi-utils header parser; use {@link getImageDimensions}. Will be removed in the next major. */
 export function getPngDimensions(base64Data: string): ImageDimensions | null {
 	try {
 		const buffer = Buffer.from(base64Data, "base64");
@@ -1220,6 +1236,7 @@ export function getPngDimensions(base64Data: string): ImageDimensions | null {
 	}
 }
 
+/** @deprecated Duplicates the pi-utils header parser; use {@link getImageDimensions}. Will be removed in the next major. */
 export function getJpegDimensions(base64Data: string): ImageDimensions | null {
 	try {
 		const buffer = Buffer.from(base64Data, "base64");
@@ -1263,6 +1280,7 @@ export function getJpegDimensions(base64Data: string): ImageDimensions | null {
 	}
 }
 
+/** @deprecated Duplicates the pi-utils header parser; use {@link getImageDimensions}. Will be removed in the next major. */
 export function getGifDimensions(base64Data: string): ImageDimensions | null {
 	try {
 		const buffer = Buffer.from(base64Data, "base64");
@@ -1285,6 +1303,7 @@ export function getGifDimensions(base64Data: string): ImageDimensions | null {
 	}
 }
 
+/** @deprecated Duplicates the pi-utils header parser; use {@link getImageDimensions}. Will be removed in the next major. */
 export function getWebpDimensions(base64Data: string): ImageDimensions | null {
 	try {
 		const buffer = Buffer.from(base64Data, "base64");
@@ -1324,20 +1343,33 @@ export function getWebpDimensions(base64Data: string): ImageDimensions | null {
 	}
 }
 
+/**
+ * Pixel size of decoded image bytes, or null unless their header parses as
+ * `mimeType` (PNG, JPEG, GIF or WebP).
+ */
+export function getImageDimensionsFromBytes(bytes: Uint8Array, mimeType: string): ImageDimensions | null {
+	const metadata = parseImageMetadata(bytes);
+	if (metadata?.mimeType !== mimeType || metadata.width === undefined || metadata.height === undefined) return null;
+	return { widthPx: metadata.width, heightPx: metadata.height };
+}
+
+/**
+ * Pixel size of a base64 image, or null unless its header parses as
+ * `mimeType` (PNG, JPEG, GIF or WebP). Decodes only a 64 KB header window;
+ * a JPEG whose frame header sits past it (large EXIF/ICC segments) falls
+ * back to decoding the whole payload.
+ */
 export function getImageDimensions(base64Data: string, mimeType: string): ImageDimensions | null {
-	if (mimeType === "image/png") {
-		return getPngDimensions(base64Data);
+	if (base64Data.length <= IMAGE_HEADER_BASE64_CHARS) {
+		return getImageDimensionsFromBytes(Buffer.from(base64Data, "base64"), mimeType);
 	}
-	if (mimeType === "image/jpeg") {
-		return getJpegDimensions(base64Data);
+	const header = Buffer.from(base64Data.slice(0, IMAGE_HEADER_BASE64_CHARS), "base64");
+	const metadata = parseImageMetadata(header);
+	if (metadata?.mimeType !== mimeType) return null;
+	if (metadata.width !== undefined && metadata.height !== undefined) {
+		return { widthPx: metadata.width, heightPx: metadata.height };
 	}
-	if (mimeType === "image/gif") {
-		return getGifDimensions(base64Data);
-	}
-	if (mimeType === "image/webp") {
-		return getWebpDimensions(base64Data);
-	}
-	return null;
+	return mimeType === "image/jpeg" ? getImageDimensionsFromBytes(Buffer.from(base64Data, "base64"), mimeType) : null;
 }
 
 /**
@@ -1347,7 +1379,7 @@ export function getImageDimensions(base64Data: string, mimeType: string): ImageD
  */
 export function encodeSixelNow(base64Data: string, widthPx: number, heightPx: number): string | null {
 	try {
-		return encodeSixel(new Uint8Array(Buffer.from(base64Data, "base64")), widthPx, heightPx);
+		return encodeSixel(Buffer.from(base64Data, "base64"), widthPx, heightPx);
 	} catch {
 		return null;
 	}

@@ -108,6 +108,8 @@ export class BashInteractiveOverlayComponent implements Component {
 	/** Bumped whenever the virtual terminal processed a chunk, so `describe` knows the screen changed. */
 	#screenVersion = 0;
 	readonly #native = new Memo();
+	/** ANSI viewport rows memoized by screen version, size and output color. */
+	#viewport: { version: number; width: number; rows: number; foreground: string; lines: string[] } | undefined;
 
 	constructor(
 		command: string,
@@ -120,13 +122,7 @@ export class BashInteractiveOverlayComponent implements Component {
 		this.#uiTheme = uiTheme;
 		this.#getTerminalRows = getTerminalRows;
 		this.#backend = backend;
-		this.#terminal = new terminalCtor({
-			cols: 120,
-			rows: 40,
-			disableStdin: true,
-			allowProposedApi: true,
-			scrollback: 10_000,
-		});
+		this.#terminal = new terminalCtor({ cols: 120, rows: 40, scrollback: 10_000 });
 	}
 
 	/** Connects normalized keyboard input and overlay lifecycle events to the controller. */
@@ -277,6 +273,8 @@ export class BashInteractiveOverlayComponent implements Component {
 		const cols = Math.max(20, cx.cols - NATIVE_SHEET_INSET_COLS);
 		const rows = this.#maxContentRows();
 		this.#syncPtySize(cols, rows);
+		// Reflowing to the native grid also changes what the ANSI viewport would read.
+		if (this.#terminal.cols !== cols || this.#terminal.rows !== rows) this.#viewport = undefined;
 		this.#terminal.resize(cols, rows);
 		const deps = [this.#screenVersion, cols, rows, this.#state, this.#exitCode];
 		return this.#native.get(deps, () => {
@@ -310,11 +308,24 @@ export class BashInteractiveOverlayComponent implements Component {
 	}
 
 	#readViewport(innerWidth: number, maxContentRows: number): string[] {
+		const foreground = this.#uiTheme.getFgAnsi("toolOutput");
+		const cached = this.#viewport;
+		if (
+			cached &&
+			cached.version === this.#screenVersion &&
+			cached.width === innerWidth &&
+			cached.rows === maxContentRows &&
+			cached.foreground === foreground
+		) {
+			return cached.lines;
+		}
 		this.#terminal.resize(innerWidth, maxContentRows);
 		const viewportY = this.#terminal.buffer.active.viewportY;
-		return readTerminalRows(this.#terminal, viewportY, maxContentRows).map(line =>
-			truncateToWidth(styleTerminalRow(line, this.#uiTheme.getFgAnsi("toolOutput")), innerWidth),
+		const lines = readTerminalRows(this.#terminal, viewportY, maxContentRows).map(line =>
+			truncateToWidth(styleTerminalRow(line, foreground), innerWidth),
 		);
+		this.#viewport = { version: this.#screenVersion, width: innerWidth, rows: maxContentRows, foreground, lines };
+		return lines;
 	}
 	render(width: number): readonly string[] {
 		const safeWidth = Math.max(20, width);
@@ -356,7 +367,9 @@ export class BashInteractiveOverlayComponent implements Component {
 		];
 	}
 
-	invalidate(): void {}
+	invalidate(): void {
+		this.#viewport = undefined;
+	}
 
 	dispose(): void {
 		this.#terminal.dispose();

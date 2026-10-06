@@ -366,20 +366,29 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 	// width-epoch resolution and committed-render bypass must observe it.
 	#blockVersion = 0;
 	#displayVersion = 0;
+	// Set by every state change; the summary/preview children are rebuilt once
+	// on the next render() instead of eagerly per mutation (a message_update
+	// flush re-applies every pending read's args, see #markDisplayDirty).
+	#displayDirty = true;
 	readonly #native = new Memo();
 	/** Content previews toggled in the terminal, by tool call id. */
 	#previewCollapsed = new Map<string, boolean>();
+	/** Preview components by tool call id, reused while their inputs are unchanged so width caches survive rebuilds. */
+	#previewComponents = new Map<
+		string,
+		{ key: string; contentText: string; codeLineNumbers: ReadEntry["codeLineNumbers"]; component: Component }
+	>();
 
 	constructor(options: ReadToolGroupOptions = {}) {
 		super();
 		this.#showContentPreview = options.showContentPreview ?? false;
 		this.#text = new Text("", 0, 0);
 		this.addChild(this.#text);
-		this.#updateDisplay();
 	}
 
 	override render(width: number): readonly string[] {
 		if (!this.#toolActivityVisible) return [];
+		if (this.#displayDirty) this.#rebuildDisplay();
 		return super.render(width);
 	}
 	isTranscriptBlockFinalized(): boolean {
@@ -423,14 +432,18 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 		if (!toolCallId) return;
 		const rawPath =
 			typeof args.file_path === "string" ? args.file_path : typeof args.path === "string" ? args.path : "";
-		const entry: ReadEntry = this.#entries.get(toolCallId) ?? {
+		const existing = this.#entries.get(toolCallId);
+		// The controller re-applies every pending read's args on each coalesced
+		// message_update flush; an unchanged path must not rebuild the group.
+		if (existing?.path === rawPath) return;
+		const entry: ReadEntry = existing ?? {
 			toolCallId,
 			path: rawPath,
 			status: "pending",
 		};
 		entry.path = rawPath;
 		this.#entries.set(toolCallId, entry);
-		this.#updateDisplay();
+		this.#markDisplayDirty();
 	}
 
 	/**
@@ -450,12 +463,12 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 		]);
 		this.#entries.clear();
 		for (const [key, value] of reordered) this.#entries.set(key, value);
-		this.#updateDisplay();
+		this.#markDisplayDirty();
 	}
 	/** Remove one call without discarding successful siblings in the shared group. */
 	removeEntry(toolCallId: string): boolean {
 		if (!this.#entries.delete(toolCallId)) return this.#entries.size === 0;
-		this.#updateDisplay();
+		this.#markDisplayDirty();
 		return this.#entries.size === 0;
 	}
 
@@ -494,7 +507,7 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 			entry.codeStartLine = displayContent?.startLine;
 			entry.codeLineNumbers = displayContent?.lineNumbers;
 		}
-		this.#updateDisplay();
+		this.#markDisplayDirty();
 	}
 
 	/**
@@ -528,23 +541,21 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 			timestamp,
 			turnElapsedMs,
 		});
-		this.#updateDisplay();
+		this.#markDisplayDirty();
 		return true;
 	}
 
-	setArgsComplete(_toolCallId?: string): void {
-		this.#updateDisplay();
-	}
+	/** No display state depends on argument completion; kept for the ToolExecutionHandle contract. */
+	setArgsComplete(_toolCallId?: string): void {}
 
-	setExecutionStarted(_toolCallId?: string): void {
-		this.#updateDisplay();
-	}
+	/** No display state depends on execution start; kept for the ToolExecutionHandle contract. */
+	setExecutionStarted(_toolCallId?: string): void {}
 
 	setExpanded(expanded: boolean): void {
 		if (this.#expanded !== expanded) this.#blockVersion++;
 		this.#expanded = expanded;
 		this.#previewCollapsed.clear();
-		this.#updateDisplay();
+		this.#markDisplayDirty();
 	}
 
 	setToolActivityVisible(visible: boolean): void {
@@ -854,8 +865,13 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 		return text([span(plainText(line), "dim")], { wrap: "word", key, role: "omp.usage" });
 	}
 
-	#updateDisplay(): void {
+	#markDisplayDirty(): void {
 		this.#displayVersion++;
+		this.#displayDirty = true;
+	}
+
+	#rebuildDisplay(): void {
+		this.#displayDirty = false;
 		const entries = [...this.#entries.values()];
 		const displayTargets = this.#displayTargetsForEntries(entries);
 		const displayRows = this.#buildSummaryRows(displayTargets);
@@ -863,7 +879,7 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 		// Clear previous children and rebuild the summary and preview blocks.
 		this.clear();
 		this.#text = new Text("", 0, 0);
-
+		this.#prunePreviewComponents();
 		if (displayRows.length === 0) {
 			this.#text.setText(` ${theme.format.bullet} ${theme.fg("toolTitle", theme.bold("Read"))}`);
 			this.addChild(this.#text);
@@ -1141,22 +1157,32 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 				})
 			: "";
 		const title = pathDisplay ? `Read ${pathDisplay}` : "Read";
+		const expanded = this.#expanded;
+		const code = entry.contentText ?? "";
+		const status = entry.status === "success" ? "complete" : entry.status;
+		const codeStartLine = entry.codeStartLine;
+		const codeLineNumbers = entry.codeLineNumbers;
+		const key = `${title}\0${lang ?? ""}\0${status}\0${expanded}\0${codeStartLine ?? ""}`;
+		const cached = this.#previewComponents.get(entry.toolCallId);
+		if (cached && cached.key === key && cached.contentText === code && cached.codeLineNumbers === codeLineNumbers) {
+			this.addChild(cached.component);
+			return;
+		}
 		let cachedWidth: number | undefined;
 		let cachedLines: string[] | undefined;
-		const expanded = this.#expanded;
 		const component: Component = {
 			render: (width: number) => {
 				if (cachedLines && cachedWidth === width) return cachedLines;
 				cachedLines = renderCodeCell(
 					{
-						code: entry.contentText ?? "",
+						code,
 						language: lang,
 						title,
-						status: entry.status === "success" ? "complete" : entry.status,
+						status,
 						expanded,
 						codeMaxLines: expanded ? undefined : COLLAPSED_PREVIEW_LINES,
-						codeStartLine: entry.codeStartLine,
-						codeLineNumbers: entry.codeLineNumbers,
+						codeStartLine,
+						codeLineNumbers,
 						width,
 					},
 					theme,
@@ -1169,7 +1195,15 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 				cachedLines = undefined;
 			},
 		};
+		this.#previewComponents.set(entry.toolCallId, { key, contentText: code, codeLineNumbers, component });
 		this.addChild(component);
+	}
+
+	/** Drop reusable previews whose read left the group (removed or renamed). */
+	#prunePreviewComponents(): void {
+		for (const toolCallId of this.#previewComponents.keys()) {
+			if (!this.#entries.has(toolCallId)) this.#previewComponents.delete(toolCallId);
+		}
 	}
 
 	#addPreviewUsage(entry: ReadEntry): void {

@@ -28,6 +28,7 @@ import { CLOSE_ACTION, type PickerEvent, picker, pickerAction, pickerEvent } fro
 import { type KeyId, matchesKey } from "../../keys";
 import { parseSgrMouse } from "../../mouse";
 import { SplitPane, type SplitPaneHit } from "../../components/layout/split-pane";
+import { providerInitials } from "../provider-initials";
 import { Stack } from "../../components/layout/stack";
 import { ScrollView } from "../../components/scroll-view";
 import { TabBar, type Tab } from "../../components/tab-bar";
@@ -115,15 +116,6 @@ const DASHBOARD_TITLE = "Extension Control Center";
 
 /** The kind column shown when rows are not grouped under kind headers (a provider scope or a search). */
 const KIND_COLUMNS: readonly TspPickerColumn[] = [{ id: "kind", format: "dim", priority: 1 }];
-
-/** Up to two initials of a provider label, for its scope mark. */
-function providerInitials(label: string): string {
-	const words = label.split(/[\s()_-]+/).filter(word => word.length > 0);
-	return words
-		.slice(0, 2)
-		.map(word => word[0]?.toUpperCase() ?? "")
-		.join("");
-}
 
 /**
  * Picker scopes from the provider tabs: "all" first, then each provider with

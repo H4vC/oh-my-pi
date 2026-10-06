@@ -302,13 +302,27 @@ function correctHangulCompatibilityJamoWidth(
 // the same string objects (JSC caches their hashes, so repeat lookups are
 // O(1) — cheaper than even the ASCII fast scan). Strings longer than the
 // length gate skip the cache entirely: hashing them costs as much as measuring
-// them, and retaining them would pin large render buffers. Worst-case
-// retention is MAX * MAX_LEN UTF-16 units (~2 MiB); cleared when the width
+// them, and retaining them would pin large render buffers. Two generations
+// (young/old, promote on an old hit, rotate when young fills) keep a frame's
+// stable working set warm while per-frame-unique strings age out, instead of
+// a wholesale wipe that re-measures everything. Worst-case retention is
+// 2 * MAX * MAX_LEN UTF-16 units (~4 MiB); cleared when the width
 // configuration epoch changes.
 const VISIBLE_WIDTH_CACHE_MAX = 2048;
 const VISIBLE_WIDTH_CACHE_MAX_LEN = 512;
-const visibleWidthCache = new Map<string, number>();
+let visibleWidthCache = new Map<string, number>();
+let visibleWidthCacheOld = new Map<string, number>();
 let visibleWidthCacheEpoch = widthConfigEpoch;
+
+function cacheVisibleWidth(str: string, width: number): void {
+	if (visibleWidthCache.size >= VISIBLE_WIDTH_CACHE_MAX) {
+		const spare = visibleWidthCacheOld;
+		spare.clear();
+		visibleWidthCacheOld = visibleWidthCache;
+		visibleWidthCache = spare;
+	}
+	visibleWidthCache.set(str, width);
+}
 
 /**
  * Visible width of a string in terminal columns, excluding ANSI/OSC escapes.
@@ -324,19 +338,22 @@ export function visibleWidth(str: string): number {
 	if (cacheable) {
 		if (visibleWidthCacheEpoch !== widthConfigEpoch) {
 			visibleWidthCache.clear();
+			visibleWidthCacheOld.clear();
 			visibleWidthCacheEpoch = widthConfigEpoch;
 		}
 		const cached = visibleWidthCache.get(str);
 		if (cached !== undefined) return cached;
+		const aged = visibleWidthCacheOld.get(str);
+		if (aged !== undefined) {
+			cacheVisibleWidth(str, aged);
+			return aged;
+		}
 	}
 
 	// This regex compiles to a native ASCII scan, cheaper than Bun's width
 	// scanner for the overwhelmingly common source-code path.
 	if (PRINTABLE_ASCII_REGEX.test(str)) {
-		if (cacheable) {
-			if (visibleWidthCache.size >= VISIBLE_WIDTH_CACHE_MAX) visibleWidthCache.clear();
-			visibleWidthCache.set(str, str.length);
-		}
+		if (cacheable) cacheVisibleWidth(str, str.length);
 		return str.length;
 	}
 
@@ -392,75 +409,15 @@ export function visibleWidth(str: string): number {
 	}
 
 	width = correctHangulCompatibilityJamoWidth(width, compatibilityJamoCount, fillerCount);
-	if (cacheable) {
-		if (visibleWidthCache.size >= VISIBLE_WIDTH_CACHE_MAX) visibleWidthCache.clear();
-		visibleWidthCache.set(str, width);
-	}
+	if (cacheable) cacheVisibleWidth(str, width);
 	return width;
 }
 
 /** Remove ANSI, OSC, and APC control sequences while preserving visible text. */
 export function stripTerminalSequences(str: string): string {
 	if (!str.includes("\x1b")) return str;
-	let result = "";
-	let i = 0;
-	while (i < str.length) {
-		const ansi = extractAnsiCode(str, i);
-		if (ansi) {
-			i += ansi.length;
-			continue;
-		}
-		result += str[i];
-		i++;
-	}
-	return result;
-}
-
-/**
- * Extract ANSI escape sequences from a string at the given position.
- * Copied verbatim from pi-mono `packages/tui/src/utils.ts` alongside
- * `stripTerminalSequences` so both behave identically to upstream pi. Kept
- * module-private: it was removed from the public API in 9.6.2 and this port
- * does not reintroduce that export.
- */
-function extractAnsiCode(str: string, pos: number): { code: string; length: number } | null {
-	if (pos >= str.length || str[pos] !== "\x1b") return null;
-
-	const next = str[pos + 1];
-
-	// CSI sequence: ESC [ ... m/G/K/H/J
-	if (next === "[") {
-		let j = pos + 2;
-		while (j < str.length && !/[mGKHJ]/.test(str[j]!)) j++;
-		if (j < str.length) return { code: str.substring(pos, j + 1), length: j + 1 - pos };
-		return null;
-	}
-
-	// OSC sequence: ESC ] ... BEL or ESC ] ... ST (ESC \)
-	// Used for hyperlinks (OSC 8), window titles, etc.
-	if (next === "]") {
-		let j = pos + 2;
-		while (j < str.length) {
-			if (str[j] === "\x07") return { code: str.substring(pos, j + 1), length: j + 1 - pos };
-			if (str[j] === "\x1b" && str[j + 1] === "\\") return { code: str.substring(pos, j + 2), length: j + 2 - pos };
-			j++;
-		}
-		return null;
-	}
-
-	// APC sequence: ESC _ ... BEL or ESC _ ... ST (ESC \)
-	// Used for cursor marker and application-specific commands
-	if (next === "_") {
-		let j = pos + 2;
-		while (j < str.length) {
-			if (str[j] === "\x07") return { code: str.substring(pos, j + 1), length: j + 1 - pos };
-			if (str[j] === "\x1b" && str[j + 1] === "\\") return { code: str.substring(pos, j + 2), length: j + 2 - pos };
-			j++;
-		}
-		return null;
-	}
-
-	return null;
+	// `Bun.stripANSI` handles CSI/OSC but keeps APC payloads as text.
+	return Bun.stripANSI(str.includes(APC_PREFIX) ? str.replace(APC_SPAN_REGEX, "") : str);
 }
 
 /**
@@ -518,6 +475,9 @@ const ASCII_WHITESPACE = makeBoolArray("\x09\x0a\x0b\x0c\x0d\x20");
 
 /**
  * Check if a character is whitespace.
+ *
+ * @deprecated Unused; ASCII-only. Use `getWordNavKind(char) === "whitespace"` for Unicode-aware
+ * classification. Will be removed in the next major.
  */
 export function isWhitespaceChar(char: string): boolean {
 	const code = char.codePointAt(0) ?? 0;
@@ -528,6 +488,9 @@ const ASCII_PUNCTUATION = makeBoolArray("(){}[]<>.,;:'\"!?+-=*/\\|&%^$#@~`");
 
 /**
  * Check if a character is punctuation.
+ *
+ * @deprecated Unused; ASCII-only. Use `getWordNavKind(char) === "delimiter"` for Unicode-aware
+ * classification. Will be removed in the next major.
  */
 export function isPunctuationChar(char: string): boolean {
 	const code = char.codePointAt(0) ?? 0;

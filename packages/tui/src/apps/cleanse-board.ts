@@ -21,6 +21,7 @@ import type { TspSpan } from "@oh-my-pi/pi-wire";
 import { col, elapsed, keyed, node, row, span, stableKey, text } from "../native/describe";
 import type { DescribeContext, NativeNode } from "../native/node";
 import { Memo } from "../native/memo";
+import { formatBoardCost } from "./board-format";
 
 /** Checker identity shown in live rows and verdicts. */
 export interface CleanseCheckerDescriptor {
@@ -239,7 +240,7 @@ export class CleanseBoardModel {
 		const parts: string[] = [];
 		if (this.#agents.size > 0) parts.push(`${this.#agents.size} running`);
 		if (tokens > 0) parts.push(`${formatNumber(tokens)} tok`);
-		if (cost > 0) parts.push(formatCost(cost));
+		if (cost > 0) parts.push(formatBoardCost(cost));
 		const value = this.#repairDone / this.#repairTotal;
 		const label = `${this.#repairDone}/${this.#repairTotal}`;
 		const children: NativeNode[] = [
@@ -375,7 +376,7 @@ function renderWaveHeader(
 	const parts = [`${done}/${total}`];
 	if (running > 0) parts.push(`${running} running`);
 	if (tokens > 0) parts.push(`${formatNumber(tokens)} tok`);
-	if (cost > 0) parts.push(formatCost(cost));
+	if (cost > 0) parts.push(formatBoardCost(cost));
 	parts.push(formatDuration(Date.now() - startedAt));
 	return `${fgOrPlain("accent", spinner)} Repairing [${bar}] ${parts.join(fgOrPlain("dim", " · "))}`;
 }
@@ -552,8 +553,4 @@ function compactFiles(assignment: CleanseAssignment): string {
 	const files = assignment.groups.map(group => group.file ?? "<project>");
 	const first = files[0] ?? "<project>";
 	return files.length > 1 ? `${first} +${files.length - 1}` : first;
-}
-
-function formatCost(cost: number): string {
-	return `$${cost >= 0.095 ? cost.toFixed(2) : cost.toFixed(3)}`;
 }

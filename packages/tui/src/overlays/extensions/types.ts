@@ -167,6 +167,8 @@ export interface DashboardState {
 
 /**
  * Callbacks from dashboard to parent.
+ *
+ * @deprecated Unused; the dashboard takes `ExtensionDashboardOptions` from `extension-dashboard`. Will be removed in the next major.
  */
 export interface DashboardCallbacks {
 	/** Called when provider is toggled */
@@ -186,6 +188,8 @@ export function makeExtensionId(kind: ExtensionKind, name: string): string {
 
 /**
  * Parse extension ID into kind and name.
+ *
+ * @deprecated Unused; split the `kind:name` id produced by {@link makeExtensionId} at the first `:` instead. Will be removed in the next major.
  */
 export function parseExtensionId(id: string): { kind: ExtensionKind; name: string } | null {
 	const colonIdx = id.indexOf(":");

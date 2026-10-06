@@ -178,6 +178,7 @@ export function renderTreeList<T>(options: TreeListOptions<T>, theme: Theme): st
  * gutters are the terminal's. The collapsed item cap (and the caller's
  * trailing summary) are kept as a muted "… N more" node; the visual line
  * budget (`maxCollapsedLines`) is layout and is left to the terminal.
+ * @deprecated Unused TSP helper; use {@link renderTreeList}. Will be removed in the next major.
  */
 export function describeTreeList<T>(options: TreeListOptions<T>, theme: Theme): NativeNode {
 	const { items, expanded = false, maxCollapsed = 8, itemType = "item", truncateFrom = "end", renderItem } = options;

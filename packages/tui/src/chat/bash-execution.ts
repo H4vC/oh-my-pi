@@ -265,8 +265,6 @@ export class BashExecutionComponent extends Container {
 				this.#ptyTerminal = new Terminal({
 					cols,
 					rows,
-					disableStdin: true,
-					allowProposedApi: true,
 					scrollback: PTY_SCROLLBACK_ROWS,
 				});
 				this.#drainPtyQueue();

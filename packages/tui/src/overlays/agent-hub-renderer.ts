@@ -5,7 +5,7 @@ import { Ellipsis, visibleWidth } from "../utils";
 import { formatMetricRow } from "../components/metric";
 import { renderProgressBar } from "../components/progress-bar";
 import { renderTableRow } from "../components/table";
-import { formatDuration, formatNumber } from "@oh-my-pi/pi-utils";
+import { finiteOrZero, formatDuration, formatNumber } from "@oh-my-pi/pi-utils";
 import type { ThemeColor } from "../theme/theme";
 import { type AgentRecordLike, type AgentStatus, MAIN_AGENT_ID } from "./agent-hub-types";
 import { parseThinkingLevel } from "../thinking";
@@ -18,11 +18,6 @@ import type { AgentMetrics } from "./agent-hub-projection";
 export interface RosterRender {
 	lines: string[];
 	hitRows: Array<number | undefined>;
-}
-
-/** Legacy progress snapshots may omit counters; snapshot absence remains distinct. */
-function metricNumber(value: number | undefined): number {
-	return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 /** Compute the max content width for the current terminal, accounting for chrome. */
@@ -252,14 +247,14 @@ export function modelBadgeSpans(ref: AgentRecordLike, observed: ObservableSessio
 }
 
 export function formatMetricDuration(metrics: AgentMetrics): string | undefined {
-	const durationMs = metricNumber(metrics.durationMs);
+	const durationMs = finiteOrZero(metrics.durationMs);
 	if (durationMs <= 0) return undefined;
 	const label = metrics.durationKind === "active" ? "active" : metrics.durationKind === "span" ? "span" : "duration";
 	return `${formatDuration(durationMs)} ${label}`;
 }
 
 export function formatCost(cost: number): string {
-	const amount = metricNumber(cost);
+	const amount = finiteOrZero(cost);
 	if (amount < 0.01) return `$${amount.toFixed(4)}`;
 	if (amount < 1) return `$${amount.toFixed(3)}`;
 	return `$${amount.toFixed(2)}`;
@@ -410,7 +405,10 @@ export function treeMetadataIndent(maxWidth: number, maxDepth: number): number {
 	return Math.min(Math.max(0, maxWidth - 1), TREE_DETAIL_BASE_INDENT + Math.max(0, maxDepth) * TREE_SEGMENT_WIDTH);
 }
 
-/** Right-align `text` inside a fixed-width cell, truncating overflow. */
+/**
+ * Right-align `text` inside a fixed-width cell, truncating overflow.
+ * @deprecated Unused by the hub; use `renderTableRow` from `components/table` with `align: "right"`. Will be removed in the next major.
+ */
 export function alignRightCell(text: string, width: number): string {
 	return renderTableRow([{ text }], [{ width, align: "right", overflow: "truncate" }], undefined, {
 		fit: false,

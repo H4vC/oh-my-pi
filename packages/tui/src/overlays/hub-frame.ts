@@ -31,7 +31,11 @@ export interface StripState<TChip extends StripChip<unknown>> {
 	index: number;
 }
 
-/** A chip hit range in frame-relative columns. */
+/**
+ * A chip hit range in frame-relative columns.
+ *
+ * @deprecated Only used by {@link HubFrame.chipRanges}; read that field's element type instead. Will become module-private in the next major.
+ */
 export interface ChipRange {
 	start: number;
 	end: number;
@@ -102,6 +106,8 @@ export function describeHubSidebar<TEntry extends SidebarEntry<string>>(
 /**
  * Native footer chip strip: a `tabs` node whose tab ids are the chip indices
  * (`select` events carry the index as `item`), with an optional prefix label.
+ *
+ * @deprecated Unused; hubs render their footer chips through {@link HubFrame}. Will be removed in the next major.
  */
 export function describeHubChips(strip: StripState<StripChip<unknown>>, prefix?: TspText, key = "chips"): NativeNode {
 	const tabs = node(

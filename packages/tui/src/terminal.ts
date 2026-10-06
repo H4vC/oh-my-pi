@@ -16,7 +16,7 @@ import {
 	parseGlyphProtocolReply,
 } from "./glyph-protocol";
 import { setKittyProtocolActive } from "./keys";
-import { encodeTspHelloQuery, parseTspMessage, TSP_PREFIX, type TspHello } from "./native/encode";
+import { encodeTspHelloQuery, parseTspMessage, splitUtf8Chunks, TSP_PREFIX, type TspHello } from "./native/encode";
 import { StdinBuffer } from "./stdin-buffer";
 import {
 	isInsideTerminalMultiplexer,
@@ -107,13 +107,9 @@ const OSC52_CLIPBOARD_WRITE = /\x1b\]52;([^;\x07\x1b]*);([^\x07\x1b]*)(\x07|\x1b
  * buffer with no newline in range is a hard cut at the last UTF-8 code-point
  * boundary that still fits — the ConPTY viewport bug from a single oversized
  * write is strictly worse than a one-frame escape-sequence glitch on a
- * buffer the renderer effectively never produces.
- *
- * UTF-16 code units are walked manually rather than measuring with
- * `Buffer.byteLength` per slice candidate: each code unit's UTF-8 width is
- * known from its value (BMP `<0x80` → 1, `<0x800` → 2, surrogate pair → 4
- * bytes across two units, other BMP → 3), and surrogate pairs are kept
- * together so the chunker never splits a non-BMP character.
+ * buffer the renderer effectively never produces. Code-point boundaries come
+ * from {@link splitUtf8Chunks}, which walks UTF-16 units arithmetically
+ * instead of measuring each slice candidate.
  *
  * Exported for unit testing of the chunking contract; `#safeWrite` is the
  * sole production caller.
@@ -121,56 +117,7 @@ const OSC52_CLIPBOARD_WRITE = /\x1b\]52;([^;\x07\x1b]*);([^\x07\x1b]*)(\x07|\x1b
 export function chunkForConPTY(data: string, maxChunkBytes: number = MAX_CONPTY_WRITE_CHUNK_BYTES): string[] {
 	// Fast path: whole buffer fits in one write.
 	if (Buffer.byteLength(data, "utf8") <= maxChunkBytes) return [data];
-	const chunks: string[] = [];
-	const len = data.length;
-	let pos = 0;
-	while (pos < len) {
-		let bytes = 0;
-		// Index just past the most recent `\n` we've consumed inside [pos, i):
-		// the natural cut point that leaves escape sequences intact.
-		let lastNewlineEnd = -1;
-		let i = pos;
-		while (i < len) {
-			const cu = data.charCodeAt(i);
-			let cuLen = 1;
-			let cuBytes: number;
-			if (cu < 0x80) {
-				cuBytes = 1;
-			} else if (cu < 0x800) {
-				cuBytes = 2;
-			} else if (cu >= 0xd800 && cu < 0xdc00) {
-				// High surrogate: pair with the following low surrogate (4 bytes
-				// across two code units); an unpaired surrogate UTF-8-encodes as
-				// the 3-byte U+FFFD replacement character.
-				const next = i + 1 < len ? data.charCodeAt(i + 1) : 0;
-				if (next >= 0xdc00 && next < 0xe000) {
-					cuBytes = 4;
-					cuLen = 2;
-				} else {
-					cuBytes = 3;
-				}
-			} else {
-				// BMP non-surrogate or unpaired low surrogate → 3 bytes.
-				cuBytes = 3;
-			}
-			if (bytes + cuBytes > maxChunkBytes && i > pos) {
-				// Would overflow the cap. Cut at the last newline if we found one,
-				// otherwise hard-cut at the current code-point boundary.
-				const cut = lastNewlineEnd > pos ? lastNewlineEnd : i;
-				chunks.push(data.slice(pos, cut));
-				pos = cut;
-				break;
-			}
-			bytes += cuBytes;
-			i += cuLen;
-			if (cu === 0x0a) lastNewlineEnd = i;
-		}
-		if (i >= len) {
-			chunks.push(data.slice(pos));
-			pos = len;
-		}
-	}
-	return chunks;
+	return splitUtf8Chunks(data, maxChunkBytes, true);
 }
 
 /**

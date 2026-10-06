@@ -1,5 +1,5 @@
 /** Shared assistant transcript construction and model-authored link caching. */
-import type { AssistantMessage, Model } from "@oh-my-pi/pi-ai";
+import type { AssistantMessage, Model, TextContent } from "@oh-my-pi/pi-ai";
 import { getMarkdownLinkUrls } from "../index";
 import { EMPTY_LINK_TARGETS } from "../render/render-utils";
 import type { ImageBudget } from "../components/image";
@@ -22,6 +22,12 @@ export interface AssistantMessageHost {
 	readonly toolOutputExpanded: boolean;
 	readonly ui: { requestRender(): void; readonly imageBudget: ImageBudget };
 	resolveAssistantMessageLinks(texts: readonly string[]): Promise<ReadonlyMap<string, string>>;
+	/**
+	 * Resolve already-extracted link destinations. Preferred over
+	 * {@link resolveAssistantMessageLinks} when present, so the host does not
+	 * re-lex the assistant text.
+	 */
+	resolveAssistantMessageLinkHrefs?(hrefs: readonly string[]): Promise<ReadonlyMap<string, string>>;
 }
 
 const kMarkdownLinkTargets = Symbol("markdownLinkTargets");
@@ -29,14 +35,26 @@ type SessionWithMarkdownLinkTargets = AssistantMessageSession & {
 	[kMarkdownLinkTargets]?: ReadonlyMap<string, string>;
 };
 
-function assistantTextBlocks(messages: readonly AssistantMessage[]): string[] {
-	const texts: string[] = [];
-	for (const message of messages) {
-		for (const content of message.content) {
-			if (content.type === "text") texts.push(content.text);
+/** Link destinations per text block, revalidated against the block's text (streaming blocks grow in place). */
+const textBlockHrefs = new WeakMap<TextContent, { text: string; hrefs: readonly string[] }>();
+
+/**
+ * Distinct Markdown link destinations authored in `message`'s text blocks.
+ * Each block is lexed once per text revision; transcript rebuilds and the
+ * message_end refresh reuse the result.
+ */
+export function assistantMessageLinkHrefs(message: AssistantMessage): string[] {
+	const hrefs = new Set<string>();
+	for (const content of message.content) {
+		if (content.type !== "text") continue;
+		let memo = textBlockHrefs.get(content);
+		if (memo?.text !== content.text) {
+			memo = { text: content.text, hrefs: getMarkdownLinkUrls(content.text) };
+			textBlockHrefs.set(content, memo);
 		}
+		for (const href of memo.hrefs) hrefs.add(href);
 	}
-	return texts;
+	return [...hrefs];
 }
 
 /**
@@ -51,13 +69,18 @@ export async function refreshAssistantMessageLinkTargets(
 ): Promise<ReadonlyMap<string, string>> {
 	const session: SessionWithMarkdownLinkTargets = ctx.viewSession;
 	const previous = session[kMarkdownLinkTargets] ?? EMPTY_LINK_TARGETS;
-	const texts = assistantTextBlocks(messages);
 	const hrefs = new Set<string>();
-	for (const text of texts) {
-		for (const href of getMarkdownLinkUrls(text)) hrefs.add(href);
+	for (const message of messages) {
+		for (const href of assistantMessageLinkHrefs(message)) hrefs.add(href);
 	}
 	if (hrefs.size === 0) return previous;
-	const resolved = await ctx.resolveAssistantMessageLinks(texts);
+	const resolved = ctx.resolveAssistantMessageLinkHrefs
+		? await ctx.resolveAssistantMessageLinkHrefs([...hrefs])
+		: await ctx.resolveAssistantMessageLinks(
+				messages.flatMap(message =>
+					message.content.flatMap(content => (content.type === "text" ? [content.text] : [])),
+				),
+			);
 	let changed = false;
 	for (const href of hrefs) {
 		if (previous.get(href) !== resolved.get(href)) {
@@ -85,12 +108,9 @@ export function assistantMessageLinkTargets(
 	targets: ReadonlyMap<string, string>,
 ): ReadonlyMap<string, string> {
 	const selected = new Map<string, string>();
-	for (const content of message.content) {
-		if (content.type !== "text") continue;
-		for (const href of getMarkdownLinkUrls(content.text)) {
-			const target = targets.get(href);
-			if (target) selected.set(href, target);
-		}
+	for (const href of assistantMessageLinkHrefs(message)) {
+		const target = targets.get(href);
+		if (target) selected.set(href, target);
 	}
 	return selected;
 }

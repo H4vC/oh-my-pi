@@ -397,8 +397,9 @@ describe("UiHelpers.renderInitialMessages — image replay", () => {
 
 		await new UiHelpers(ctx).renderInitialMessages();
 
-		expect(hasImageComponent(chatContainer)).toBe(true);
+		// Tool cards rebuild their display lazily on the next frame; render first.
 		expect(Bun.stripANSI(chatContainer.render(100).join("\n"))).toContain("display image 1: 1x1");
+		expect(hasImageComponent(chatContainer)).toBe(true);
 	});
 
 	it("restores manual Bash image blocks from persisted message content", async () => {
@@ -514,8 +515,9 @@ describe("UiHelpers.renderInitialMessages — image replay", () => {
 
 		await new UiHelpers(ctx).renderInitialMessages({ clearTerminalHistory: true });
 
-		expect(countImageComponents(chatContainer)).toBe(2);
+		// Tool cards rebuild their display lazily on the next frame; render first.
 		expect(Bun.stripANSI(chatContainer.render(100).join("\n"))).toContain("Read reopened.png");
+		expect(countImageComponents(chatContainer)).toBe(2);
 		expect(ctx.ui.requestRender).toHaveBeenCalledWith(true, { clearScrollback: true });
 	});
 });

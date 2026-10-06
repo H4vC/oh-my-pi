@@ -46,24 +46,33 @@ describe("write streaming preview honors Ctrl+O expansion", () => {
 		return uiTheme;
 	}
 
-	it("collapses a streaming write to a bounded tail and lifts the cap on expand", async () => {
-		// 40 lines > WRITE_STREAMING_PREVIEW_LINES (12): the head must be hidden
-		// while collapsed and the streaming edge (tail) kept visible.
-		const comp = await makePendingWrite(40);
+	it("collapses a streaming write to a bounded tail and lifts the cap on expand once args complete", async () => {
+		// 400 lines exceed both WRITE_STREAMING_PREVIEW_LINES (12) and any
+		// viewport-sized window: the head must be hidden while collapsed and the
+		// streaming edge (tail) kept visible.
+		const comp = await makePendingWrite(400);
 
 		const collapsed = comp.render(80);
 		// Tail-anchored: the streaming edge (last lines) is visible...
-		expect(hasLine(collapsed, 40)).toBe(true);
+		expect(hasLine(collapsed, 400)).toBe(true);
 		// ...but the head is capped away with an "earlier lines" marker.
 		expect(hasLine(collapsed, 1)).toBe(false);
 		expect(stripAnsi(collapsed.join("\n"))).toContain("earlier line");
 
+		// Ctrl+O while args still stream: a viewport-sized tail window, so each
+		// streamed delta costs O(window) instead of re-rendering the whole file.
 		comp.setExpanded(true);
+		const streamingExpanded = comp.render(80);
+		expect(hasLine(streamingExpanded, 400)).toBe(true);
+		expect(hasLine(streamingExpanded, 1)).toBe(false);
+		expect(streamingExpanded.length).toBeGreaterThanOrEqual(collapsed.length);
+
+		// Once args are complete the cap lifts: the full file (head through tail)
+		// is shown and the "earlier lines" marker is gone.
+		comp.setArgsComplete();
 		const expanded = comp.render(80);
-		// Ctrl+O lifts the cap: the full file (head through tail) is shown,
-		// and the "earlier lines" marker is gone.
 		expect(hasLine(expanded, 1)).toBe(true);
-		expect(hasLine(expanded, 40)).toBe(true);
+		expect(hasLine(expanded, 400)).toBe(true);
 		expect(stripAnsi(expanded.join("\n"))).not.toContain("earlier line");
 		// Expanding must strictly grow the preview, not just reformat it.
 		expect(expanded.length).toBeGreaterThan(collapsed.length);

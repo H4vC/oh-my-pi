@@ -45,6 +45,7 @@ function resolveProgressBarTheme(uiTheme: ProgressBarTheme | undefined): Progres
 /**
  * Native {@link renderAsciiBar}: a terminal-drawn progress bar with the same
  * percent label; `undefined` is indeterminate.
+ * @deprecated Unused; build `node("progress", …)` directly. Will be removed in the next major.
  */
 export function describeAsciiBar(fraction: number | undefined): NativeNode {
 	if (fraction === undefined) return node("progress", { value: null });

@@ -29,7 +29,10 @@ import { ansi, compact, keyed } from "../native/describe";
 import type { NativeChild } from "../native/node";
 import { footnoteText, resultText } from "./native-view";
 
-/** Default collapsed shell output preview height. */
+/**
+ * Default collapsed shell output preview height.
+ * @deprecated Internal constant; use `DEFAULT_TERMINAL_PREVIEW_LINES` from render/render-utils. Will be removed in the next major.
+ */
 export const BASH_DEFAULT_PREVIEW_LINES = DEFAULT_TERMINAL_PREVIEW_LINES;
 
 /**
@@ -257,7 +260,10 @@ function getPartialJson<TArgs>(args: TArgs | undefined): string | undefined {
 	return typeof value === "string" ? value : undefined;
 }
 
-/** Combines parsed and partially streamed environment assignments. */
+/**
+ * Combines parsed and partially streamed environment assignments.
+ * @deprecated Internal helper of the bash renderer; will become module-private in the next major.
+ */
 export function getBashEnvForDisplay(args: BashRenderArgs): Record<string, unknown> | undefined {
 	// The parsed args don't always mirror the exact current stream prefix, so recover
 	// env from the raw JSON buffer to surface `NAME="..." cmd` in the preview as it
@@ -273,6 +279,8 @@ export function getBashEnvForDisplay(args: BashRenderArgs): Record<string, unkno
  * only to the first line so multi-line commands display cleanly — terminals
  * reset SGR state at line boundaries, which made the previous single-string
  * `theme.fg("dim", ...)` form render only the first line as dim.
+ *
+ * @deprecated Internal helper of the bash renderer; will become module-private in the next major.
  */
 export function formatBashCommandLines(args: BashRenderArgs, uiTheme: Theme): string[] {
 	const command = replaceTabs(args.command || "…");
@@ -291,6 +299,8 @@ export function formatBashCommandLines(args: BashRenderArgs, uiTheme: Theme): st
 /**
  * Plain (unstyled) command line for native views: `cd <dir> && NAME="…" <command>`,
  * built from the same decoded display args (incl. streamed `__partialJson` env) as the ANSI path.
+ *
+ * @deprecated Internal helper of the bash renderer; will become module-private in the next major.
  */
 export function formatBashCommandText(args: BashRenderArgs): string {
 	const displayWorkdir = formatToolWorkingDirectory(args.cwd, getProjectDir());
@@ -501,7 +511,7 @@ export function createShellRenderer<TArgs>(config: ShellRendererConfig<TArgs>) {
 					// REACTIVE: read mutable options at render time
 					const { renderContext } = options;
 					const expanded = renderContext?.expanded ?? options.expanded;
-					const previewLines = renderContext?.previewLines ?? BASH_DEFAULT_PREVIEW_LINES;
+					const previewLines = renderContext?.previewLines ?? DEFAULT_TERMINAL_PREVIEW_LINES;
 
 					// Get output from context (preferred) or fall back to result content.
 					// Strip the LLM-facing notice appended by wrappedExecute so we don't
@@ -614,7 +624,7 @@ export function createShellRenderer<TArgs>(config: ShellRendererConfig<TArgs>) {
 			// The command shows once, in the head; the body is only the output.
 			return {
 				tool: shellToolHead(config.resolveTitle(args, options), command, undefined, false),
-				preview: { tail: BASH_DEFAULT_PREVIEW_LINES },
+				preview: { tail: DEFAULT_TERMINAL_PREVIEW_LINES },
 			};
 		},
 
@@ -637,7 +647,7 @@ export function createShellRenderer<TArgs>(config: ShellRendererConfig<TArgs>) {
 			const expanded = renderContext?.expanded ?? options.expanded;
 			const showingFullOutput = expanded && renderContext?.isFullOutput === true;
 			const command = formatBashCommandText(toBashRenderArgs(args, config));
-			const previewLines = renderContext?.previewLines ?? BASH_DEFAULT_PREVIEW_LINES;
+			const previewLines = renderContext?.previewLines ?? DEFAULT_TERMINAL_PREVIEW_LINES;
 			// Wall time is the head timer, the timeout a note only when hit, the exit a head chip:
 			// what is left (service state, artifact, truncation) is one quiet final line.
 			const meta = details?.meta;

@@ -7,7 +7,7 @@ import type { Loader } from "../components/loader";
 import { Text } from "../components/text";
 import { Container, type TUI } from "../tui";
 import { sanitizeText } from "@oh-my-pi/pi-utils";
-import { highlightCode, theme } from "../theme/theme";
+import { getThemeEpoch, highlightCode, theme } from "../theme/theme";
 import type { OutputArtifactError } from "../tools/streaming-output";
 import type { TruncationMeta } from "../tools/output-meta";
 import { OutputPane } from "../render/output-pane";
@@ -28,6 +28,12 @@ import { Memo } from "../native/memo";
 
 export type EvalExecutionLanguage = "python" | "js";
 
+// Rows retained while the cell streams; setComplete() swaps in the settled output.
+const STREAMING_LINE_CAP = PREVIEW_LINES * 5;
+// Coalesced chunks past this size flush into the pane immediately, bounding
+// the backlog when renders stall.
+const MAX_PENDING_OUTPUT_CHARS = 1 << 20;
+
 export class EvalExecutionComponent extends Container {
 	#status: ExecutionStatus = "running";
 	#exitCode: number | undefined = undefined;
@@ -42,6 +48,13 @@ export class EvalExecutionComponent extends Container {
 	#blockVersion = 0;
 	#contentContainer: Container;
 	#outputPane: OutputPane;
+	// Highlighted cell source; rebuilt only when the theme epoch moves.
+	#headerText: Text;
+	#headerThemeEpoch: number;
+	// Streamed chunks coalesce here and enter the pane once per render.
+	#pendingOutput: string[] = [];
+	#pendingOutputChars = 0;
+	#displayDirty = false;
 	readonly #code: string;
 	readonly #excludeFromContext: boolean;
 	readonly #language: EvalExecutionLanguage;
@@ -55,7 +68,8 @@ export class EvalExecutionComponent extends Container {
 		return this.#language === "js" ? "javascript" : "python";
 	}
 
-	#formatHeader(colorKey: ExecutionColorKey): Text {
+	#formatHeader(): Text {
+		const colorKey: ExecutionColorKey = this.#excludeFromContext ? "dim" : "pythonMode";
 		const prompt = theme.fg(colorKey, theme.bold(">>>"));
 		const continuation = theme.fg(colorKey, "    ");
 		const codeLines = highlightCode(this.#code, this.#highlightLang());
@@ -86,9 +100,12 @@ export class EvalExecutionComponent extends Container {
 			showExpandHint: false,
 			styleLine: line => theme.fg("muted", line),
 			normalizeLine: clampDisplayLine,
+			maxStoredLines: STREAMING_LINE_CAP,
 		});
 
-		this.#contentContainer.addChild(this.#formatHeader(colorKey));
+		this.#headerText = this.#formatHeader();
+		this.#headerThemeEpoch = getThemeEpoch();
+		this.#contentContainer.addChild(this.#headerText);
 		this.#contentContainer.addChild(this.#loader);
 	}
 
@@ -114,6 +131,12 @@ export class EvalExecutionComponent extends Container {
 
 	override invalidate(): void {
 		super.invalidate();
+		const themeEpoch = getThemeEpoch();
+		if (themeEpoch !== this.#headerThemeEpoch) {
+			this.#headerThemeEpoch = themeEpoch;
+			this.#headerText = this.#formatHeader();
+		}
+		this.#displayDirty = false;
 		this.#updateDisplay();
 	}
 
@@ -128,6 +151,7 @@ export class EvalExecutionComponent extends Container {
 	 * without the `tool` kind get a `card` with the cell as `code` over the output.
 	 */
 	override describe(cx?: DescribeContext): NativeNode {
+		this.#flushPendingOutput();
 		const dataFirst = cx?.supports("tool") === true;
 		const key = [dataFirst, this.#outputVersion, this.#status, this.#expanded];
 		return this.#native.get(key, () => {
@@ -163,9 +187,13 @@ export class EvalExecutionComponent extends Container {
 
 	appendOutput(chunk: string): void {
 		// Chunk is pre-sanitized by OutputSink.push() — no need to sanitize again.
-		this.#outputPane.append(chunk);
+		// Per-chunk work stays O(1): the pane ingests the batch in render().
+		if (!chunk) return;
+		this.#pendingOutput.push(chunk);
+		this.#pendingOutputChars += chunk.length;
+		if (this.#pendingOutputChars > MAX_PENDING_OUTPUT_CHARS) this.#flushPendingOutput();
 		this.#outputVersion++;
-		this.#updateDisplay();
+		this.#displayDirty = true;
 	}
 
 	setComplete(
@@ -178,6 +206,11 @@ export class EvalExecutionComponent extends Container {
 		this.#endedAt ??= performance.now();
 		this.#truncation = options?.truncation;
 		this.#artifactError = options?.artifactError;
+		// Lift the streaming cap before ingesting the backlog: a transcript
+		// rebuild appends the whole settled output and completes without
+		// `output`, so it must keep every row.
+		this.#outputPane.configure({ maxStoredLines: undefined });
+		this.#flushPendingOutput();
 		this.#outputPane.finish();
 		if (options?.output !== undefined) {
 			this.#setOutput(options.output);
@@ -185,18 +218,35 @@ export class EvalExecutionComponent extends Container {
 		this.#outputVersion++;
 
 		this.#loader.stop();
+		this.#displayDirty = false;
 		this.#updateDisplay();
 	}
 
+	override render(width: number): readonly string[] {
+		if (this.#displayDirty) {
+			this.#displayDirty = false;
+			this.#updateDisplay();
+		}
+		return super.render(width);
+	}
+
+	#flushPendingOutput(): void {
+		if (this.#pendingOutput.length === 0) return;
+		const batch = this.#pendingOutput.join("");
+		this.#pendingOutput = [];
+		this.#pendingOutputChars = 0;
+		this.#outputPane.append(batch);
+	}
+
 	#updateDisplay(): void {
+		this.#flushPendingOutput();
 		// Only the collapsed preview hides lines; when expanded the footer must
 		// not keep advertising hidden lines / ctrl+o.
 		const hiddenLineCount = this.#expanded ? 0 : Math.max(0, this.#outputPane.lineCount - PREVIEW_LINES);
 
 		this.#contentContainer.clear();
 
-		const colorKey: ExecutionColorKey = this.#excludeFromContext ? "dim" : "pythonMode";
-		this.#contentContainer.addChild(this.#formatHeader(colorKey));
+		this.#contentContainer.addChild(this.#headerText);
 
 		if (this.#outputPane.lineCount > 0) this.#contentContainer.addChild(this.#outputPane);
 
@@ -220,6 +270,7 @@ export class EvalExecutionComponent extends Container {
 	}
 
 	getOutput(): string {
+		this.#flushPendingOutput();
 		return this.#outputPane.getText();
 	}
 

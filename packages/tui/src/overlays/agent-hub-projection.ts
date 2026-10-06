@@ -1,6 +1,7 @@
 import type { AgentMetricsSummary, AgentRecordLike, AgentStatus } from "./agent-hub-types";
 import { MAIN_AGENT_ID } from "./agent-hub-types";
 import type { ObservableSession } from "./session-observer-registry";
+import { finiteOrZero } from "@oh-my-pi/pi-utils/type-guards";
 
 export type AgentMetrics = AgentMetricsSummary;
 
@@ -19,8 +20,43 @@ interface AgentTreeProjection<TRecord extends AgentRecordLike> {
 
 export const STATUS_ORDER: Record<AgentStatus, number> = { running: 0, idle: 1, parked: 2, aborted: 3 };
 
-function finiteMetric(value: number | undefined): number {
-	return typeof value === "number" && Number.isFinite(value) ? value : 0;
+/**
+ * Legacy progress snapshots may omit counters; non-finite or missing counters count as zero.
+ * @deprecated Duplicate helper; use `finiteOrZero` from `@oh-my-pi/pi-utils`. Will be removed in the next major.
+ */
+export const finiteMetric: (value: number | undefined) => number = finiteOrZero;
+
+/** Message list a fallback metrics read was taken from; unchanged list ⇒ unchanged metrics. */
+interface FallbackReadStamp {
+	messages: readonly unknown[];
+	length: number;
+	last: unknown;
+}
+
+/** Stamp of each cached fallback read, keyed by the cache entry so it cannot outlive that read. */
+const fallbackReadStamps = new WeakMap<object, FallbackReadStamp>();
+
+function fallbackReadStamp(session: NonNullable<AgentRecordLike["session"]>): FallbackReadStamp | undefined {
+	try {
+		const messages = session.agent?.state?.messages;
+		if (!Array.isArray(messages)) return undefined;
+		return { messages, length: messages.length, last: messages[messages.length - 1] };
+	} catch {
+		return undefined;
+	}
+}
+
+/** Whether a cached fallback read still matches the session's message list (append, compaction, rewrite). */
+function fallbackReadCurrent(entry: object, session: NonNullable<AgentRecordLike["session"]>): boolean {
+	const stamp = fallbackReadStamps.get(entry);
+	if (!stamp) return false;
+	const current = fallbackReadStamp(session);
+	return (
+		current !== undefined &&
+		current.messages === stamp.messages &&
+		current.length === stamp.length &&
+		current.last === stamp.last
+	);
 }
 
 /** Exact observer usage for one roster entry. */
@@ -163,20 +199,26 @@ export function aggregateMetrics<TRecord extends AgentRecordLike>(args: {
 		const fallbackSession = args.fallbackStatsSession(ref, observed);
 		if (fallbackSession) {
 			hasFallbackLiveSessions = true;
-			if (args.refreshFallback || !args.sessionMetrics.has(fallbackSession)) {
-				args.sessionMetrics.set(fallbackSession, { metrics: readSessionMetrics(fallbackSession) });
+			const cached = args.sessionMetrics.get(fallbackSession);
+			// A refresh rescans every assistant message (plus the host's stats);
+			// skip it while the message list is provably the one already read.
+			if (!cached || (args.refreshFallback && !fallbackReadCurrent(cached, fallbackSession))) {
+				const stamp = fallbackReadStamp(fallbackSession);
+				const entry = { metrics: readSessionMetrics(fallbackSession) };
+				if (stamp) fallbackReadStamps.set(entry, stamp);
+				args.sessionMetrics.set(fallbackSession, entry);
 			}
 		}
 		const metrics = args.metricsFor(ref, observed);
 		if (!metrics || (fallbackSession && countedFallbackSessions.has(fallbackSession))) continue;
 		if (fallbackSession) countedFallbackSessions.add(fallbackSession);
 		total.reportedAgents++;
-		total.tokens += finiteMetric(metrics.tokens);
-		total.requests += finiteMetric(metrics.requests);
-		total.tools += finiteMetric(metrics.tools);
-		total.cost += finiteMetric(metrics.cost);
+		total.tokens += finiteOrZero(metrics.tokens);
+		total.requests += finiteOrZero(metrics.requests);
+		total.tools += finiteOrZero(metrics.tools);
+		total.cost += finiteOrZero(metrics.cost);
 		if (metrics.durationKind === "active") {
-			total.durationMs += finiteMetric(metrics.durationMs);
+			total.durationMs += finiteOrZero(metrics.durationMs);
 			total.activeDurationAgents++;
 		}
 	}

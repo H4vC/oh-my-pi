@@ -635,6 +635,22 @@ interface PreparedLines {
 	rows: PreparedLine[];
 }
 
+/**
+ * Last frame's composited rows for one overlay stack entry. A row is reused
+ * while its base row and overlay line are unchanged under the same geometry,
+ * width configuration and image protocol (which decides image-row handling).
+ */
+interface OverlayCompositeMemo {
+	col: number;
+	width: number;
+	termWidth: number;
+	widthEpoch: number;
+	imageProtocol: ImageProtocol | null;
+	base: string[];
+	overlay: string[];
+	composite: string[];
+}
+
 interface LineClassification {
 	asciiWidth: number | undefined;
 	isImage: boolean;
@@ -862,6 +878,8 @@ export class TUI extends Container {
 	// with the spare each pass, which bounds the memo to one frame of rows.
 	#preparedLineMemo = new Map<string, PreparedLine>();
 	#preparedLineMemoSpare = new Map<string, PreparedLine>();
+	// Per overlay stack entry; dies with the entry once it leaves the stack.
+	#overlayCompositeMemo = new WeakMap<object, OverlayCompositeMemo>();
 	#previousFrameLength = 0;
 	#previousWidth = 0;
 	#previousHeight = 0;
@@ -2989,6 +3007,8 @@ export class TUI extends Container {
 
 	#compositeOverlaysIntoWindow(window: string[], termWidth: number, termHeight: number): string[] {
 		const result = [...window];
+		const widthEpoch = getWidthConfigEpoch();
+		const imageProtocol = TERMINAL.imageProtocol;
 		for (const entry of this.overlayStack) {
 			if (!this.#isOverlayVisible(entry)) continue;
 			const { component, options } = entry;
@@ -3004,12 +3024,39 @@ export class TUI extends Container {
 						: overlayLines.slice(0, maxHeight);
 			}
 			const { row, col } = this.#resolveOverlayLayout(options, overlayLines.length, termWidth, termHeight);
+			let memo = this.#overlayCompositeMemo.get(entry);
+			if (
+				memo === undefined ||
+				memo.col !== col ||
+				memo.width !== width ||
+				memo.termWidth !== termWidth ||
+				memo.widthEpoch !== widthEpoch ||
+				memo.imageProtocol !== imageProtocol
+			) {
+				memo = { col, width, termWidth, widthEpoch, imageProtocol, base: [], overlay: [], composite: [] };
+				this.#overlayCompositeMemo.set(entry, memo);
+			}
+			const { base, overlay, composite } = memo;
 			for (let i = 0; i < overlayLines.length; i++) {
 				const idx = row + i;
 				if (idx < 0 || idx >= result.length) continue;
-				const truncatedOverlayLine =
-					visibleWidth(overlayLines[i]) > width ? sliceByColumn(overlayLines[i], 0, width, true) : overlayLines[i];
-				result[idx] = this.#compositeLineAt(result[idx], truncatedOverlayLine, col, width, termWidth);
+				const baseLine = result[idx];
+				const overlayLine = overlayLines[i];
+				if (base[i] === baseLine && overlay[i] === overlayLine) {
+					result[idx] = composite[i];
+					continue;
+				}
+				// #compositeLineAt slices the overlay line strictly to `width`.
+				const line = this.#compositeLineAt(baseLine, overlayLine, col, width, termWidth);
+				base[i] = baseLine;
+				overlay[i] = overlayLine;
+				composite[i] = line;
+				result[idx] = line;
+			}
+			if (base.length > overlayLines.length) {
+				base.length = overlayLines.length;
+				overlay.length = overlayLines.length;
+				composite.length = overlayLines.length;
 			}
 		}
 		return result;
@@ -3023,6 +3070,23 @@ export class TUI extends Container {
 		overlayWidth: number,
 		totalWidth: number,
 	): string {
+		if (baseLine === "") {
+			// Blank base rows (fullscreen overlays, alt frames): nothing to
+			// split, and the composite's width follows from the overlay slice.
+			const overlay = sliceWithWidth(overlayLine, 0, overlayWidth, true);
+			const beforeWidth = Math.max(0, startCol);
+			const overlayCells = Math.max(overlayWidth, overlay.width);
+			const afterPad = Math.max(0, totalWidth - beforeWidth - overlayCells);
+			const result =
+				" ".repeat(beforeWidth) +
+				SEGMENT_RESET +
+				overlay.text +
+				" ".repeat(Math.max(0, overlayWidth - overlay.width)) +
+				SEGMENT_RESET +
+				" ".repeat(afterPad);
+			if (beforeWidth + overlayCells + afterPad <= totalWidth) return result;
+			return visibleWidth(result) <= totalWidth ? result : sliceByColumn(result, 0, totalWidth, true);
+		}
 		if (TERMINAL.isImageLine(baseLine)) {
 			// Full-width overlays such as /switch are opaque: replace the
 			// Unicode placeholder cells so the image cannot cover the modal.

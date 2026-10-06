@@ -25,6 +25,8 @@ export function themePickerOptions(title: string, current: string): SelectPicker
 /**
  * Component that renders a theme selector.
  * Themes must be pre-loaded and passed to the constructor.
+ *
+ * @deprecated Unused; the settings selector theme submenu replaces it; use {@link themePickerOptions} with a select picker. Will be removed in the next major.
  */
 export class ThemeSelectorComponent extends OverlayPanel {
 	#selectList: SelectList;

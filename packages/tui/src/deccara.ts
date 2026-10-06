@@ -16,13 +16,22 @@
  * drop, and returns the rectangles to emit in their place. It never mutates
  * component output and never decides which rows are scrollback-bound — those
  * concerns belong to the caller in `tui.ts`.
+ *
+ * Deprecated: the renderer no longer emits DECCARA fills; every export below
+ * is unused and will be removed in the next major.
  */
 import { SEGMENT_RESET } from "./tui";
 import { visibleWidth } from "./utils";
 
-/** DECSACE — select the rectangle change extent so DECCARA fills a rectangle. */
+/**
+ * DECSACE — select the rectangle change extent so DECCARA fills a rectangle.
+ * @deprecated DECCARA fills are unused since the renderer rewrite; no replacement. Will be removed in the next major.
+ */
 export const DECSACE_RECT = "\x1b[2*x";
-/** DECSACE — restore the default (stream) change extent. */
+/**
+ * DECSACE — restore the default (stream) change extent.
+ * @deprecated DECCARA fills are unused since the renderer rewrite; no replacement. Will be removed in the next major.
+ */
 export const DECSACE_DEFAULT = "\x1b[*x";
 
 /**
@@ -37,6 +46,7 @@ const DECSACE_WRAPPER_BYTES = DECSACE_RECT.length + DECSACE_DEFAULT.length;
  * Encode a single DECCARA rectangle. `top`/`bottom` are 1-based inclusive screen
  * rows, `left`/`right` 1-based inclusive columns, `sgr` the raw SGR parameter
  * list to apply (e.g. `48;2;10;20;30`, `48;5;4`, `41`).
+ * @deprecated DECCARA fills are unused since the renderer rewrite; no replacement. Will be removed in the next major.
  */
 export function encodeDeccara(top: number, left: number, bottom: number, right: number, sgr: string): string {
 	return `\x1b[${top};${left};${bottom};${right};${sgr}$r`;
@@ -111,7 +121,10 @@ function nextBackground(bg: BgState, params: string): BgState | typeof BAIL {
 	return result;
 }
 
-/** Where to cut a fillable line and the background to paint over the remainder. */
+/**
+ * Where to cut a fillable line and the background to paint over the remainder.
+ * @deprecated DECCARA fills are unused since the renderer rewrite; no replacement. Will be removed in the next major.
+ */
 export interface BgFillAnalysis {
 	/** Byte index where droppable trailing background padding begins (0 = whole line). */
 	cut: number;
@@ -131,6 +144,7 @@ export interface BgFillAnalysis {
  * Conservative by construction: any OSC sequence (hyperlinks/images), any
  * non-SGR CSI, a partial row, an inconsistent or default trailing background, or
  * a malformed escape all yield `null` so the caller keeps the exact original.
+ * @deprecated DECCARA fills are unused since the renderer rewrite; no replacement. Will be removed in the next major.
  */
 export function analyzeBgFillLine(line: string, width: number): BgFillAnalysis | null {
 	if (width <= 0 || line.length === 0) return null;
@@ -217,7 +231,10 @@ interface FillCandidate {
 	origLen: number;
 }
 
-/** Per-frame plan: the (possibly shortened) row strings and the DECCARA batch. */
+/**
+ * Per-frame plan: the (possibly shortened) row strings and the DECCARA batch.
+ * @deprecated DECCARA fills are unused since the renderer rewrite; no replacement. Will be removed in the next major.
+ */
 export interface DeccaraPlan {
 	/** Row strings to write, parallel to the input. Optimized rows are shortened. */
 	texts: string[];
@@ -234,6 +251,7 @@ export interface DeccaraPlan {
  * rectangle), and vertically adjacent rows with an identical left/right/bg span
  * coalesce into one rectangle. Rectangles are emitted only when they save more
  * bytes than they cost, so the result never exceeds the original byte count.
+ * @deprecated DECCARA fills are unused since the renderer rewrite; no replacement. Will be removed in the next major.
  */
 export function planDeccaraFills(lines: string[], width: number, firstScreenRow = 0): DeccaraPlan {
 	const n = lines.length;

@@ -49,7 +49,14 @@ export type AgentTranscriptEntry = SessionMessageEntryLike | { type: "model_chan
 
 /** Local filesystem and session parsing capabilities supplied by the host. */
 export interface AgentTranscriptSource {
-	fs: Pick<typeof fs, "openSync" | "closeSync" | "readSync" | "readFileSync" | "statSync">;
+	/**
+	 * Sync primitives drive the first paint and the incremental tail. When the
+	 * host also supplies `promises.readFile` (e.g. passes `node:fs` itself), full
+	 * reloads after rotation/rewrite read the file off the UI thread.
+	 */
+	fs: Pick<typeof fs, "openSync" | "closeSync" | "readSync" | "readFileSync" | "statSync"> & {
+		promises?: Pick<typeof fs.promises, "readFile">;
+	};
 	parseEntries(text: string): AgentTranscriptEntry[];
 }
 
@@ -183,6 +190,8 @@ export class AgentTranscriptViewer implements Component {
 	#model: string | undefined;
 	#pollTimer: NodeJS.Timeout | undefined;
 	#disposed = false;
+	/** Async full reload in flight; polls are skipped until it lands. */
+	#localLoadInFlight = false;
 	#initialEntryId: string | undefined;
 	/** Last described node and the visible inputs it was built from. */
 	#nativeCache: { signature: string; node: NativeNode } | undefined;
@@ -213,8 +222,10 @@ export class AgentTranscriptViewer implements Component {
 			this.#editor.setMaxHeight(4);
 			this.#editor.onSubmit = text => this.#submit(text);
 		}
-		this.#refresh();
-		this.#pollTimer = setInterval(() => this.#refresh(), POLL_MS);
+		// First paint loads synchronously so the initial entry can be revealed
+		// immediately; later full reloads from the poll may go async.
+		this.#refresh(false);
+		this.#pollTimer = setInterval(() => this.#refresh(true), POLL_MS);
 		this.#pollTimer.unref?.();
 	}
 
@@ -243,12 +254,13 @@ export class AgentTranscriptViewer implements Component {
 	// ========================================================================
 
 	/** Refresh the transcript from a local file or remote host. */
-	#refresh(): void {
+	#refresh(allowAsync: boolean): void {
 		if (this.#disposed) return;
 		if (this.#deps.remote) {
 			this.#fetchRemote();
 			return;
 		}
+		if (this.#localLoadInFlight) return;
 		const sessionFile = this.#deps.registry.get(this.#deps.agentId)?.sessionFile;
 		if (!sessionFile) {
 			this.#clearLocal("none");
@@ -262,14 +274,24 @@ export class AgentTranscriptViewer implements Component {
 			return;
 		}
 		const state = this.#localState;
-		if (state && this.#canAppendLocal(sessionFile, stat, state)) {
-			if (stat.size === state.size && stat.mtimeMs === state.mtimeMs) return;
-			if (stat.size > state.size) {
-				this.#appendLocal(sessionFile, stat, state);
+		if (state) {
+			// Idle fast path: an unchanged identity/size/mtime costs one stat, no
+			// sentinel reads. Sentinels are only verified once the file changed.
+			if (
+				state.path === sessionFile &&
+				state.dev === stat.dev &&
+				state.ino === stat.ino &&
+				stat.size === state.size &&
+				stat.mtimeMs === state.mtimeMs
+			) {
+				return;
+			}
+			if (stat.size > state.size && this.#canAppendLocal(sessionFile, stat, state)) {
+				this.#appendLocal(sessionFile, stat, state, allowAsync);
 				return;
 			}
 		}
-		this.#loadLocalFull(sessionFile, stat);
+		this.#loadLocalFull(sessionFile, stat, allowAsync);
 	}
 
 	#clearLocal(reason: string): void {
@@ -303,7 +325,23 @@ export class AgentTranscriptViewer implements Component {
 		return true;
 	}
 
-	#loadLocalFull(sessionFile: string, stat: fs.Stats): void {
+	#loadLocalFull(sessionFile: string, stat: fs.Stats, allowAsync: boolean): void {
+		const promises = allowAsync ? this.#deps.transcript.fs.promises : undefined;
+		if (promises) {
+			this.#localLoadInFlight = true;
+			void promises
+				.readFile(sessionFile)
+				.then(data => {
+					this.#localLoadInFlight = false;
+					if (!this.#disposed) this.#applyLocalFull(sessionFile, stat, data);
+				})
+				.catch((err: unknown) => {
+					// Leave #localState unchanged so a transient read error retries next poll.
+					this.#localLoadInFlight = false;
+					logger.debug("transcript viewer: read failed", { err: String(err) });
+				});
+			return;
+		}
 		let data: Buffer;
 		try {
 			data = this.#deps.transcript.fs.readFileSync(sessionFile);
@@ -312,6 +350,10 @@ export class AgentTranscriptViewer implements Component {
 			logger.debug("transcript viewer: read failed", { err: String(err) });
 			return;
 		}
+		this.#applyLocalFull(sessionFile, stat, data);
+	}
+
+	#applyLocalFull(sessionFile: string, stat: fs.Stats, data: Buffer): void {
 		// The file may have grown between the earlier `statSync` and this read.
 		// Anchor the tail cursor to what we actually consumed so the next poll's
 		// `#appendLocal` never re-renders bytes already in the rebuilt transcript;
@@ -345,7 +387,7 @@ export class AgentTranscriptViewer implements Component {
 		this.#rebuild(this.#extractMessages(this.#deps.transcript.parseEntries(complete)));
 	}
 
-	#appendLocal(sessionFile: string, stat: fs.Stats, state: LocalTranscriptState): void {
+	#appendLocal(sessionFile: string, stat: fs.Stats, state: LocalTranscriptState, allowAsync: boolean): void {
 		let chunk: string;
 		try {
 			chunk = readFileRangeSync(
@@ -356,7 +398,7 @@ export class AgentTranscriptViewer implements Component {
 			).toString("utf-8");
 		} catch (err) {
 			logger.debug("transcript viewer: tail read failed", { err: String(err) });
-			this.#loadLocalFull(sessionFile, stat);
+			this.#loadLocalFull(sessionFile, stat, allowAsync);
 			return;
 		}
 		const combined = state.pending + chunk;
@@ -371,7 +413,7 @@ export class AgentTranscriptViewer implements Component {
 			// File unlinked/rotated mid-poll: fall back to a guarded full reload
 			// instead of letting the open escape the poll timer.
 			logger.debug("transcript viewer: sentinel recompute failed", { err: String(err) });
-			this.#loadLocalFull(sessionFile, stat);
+			this.#loadLocalFull(sessionFile, stat, allowAsync);
 			return;
 		}
 		this.#localState = {

@@ -21,6 +21,7 @@ import { col, node, span } from "../native/describe";
 
 /**
  * Footer component that shows pwd, token stats, and context usage
+ * @deprecated Legacy footer with no production mount; use `StatusLineComponent` from `@oh-my-pi/pi-tui/status-line`. Will be removed in the next major.
  */
 export class FooterComponent implements Component {
 	#cachedBranch: string | null | undefined = undefined;

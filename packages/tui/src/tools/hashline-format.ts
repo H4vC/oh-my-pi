@@ -18,7 +18,10 @@ export const HL_FILE_HASH_LENGTH = 4;
 export const HL_MOVE_KEYWORD = "MV";
 /** Keyword identifying a file removal operation. */
 export const HL_REM_KEYWORD = "REM";
-/** Separator between a line number and its body. */
+/**
+ * Separator between a line number and its body.
+ * @deprecated Unused; `formatNumberedLine` owns the separator. Will be removed in the next major.
+ */
 export const HL_LINE_BODY_SEP = ":";
 
 /** Format a file path and content hash as a hashline header. */
@@ -53,7 +56,10 @@ export function isReadTruncationNotice(line: string): boolean {
 	return hashlineIsReadTruncationNotice(line);
 }
 
-/** Compute the native hashline content fingerprint. */
+/**
+ * Compute the native hashline content fingerprint.
+ * @deprecated Forwarder; use `hashlineFileHash` from `@oh-my-pi/pi-natives`. Will be removed in the next major.
+ */
 export function computeFileHash(text: string): string {
 	return hashlineFileHash(text);
 }

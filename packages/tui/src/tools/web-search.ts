@@ -235,7 +235,10 @@ export function renderSearchResult(
 	});
 }
 
-/** Render web search call (query preview) */
+/**
+ * Render web search call (query preview)
+ * @deprecated Use `webSearchToolRenderer.renderCall`. Will become module-private in the next major.
+ */
 export function renderSearchCall(
 	args: { query?: string; [key: string]: unknown },
 	_options: RenderResultOptions,

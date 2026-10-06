@@ -24,13 +24,13 @@ function visualizeIndent(text: string): string {
 	const leftPadding = Math.floor(tabWidth / 2);
 	const rightPadding = Math.max(0, tabWidth - leftPadding - 1);
 	const tabMarker = `${DIM}${" ".repeat(leftPadding)}→${" ".repeat(rightPadding)}${DIM_OFF}`;
+	const spaceMarker = `${DIM}·${DIM_OFF}`;
 	let visible = "";
-	for (const ch of indent) {
-		if (ch === "\t") {
-			visible += tabMarker;
-		} else {
-			visible += `${DIM}·${DIM_OFF}`;
-		}
+	let runStart = 0;
+	for (let i = 1; i <= indent.length; i++) {
+		if (i < indent.length && indent[i] === indent[runStart]) continue;
+		visible += (indent[runStart] === "\t" ? tabMarker : spaceMarker).repeat(i - runStart);
+		runStart = i;
 	}
 	return `${visible}${replaceTabs(rest)}`;
 }
@@ -171,6 +171,32 @@ export interface RenderDiffOptions {
  */
 export function renderDiff(diffText: string, options: RenderDiffOptions = {}): string {
 	const renderTheme = options.theme ?? activeTheme;
+	const filePath = options.filePath ?? "";
+	let byKey = renderDiffCache.get(renderTheme);
+	if (byKey === undefined) {
+		byKey = new Map();
+		renderDiffCache.set(renderTheme, byKey);
+	}
+	const key = `${filePath}\0${diffText}`;
+	const cached = byKey.get(key);
+	if (cached !== undefined) {
+		// Refresh LRU position.
+		byKey.delete(key);
+		byKey.set(key, cached);
+		return cached;
+	}
+	const rendered = renderDiffUncached(diffText, options.filePath, renderTheme);
+	byKey.set(key, rendered);
+	if (byKey.size > RENDER_DIFF_CACHE_LIMIT) byKey.delete(byKey.keys().next().value!);
+	return rendered;
+}
+
+/** Bounded per-theme LRU of rendered diffs: streaming previews re-render identical diff text every frame. */
+const RENDER_DIFF_CACHE_LIMIT = 32;
+const renderDiffCache = new WeakMap<Theme, Map<string, string>>();
+
+function renderDiffUncached(diffText: string, filePath: string | undefined, renderTheme: Theme): string {
+	const options = { filePath };
 	const lines = sanitizeText(diffText).split("\n");
 	const result: string[] = [];
 	const parsedLines = lines.map(parseDiffLine);

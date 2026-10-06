@@ -11,23 +11,6 @@ export interface VisualTruncateResult {
 	skippedCount: number;
 }
 
-const textCache = new Map<string, Text>();
-const TRUNCATE_CACHE_MAX = 8;
-
-function cacheKey(text: string, width: number, paddingX: number): string {
-	return `${paddingX} ${width} ${text.length} ${Bun.hash(text).toString(36)}`;
-}
-
-function getCachedText(cacheKeyValue: string, paddingX: number): Text {
-	let text = textCache.get(cacheKeyValue);
-	if (!text) {
-		text = new Text("", paddingX, 0);
-		if (textCache.size >= TRUNCATE_CACHE_MAX) textCache.clear();
-		textCache.set(cacheKeyValue, text);
-	}
-	return text;
-}
-
 /**
  * Truncate text to a maximum number of visual lines (from the end).
  * This accounts for line wrapping based on terminal width.
@@ -50,13 +33,7 @@ export function truncateToVisualLines(
 		return { visualLines: [], skippedCount: 0 };
 	}
 
-	// Keyed by (text, width, padding): Text caches internally, so a shared
-	// single slot thrashes with 2+ live cards at the same padding.
-	const tempText = getCachedText(cacheKey(text, width, paddingX), paddingX);
-	if (tempText.getText() !== text) {
-		tempText.setText(text);
-	}
-	const allVisualLines = tempText.render(width);
+	const allVisualLines = new Text(text, paddingX, 0).render(width);
 
 	if (allVisualLines.length <= maxVisualLines) {
 		return { visualLines: allVisualLines, skippedCount: 0 };

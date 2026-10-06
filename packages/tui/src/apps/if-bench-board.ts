@@ -13,6 +13,7 @@ import { renderTableRow, type TableColumn } from "../components/table";
 import { formatDuration, formatNumber } from "@oh-my-pi/pi-utils";
 import { fgOrPlain, theme } from "../theme/theme";
 import { createLiveBoard, type LiveBoardOutput } from "../chrome/live-board";
+import { formatBoardCost } from "./board-format";
 
 /** Failure category displayed in benchmark verdicts. */
 export type IfBenchFailure = "result" | "cat" | "result+cat" | "format" | "provider";
@@ -239,7 +240,7 @@ function formatVerdict(report: IfBenchModelReport, meta: IfBenchBoardMeta): stri
 		`${formatDuration(Math.round(meanTurnMs(report)))}/turn`,
 	];
 	if (report.outputTokens > 0) stats.push(`${formatNumber(report.outputTokens)} tok`);
-	if (report.cost > 0) stats.push(formatCost(report.cost));
+	if (report.cost > 0) stats.push(formatBoardCost(report.cost));
 	const body = `${theme ? theme.bold(report.label) : report.label} ${stats.join(fgOrPlain("dim", " · "))}`;
 	if (!report.failure) return `${fgOrPlain("success", "✓")} ${body}`;
 	return `${fgOrPlain("error", "✗")} ${body} ${fgOrPlain("dim", "·")} ${fgOrPlain("error", `broke on turn ${report.failure.turn}: ${FAILURE_TEXT[report.failure.kind]}`)}`;
@@ -262,10 +263,6 @@ function failureDetail(report: IfBenchModelReport): string[] {
 function meanTurnMs(report: IfBenchModelReport): number {
 	if (report.turns.length === 0) return 0;
 	return report.durationMs / report.turns.length;
-}
-
-function formatCost(cost: number): string {
-	return `$${cost >= 0.095 ? cost.toFixed(2) : cost.toFixed(3)}`;
 }
 
 interface ScoreboardColumn {
@@ -297,7 +294,7 @@ export function formatIfBenchScoreboard(summary: IfBenchSummary): string {
 			value: report => (report.outputTokens > 0 ? formatNumber(report.outputTokens) : "-"),
 			align: "right",
 		},
-		{ header: "cost", value: report => (report.cost > 0 ? formatCost(report.cost) : "-"), align: "right" },
+		{ header: "cost", value: report => (report.cost > 0 ? formatBoardCost(report.cost) : "-"), align: "right" },
 	];
 	const cells = ranked.map(report => columns.map(column => column.value(report)));
 	const widths = columns.map((column, index) =>

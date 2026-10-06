@@ -398,6 +398,7 @@ export async function setColorBlindMode(enabled: boolean): Promise<void> {
 
 /**
  * Get the current color blind mode setting.
+ * @deprecated No in-repo callers; read the `colorBlindMode` setting instead. Will be removed in the next major.
  */
 export function getColorBlindMode(): boolean {
 	return currentColorBlindMode;

@@ -740,6 +740,8 @@ const BRACE_TAIL_TRAILING_RE = /^[;,)\]}]*$/;
  * line ends with `{` / `(` / `[` and the tail line is the matching closer
  * (optionally followed by terminating punctuation like `;`, `,`, or further
  * closers — e.g. `};`, `})`, `]);`).
+ *
+ * @deprecated Internal helper of the read renderer; will become module-private in the next major.
  */
 export function canMergeBracePair(headLine: string, tailLine: string): boolean {
 	const head = headLine.trimEnd();
@@ -763,7 +765,10 @@ export function formatSingleLine(
 	return text;
 }
 
-/** Format the boundary lines around an elided brace-pair body. */
+/**
+ * Format the boundary lines around an elided brace-pair body.
+ * @deprecated Internal helper of the read renderer; will become module-private in the next major.
+ */
 export function formatMergedBraceLine(
 	startLine: number,
 	endLine: number,

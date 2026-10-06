@@ -2,6 +2,7 @@ import {
 	type Component,
 	Editor,
 	Ellipsis,
+	getWidthConfigEpoch,
 	matchesKey,
 	padding,
 	replaceTabs,
@@ -11,6 +12,7 @@ import {
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "../index";
+import { sanitizeStatusText } from "../chrome/shared";
 import { appKey, editorKey } from "../chrome/keybinding-hints";
 import { formatKeyHint, formatKeyHints, type KeybindingsManager } from "../app-keybindings";
 import type { Keybinding } from "../keybindings";
@@ -102,6 +104,34 @@ interface RenderedBody {
 	renderedRowBySource: number[];
 }
 
+/** Body rows without the cursor highlight, rebuilt only when their inputs change. */
+interface BaseBody {
+	width: number;
+	widthEpoch: number;
+	rev: number;
+	fileIndex: number;
+	/** Diff mode: static body the rows were truncated from (identity-compared; reset by `invalidate`). */
+	staticBody: RenderedDiffBody | undefined;
+	/** Text mode: wrapped visual rows per source line. */
+	visualRows: readonly (readonly string[])[] | undefined;
+	body: RenderedBody;
+}
+
+/** Annotation list indices grouped the way the body renders them; rebuilt once per annotation revision. */
+interface AnnotationIndex {
+	rev: number;
+	/** Diff annotations per file index (sidebar and header badges). */
+	countByFile: Map<number, number>;
+	/** File-scope notes per file index. */
+	fileNotes: Map<number, number[]>;
+	/** Line notes per file index, then source index. */
+	lineNotes: Map<number, Map<number, number[]>>;
+	/** Whole-text notes (text mode). */
+	textNotes: number[];
+	/** Line notes per source index (text mode). */
+	textLineNotes: Map<number, number[]>;
+}
+
 type FocusRegion = "files" | "diff" | "actions";
 
 /** Described body rows of the current file (or text), rebuilt when the file or annotations change. */
@@ -121,6 +151,9 @@ const SIDEBAR_MIN_BODY_WIDTH = 40;
 const MAX_ANNOTATION_EDITOR_ROWS = 6;
 const CODE_REVIEW_ACTIONS = [CONTINUE_CODE_REVIEW_ACTION, PASTE_CODE_REVIEW_ACTION] as const;
 const TEXT_REVIEW_ACTIONS = [PASTE_CODE_REVIEW_ACTION] as const;
+/** Oldest undo snapshots are dropped past this depth. */
+const MAX_UNDO_ENTRIES = 100;
+const NO_INDICES: readonly number[] = [];
 
 function isSourceRow(row: ReviewDiffRow): row is ReviewSourceRow {
 	return row.kind === "context" || row.kind === "added" || row.kind === "removed";
@@ -129,11 +162,10 @@ function isSourceRow(row: ReviewDiffRow): row is ReviewSourceRow {
 function displayFileLabel(file: ReviewDiffFile): string {
 	return file.occurrence > 1 ? `${file.path} (${file.occurrence})` : file.path;
 }
-function sanitizeStatusText(text: string): string {
-	return sanitizeText(text)
-		.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
-		.replace(/ +/g, " ")
-		.trim();
+function addToBucket<K>(buckets: Map<K, number[]>, key: K, index: number): void {
+	const bucket = buckets.get(key);
+	if (bucket) bucket.push(index);
+	else buckets.set(key, [index]);
 }
 
 function splitTextLines(text: string): string[] {
@@ -170,6 +202,14 @@ export class AnnotationOverlay implements Component {
 	#textViewportDriven = false;
 	#textRenderedRowBySource: readonly number[] = [];
 	#staticRenderedDiffBodies = new WeakMap<ReviewDiffFile, RenderedDiffBody>();
+	/** Text mode: wrapped visual rows per source line at `width`. */
+	#textWrap: { width: number; widthEpoch: number; rows: string[][] } | undefined;
+	#baseBody: BaseBody | undefined;
+	/** {@link #baseBody} with the cursor row highlighted; reused while neither changes. */
+	#selectedBody: { base: BaseBody; selected: number; body: RenderedBody } | undefined;
+	#annotationIndexCache: AnnotationIndex | undefined;
+	/** Lines last handed to the scroll view; an unchanged body skips the copy and keeps its render cache. */
+	#scrollLines: readonly string[] | undefined;
 	/** Bumped on every annotation change (each one pushes an undo snapshot) and on undo. */
 	#annotationRev = 0;
 	#nativeBody: NativeBody | undefined;
@@ -277,6 +317,9 @@ export class AnnotationOverlay implements Component {
 
 	invalidate(): void {
 		this.#staticRenderedDiffBodies = new WeakMap();
+		this.#textWrap = undefined;
+		this.#baseBody = undefined;
+		this.#selectedBody = undefined;
 	}
 
 	dispose(): void {
@@ -759,6 +802,7 @@ export class AnnotationOverlay implements Component {
 	}
 
 	#pushUndo(): void {
+		if (this.#undoStack.length >= MAX_UNDO_ENTRIES) this.#undoStack.shift();
 		this.#undoStack.push({ annotations: [...this.#annotations], textAnnotations: [...this.#textAnnotations] });
 		this.#annotationRev++;
 	}
@@ -795,94 +839,182 @@ export class AnnotationOverlay implements Component {
 		}
 	}
 
+	#annotationIndex(): AnnotationIndex {
+		const cached = this.#annotationIndexCache;
+		if (cached?.rev === this.#annotationRev) return cached;
+		const index: AnnotationIndex = {
+			rev: this.#annotationRev,
+			countByFile: new Map(),
+			fileNotes: new Map(),
+			lineNotes: new Map(),
+			textNotes: [],
+			textLineNotes: new Map(),
+		};
+		for (let i = 0; i < this.#annotations.length; i++) {
+			const entry = this.#annotations[i]!;
+			index.countByFile.set(entry.fileIndex, (index.countByFile.get(entry.fileIndex) ?? 0) + 1);
+			if (entry.annotation.scope === "file") {
+				addToBucket(index.fileNotes, entry.fileIndex, i);
+			} else if (entry.annotation.scope === "line") {
+				let bySource = index.lineNotes.get(entry.fileIndex);
+				if (!bySource) {
+					bySource = new Map();
+					index.lineNotes.set(entry.fileIndex, bySource);
+				}
+				addToBucket(bySource, entry.sourceIndex, i);
+			}
+		}
+		for (let i = 0; i < this.#textAnnotations.length; i++) {
+			const entry = this.#textAnnotations[i]!;
+			if (entry.annotation.scope === "text") index.textNotes.push(i);
+			else if (entry.annotation.scope === "line") addToBucket(index.textLineNotes, entry.sourceIndex, i);
+		}
+		this.#annotationIndexCache = index;
+		return index;
+	}
+
 	#annotationCount(fileIndex: number): number {
-		let count = 0;
-		for (const entry of this.#annotations) if (entry.fileIndex === fileIndex) count++;
-		return count;
+		return this.#annotationIndex().countByFile.get(fileIndex) ?? 0;
 	}
 
+	/** Current body; the unhighlighted rows are cached and only the cursor row is re-styled per move. */
 	#renderBody(contentWidth: number): RenderedBody {
-		if (this.#textSource) return this.#renderTextBody(contentWidth);
-		const file = this.#currentFile();
-		if (!file)
-			return {
-				lines: [this.#theme.fg("dim", "No reviewable files")],
-				renderedRowBySource: [],
-			};
-		const staticBody = this.#getStaticRenderedBody(file);
-		const lines: string[] = [];
-		const renderedRowBySource: number[] = [];
-
-		// File notes describe the whole change, so keep them above headers and
-		// status rows (including binary and rename-only files).
-		for (const entry of this.#annotations) {
-			if (entry.fileIndex === this.#fileIndex && entry.annotation.scope === "file") {
-				this.#appendAnnotationCallout(lines, entry.annotation.note, contentWidth, "file note");
-			}
-		}
-
-		let sourceIndex = 0;
-		for (let staticRow = 0; staticRow < staticBody.lines.length; staticRow++) {
-			const currentSourceIndex =
-				staticBody.renderedRowBySource[sourceIndex] === staticRow ? sourceIndex++ : undefined;
-			let renderedLine = staticBody.lines[staticRow] ?? "";
-			if (currentSourceIndex !== undefined) {
-				// Line notes belong immediately before their source row. This keeps
-				// the selected row and all notes in a stable, readable order.
-				for (const entry of this.#annotations) {
-					if (
-						entry.fileIndex === this.#fileIndex &&
-						entry.sourceIndex === currentSourceIndex &&
-						entry.annotation.scope === "line"
-					) {
-						this.#appendAnnotationCallout(lines, entry.annotation.note, contentWidth);
-					}
-				}
-				renderedRowBySource[currentSourceIndex] = lines.length;
-				if (this.#focus === "diff" && currentSourceIndex === this.#sourceIndex) {
-					renderedLine = this.#theme.bg(
-						"selectedBg",
-						fit(staticBody.selectedSourceLines[currentSourceIndex] ?? "", contentWidth),
-					);
-				}
-			}
-			lines.push(truncateToWidth(renderedLine, contentWidth));
-		}
-		return { lines, renderedRowBySource };
+		const base = this.#textSource ? this.#textBaseBody(contentWidth) : this.#diffBaseBody(contentWidth);
+		const selected = this.#focus === "diff" ? this.#sourceIndex : -1;
+		const memo = this.#selectedBody;
+		if (memo?.base === base && memo.selected === selected) return memo.body;
+		const body =
+			selected < 0
+				? base.body
+				: this.#textSource
+					? this.#selectTextRow(base, selected, contentWidth)
+					: this.#selectDiffRow(base, selected, contentWidth);
+		this.#selectedBody = { base, selected, body };
+		return body;
 	}
 
-	#renderTextBody(contentWidth: number): RenderedBody {
+	#diffBaseBody(contentWidth: number): BaseBody {
+		const file = this.#currentFile();
+		const staticBody = file ? this.#getStaticRenderedBody(file) : undefined;
+		const widthEpoch = getWidthConfigEpoch();
+		const cached = this.#baseBody;
+		if (
+			cached !== undefined &&
+			cached.staticBody === staticBody &&
+			cached.fileIndex === this.#fileIndex &&
+			cached.width === contentWidth &&
+			cached.widthEpoch === widthEpoch &&
+			cached.rev === this.#annotationRev
+		) {
+			return cached;
+		}
 		const lines: string[] = [];
 		const renderedRowBySource: number[] = [];
-		const textWidth = Math.max(1, contentWidth - SOURCE_SELECTION_GUTTER_WIDTH);
-
-		for (const entry of this.#textAnnotations) {
-			if (entry.annotation.scope === "text") {
-				this.#appendAnnotationCallout(lines, entry.annotation.note, contentWidth, "text note");
+		if (!staticBody) {
+			lines.push(this.#theme.fg("dim", "No reviewable files"));
+		} else {
+			const index = this.#annotationIndex();
+			// File notes describe the whole change, so keep them above headers and
+			// status rows (including binary and rename-only files).
+			for (const i of index.fileNotes.get(this.#fileIndex) ?? NO_INDICES) {
+				this.#appendAnnotationCallout(lines, this.#annotations[i]!.annotation.note, contentWidth, "file note");
+			}
+			const lineNotes = index.lineNotes.get(this.#fileIndex);
+			let sourceIndex = 0;
+			for (let staticRow = 0; staticRow < staticBody.lines.length; staticRow++) {
+				if (staticBody.renderedRowBySource[sourceIndex] === staticRow) {
+					// Line notes belong immediately before their source row. This keeps
+					// the selected row and all notes in a stable, readable order.
+					for (const i of lineNotes?.get(sourceIndex) ?? NO_INDICES) {
+						this.#appendAnnotationCallout(lines, this.#annotations[i]!.annotation.note, contentWidth);
+					}
+					renderedRowBySource[sourceIndex] = lines.length;
+					sourceIndex++;
+				}
+				lines.push(truncateToWidth(staticBody.lines[staticRow] ?? "", contentWidth));
 			}
 		}
+		this.#baseBody = {
+			width: contentWidth,
+			widthEpoch,
+			rev: this.#annotationRev,
+			fileIndex: this.#fileIndex,
+			staticBody,
+			visualRows: undefined,
+			body: { lines, renderedRowBySource },
+		};
+		return this.#baseBody;
+	}
 
-		for (const [sourceIndex, sourceLine] of this.#textLines.entries()) {
-			for (const entry of this.#textAnnotations) {
-				if (entry.annotation.scope === "line" && entry.sourceIndex === sourceIndex) {
-					this.#appendAnnotationCallout(lines, entry.annotation.note, contentWidth);
-				}
+	#selectDiffRow(base: BaseBody, selected: number, contentWidth: number): RenderedBody {
+		const row = base.body.renderedRowBySource[selected];
+		if (row === undefined || !base.staticBody) return base.body;
+		const lines = base.body.lines.slice();
+		lines[row] = truncateToWidth(
+			this.#theme.bg("selectedBg", fit(base.staticBody.selectedSourceLines[selected] ?? "", contentWidth)),
+			contentWidth,
+		);
+		return { lines, renderedRowBySource: base.body.renderedRowBySource };
+	}
+
+	#textBaseBody(contentWidth: number): BaseBody {
+		const widthEpoch = getWidthConfigEpoch();
+		const cached = this.#baseBody;
+		if (cached?.width === contentWidth && cached.widthEpoch === widthEpoch && cached.rev === this.#annotationRev) {
+			return cached;
+		}
+		const textWidth = Math.max(1, contentWidth - SOURCE_SELECTION_GUTTER_WIDTH);
+		let wrap = this.#textWrap;
+		if (wrap?.width !== textWidth || wrap.widthEpoch !== widthEpoch) {
+			wrap = {
+				width: textWidth,
+				widthEpoch,
+				rows: this.#textLines.map(sourceLine => {
+					const wrapped = wrapTextWithAnsi(replaceTabs(sanitizeText(sourceLine)), textWidth);
+					return wrapped.length > 0 ? wrapped : [""];
+				}),
+			};
+			this.#textWrap = wrap;
+		}
+		const index = this.#annotationIndex();
+		const lines: string[] = [];
+		const renderedRowBySource: number[] = [];
+		for (const i of index.textNotes) {
+			this.#appendAnnotationCallout(lines, this.#textAnnotations[i]!.annotation.note, contentWidth, "text note");
+		}
+		const gutter = " ".repeat(SOURCE_SELECTION_GUTTER_WIDTH);
+		for (let sourceIndex = 0; sourceIndex < wrap.rows.length; sourceIndex++) {
+			for (const i of index.textLineNotes.get(sourceIndex) ?? NO_INDICES) {
+				this.#appendAnnotationCallout(lines, this.#textAnnotations[i]!.annotation.note, contentWidth);
 			}
 			renderedRowBySource[sourceIndex] = lines.length;
-			const displayLine = replaceTabs(sanitizeText(sourceLine));
-			const wrapped = wrapTextWithAnsi(displayLine, textWidth);
-			const visualRows = wrapped.length > 0 ? wrapped : [""];
-			for (const [rowIndex, visualRow] of visualRows.entries()) {
-				const selected = this.#focus === "diff" && sourceIndex === this.#sourceIndex;
-				const gutter =
-					selected && rowIndex === 0
-						? fit(`${this.#theme.nav.cursor} `, SOURCE_SELECTION_GUTTER_WIDTH)
-						: " ".repeat(SOURCE_SELECTION_GUTTER_WIDTH);
-				const renderedLine = fit(`${gutter}${visualRow}`, contentWidth);
-				lines.push(selected ? this.#theme.bg("selectedBg", renderedLine) : renderedLine);
-			}
+			for (const visualRow of wrap.rows[sourceIndex]!) lines.push(fit(`${gutter}${visualRow}`, contentWidth));
 		}
-		return { lines, renderedRowBySource };
+		this.#baseBody = {
+			width: contentWidth,
+			widthEpoch,
+			rev: this.#annotationRev,
+			fileIndex: this.#fileIndex,
+			staticBody: undefined,
+			visualRows: wrap.rows,
+			body: { lines, renderedRowBySource },
+		};
+		return this.#baseBody;
+	}
+
+	#selectTextRow(base: BaseBody, selected: number, contentWidth: number): RenderedBody {
+		const start = base.body.renderedRowBySource[selected];
+		const visualRows = base.visualRows?.[selected];
+		if (start === undefined || !visualRows) return base.body;
+		const lines = base.body.lines.slice();
+		for (let rowIndex = 0; rowIndex < visualRows.length; rowIndex++) {
+			const gutter =
+				rowIndex === 0
+					? fit(`${this.#theme.nav.cursor} `, SOURCE_SELECTION_GUTTER_WIDTH)
+					: " ".repeat(SOURCE_SELECTION_GUTTER_WIDTH);
+			lines[start + rowIndex] = this.#theme.bg("selectedBg", fit(`${gutter}${visualRows[rowIndex]}`, contentWidth));
+		}
+		return { lines, renderedRowBySource: base.body.renderedRowBySource };
 	}
 
 	#getStaticRenderedBody(file: ReviewDiffFile): RenderedDiffBody {
@@ -1273,26 +1405,22 @@ export class AnnotationOverlay implements Component {
 					role: "omp.overlay.codeReview.note",
 				}),
 			);
+		const index = this.#annotationIndex();
 		if (this.#textSource) {
-			for (const [index, entry] of this.#textAnnotations.entries()) {
-				if (entry.annotation.scope === "text") note(`n${index}`, "text note", entry.annotation.note);
-			}
+			for (const i of index.textNotes) note(`n${i}`, "text note", this.#textAnnotations[i]!.annotation.note);
 			for (const [sourceIndex, sourceLine] of this.#textLines.entries()) {
-				for (const [index, entry] of this.#textAnnotations.entries()) {
-					if (entry.annotation.scope === "line" && entry.sourceIndex === sourceIndex) {
-						note(`n${index}`, "note", entry.annotation.note);
-					}
+				for (const i of index.textLineNotes.get(sourceIndex) ?? NO_INDICES) {
+					note(`n${i}`, "note", this.#textAnnotations[i]!.annotation.note);
 				}
 				items.push(item(`l${sourceIndex}`, { label: sanitizeText(sourceLine) }));
 			}
 		} else {
 			const file = this.#currentFile();
 			if (file) {
-				for (const [index, entry] of this.#annotations.entries()) {
-					if (entry.fileIndex === this.#fileIndex && entry.annotation.scope === "file") {
-						note(`n${index}`, "file note", entry.annotation.note);
-					}
+				for (const i of index.fileNotes.get(this.#fileIndex) ?? NO_INDICES) {
+					note(`n${i}`, "file note", this.#annotations[i]!.annotation.note);
 				}
+				const lineNotes = index.lineNotes.get(this.#fileIndex);
 				if (file.isBinary) {
 					items.push(
 						item("binary", { label: [span("Binary diff; no annotatable source rows", "dim")], disabled: true }),
@@ -1312,14 +1440,8 @@ export class AnnotationOverlay implements Component {
 						items.push(item(`r${rowIndex}`, { label: [span(sanitizeText(diffRow.raw), s)], disabled: true }));
 						continue;
 					}
-					for (const [index, entry] of this.#annotations.entries()) {
-						if (
-							entry.fileIndex === this.#fileIndex &&
-							entry.sourceIndex === sourceIndex &&
-							entry.annotation.scope === "line"
-						) {
-							note(`n${index}`, "note", entry.annotation.note);
-						}
+					for (const i of lineNotes?.get(sourceIndex) ?? NO_INDICES) {
+						note(`n${i}`, "note", this.#annotations[i]!.annotation.note);
 					}
 					const marker = diffRow.kind === "added" ? "+" : diffRow.kind === "removed" ? "-" : " ";
 					const lineNumber = diffRow.kind === "removed" ? diffRow.oldLine : (diffRow.newLine ?? diffRow.oldLine);
@@ -1464,7 +1586,10 @@ export class AnnotationOverlay implements Component {
 			? Math.max(0, availableBodyRows)
 			: Math.max(MIN_BODY_ROWS, availableBodyRows);
 		const renderedBody = this.#renderBody(this.#textSource ? Math.max(1, bodyWidth - 1) : bodyWidth);
-		this.#scrollView.setLines(renderedBody.lines);
+		if (renderedBody.lines !== this.#scrollLines) {
+			this.#scrollView.setLines(renderedBody.lines);
+			this.#scrollLines = renderedBody.lines;
+		}
 		this.#scrollView.setHeight(this.#bodyHeight);
 		if (this.#textSource) {
 			this.#textRenderedRowBySource = renderedBody.renderedRowBySource;

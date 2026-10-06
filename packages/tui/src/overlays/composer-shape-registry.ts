@@ -48,7 +48,11 @@ export const BUILTIN_COMPOSER_SHAPES = [
 	},
 ] as const;
 
-/** Built-in composer ids used by tests and non-runtime consumers. */
+/**
+ * Built-in composer ids.
+ *
+ * @deprecated Unused; use `getComposerShapeOptions()` (includes extension shapes) or map {@link BUILTIN_COMPOSER_SHAPES}. Will be removed in the next major.
+ */
 export const COMPOSER_SHAPE_VALUES = BUILTIN_COMPOSER_SHAPES.map(shape => shape.value);
 
 /** Visual composer style and selector copy registered by an extension. */

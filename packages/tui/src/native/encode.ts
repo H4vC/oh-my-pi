@@ -34,37 +34,63 @@ export type TspParams = Readonly<Record<string, string | number>>;
 
 let nextChunkId = 1;
 
-/** UTF-8 byte length of one UTF-16 code unit sequence starting at `i`, and its unit count. */
-function codePointBytes(text: string, i: number): { bytes: number; units: number } {
-	const c = text.charCodeAt(i);
-	if (c < 0x80) return { bytes: 1, units: 1 };
-	if (c < 0x800) return { bytes: 2, units: 1 };
-	if (c >= 0xd800 && c <= 0xdbff && i + 1 < text.length) {
-		const next = text.charCodeAt(i + 1);
-		if (next >= 0xdc00 && next <= 0xdfff) return { bytes: 4, units: 2 };
+/**
+ * Split `text` into pieces of at most `maxBytes` UTF-8 bytes, never inside a
+ * code point (surrogate pairs stay together; an unpaired surrogate counts as
+ * the 3-byte U+FFFD it encodes to). A single code point wider than `maxBytes`
+ * still forms its own piece. With `preferNewline`, a piece ends just after the
+ * last `\n` that fits when one exists, so line-structured escape sequences
+ * stay intact. Always returns at least one piece (`[""]` for empty input).
+ */
+export function splitUtf8Chunks(text: string, maxBytes: number, preferNewline = false): string[] {
+	const chunks: string[] = [];
+	const len = text.length;
+	let pos = 0;
+	for (;;) {
+		let bytes = 0;
+		// Index just past the most recent `\n` consumed inside [pos, i).
+		let lastNewlineEnd = -1;
+		let i = pos;
+		let cut = -1;
+		while (i < len) {
+			const cu = text.charCodeAt(i);
+			let units = 1;
+			let cuBytes: number;
+			if (cu < 0x80) {
+				cuBytes = 1;
+			} else if (cu < 0x800) {
+				cuBytes = 2;
+			} else if (cu >= 0xd800 && cu < 0xdc00 && i + 1 < len) {
+				const next = text.charCodeAt(i + 1);
+				if (next >= 0xdc00 && next < 0xe000) {
+					cuBytes = 4;
+					units = 2;
+				} else {
+					cuBytes = 3;
+				}
+			} else {
+				cuBytes = 3;
+			}
+			if (bytes + cuBytes > maxBytes && i > pos) {
+				cut = preferNewline && lastNewlineEnd > pos ? lastNewlineEnd : i;
+				break;
+			}
+			bytes += cuBytes;
+			i += units;
+			if (cu === 0x0a) lastNewlineEnd = i;
+		}
+		if (cut < 0) {
+			chunks.push(pos === 0 ? text : text.slice(pos));
+			return chunks;
+		}
+		chunks.push(text.slice(pos, cut));
+		pos = cut;
 	}
-	return { bytes: 3, units: 1 };
 }
 
-/** Split `body` into pieces of at most `limit` UTF-8 bytes, never inside a code point. */
+/** Split `body` into pieces of at most `limit` UTF-8 bytes (minimum 4), never inside a code point. */
 export function splitUtf8(body: string, limit: number): string[] {
-	const max = Math.max(4, Math.trunc(limit));
-	const pieces: string[] = [];
-	let start = 0;
-	let bytes = 0;
-	let i = 0;
-	while (i < body.length) {
-		const step = codePointBytes(body, i);
-		if (bytes + step.bytes > max) {
-			pieces.push(body.slice(start, i));
-			start = i;
-			bytes = 0;
-		}
-		bytes += step.bytes;
-		i += step.units;
-	}
-	pieces.push(body.slice(start));
-	return pieces;
+	return splitUtf8Chunks(body, Math.max(4, Math.trunc(limit)));
 }
 
 function frame(verb: TspVerb, params: string, body: string): string {

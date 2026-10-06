@@ -427,10 +427,18 @@ function describeAskResult(result: ToolRenderResult<AskToolDetails>, args: AskRe
 const askCallMemo = new OwnerMemo<NativeToolView | undefined>();
 const askResultMemo = new OwnerMemo<NativeToolView | undefined>();
 
+/**
+ * Ask cards read only their width (no spinner; args/details are frozen per
+ * card), so they opt into the ToolCard memo and skip the Markdown re-render
+ * on every frame while the question waits for the user.
+ */
+const WIDTH_MEMO_CARD = { memoKey: (): readonly unknown[] => [] };
+
 /** Render question forms and their recorded answers. */
 export const askToolRenderer = {
 	describeCall(args: AskRenderArgs): NativeToolView | undefined {
-		return askCallMemo.get(args, [JSON.stringify(args)], () => describeAskCall(args));
+		// Callers allocate a fresh args object per streamed delta; the owner slot alone tracks changes.
+		return askCallMemo.get(args, [], () => describeAskCall(args));
 	},
 	describeResult(
 		result: ToolRenderResult<AskToolDetails>,
@@ -453,21 +461,25 @@ export const askToolRenderer = {
 		const questions = normalizeRenderQuestions(args.questions);
 		if (questions && questions.length > 0) {
 			const header = `${label} ${uiTheme.fg("muted", `${questions.length} questions`)}`;
-			return framedToolCard(uiTheme, ({ width }) => {
-				const sections = questions.map(q => {
-					const meta: string[] = [];
-					if (q.multi) meta.push("multi");
-					if (q.options?.length) meta.push(`options:${q.options.length}`);
-					const metaStr = meta.length > 0 ? uiTheme.fg("dim", ` · ${meta.join(" · ")}`) : "";
-					// md() returns a shared cached array (module-level Markdown LRU) — copy before appending.
-					const mdLines = md(q.question, width);
-					const lines = q.options?.length
-						? [...mdLines, ...renderQuestionOptionLines(uiTheme, mdTheme, q.options, q.multi)]
-						: mdLines;
-					return { label: `${uiTheme.fg("dim", `[${q.id}]`)}${metaStr}`, content: lines };
-				});
-				return { header, sections, phase: "pending", borderColor: "borderMuted" };
-			});
+			return framedToolCard(
+				uiTheme,
+				({ width }) => {
+					const sections = questions.map(q => {
+						const meta: string[] = [];
+						if (q.multi) meta.push("multi");
+						if (q.options?.length) meta.push(`options:${q.options.length}`);
+						const metaStr = meta.length > 0 ? uiTheme.fg("dim", ` · ${meta.join(" · ")}`) : "";
+						// md() returns a shared cached array (module-level Markdown LRU) — copy before appending.
+						const mdLines = md(q.question, width);
+						const lines = q.options?.length
+							? [...mdLines, ...renderQuestionOptionLines(uiTheme, mdTheme, q.options, q.multi)]
+							: mdLines;
+						return { label: `${uiTheme.fg("dim", `[${q.id}]`)}${metaStr}`, content: lines };
+					});
+					return { header, sections, phase: "pending", borderColor: "borderMuted" };
+				},
+				WIDTH_MEMO_CARD,
+			);
 		}
 
 		// Single question
@@ -488,19 +500,23 @@ export const askToolRenderer = {
 		if (questionOptions?.length) meta.push(`options:${questionOptions.length}`);
 		const header = `${label}${formatMeta(meta, uiTheme)}`;
 		const multi = args.multi;
-		return framedToolCard(uiTheme, ({ width }) => {
-			// md() returns a shared cached array (module-level Markdown LRU) — copy before appending.
-			const mdLines = md(question, width);
-			const bodyLines = questionOptions?.length
-				? [...mdLines, ...renderQuestionOptionLines(uiTheme, mdTheme, questionOptions, multi)]
-				: mdLines;
-			return {
-				header,
-				sections: bodyLines.length > 0 ? [{ content: bodyLines }] : [],
-				phase: "pending",
-				borderColor: "borderMuted",
-			};
-		});
+		return framedToolCard(
+			uiTheme,
+			({ width }) => {
+				// md() returns a shared cached array (module-level Markdown LRU) — copy before appending.
+				const mdLines = md(question, width);
+				const bodyLines = questionOptions?.length
+					? [...mdLines, ...renderQuestionOptionLines(uiTheme, mdTheme, questionOptions, multi)]
+					: mdLines;
+				return {
+					header,
+					sections: bodyLines.length > 0 ? [{ content: bodyLines }] : [],
+					phase: "pending",
+					borderColor: "borderMuted",
+				};
+			},
+			WIDTH_MEMO_CARD,
+		);
 	},
 
 	renderResult(
@@ -527,12 +543,16 @@ export const askToolRenderer = {
 		if (details.chatRedirect) {
 			const header = renderStatusLine({ icon: "info", title: "Ask", meta: ["chat redirect"] }, uiTheme);
 			const questions = details.questions ?? [];
-			return framedToolCard(uiTheme, ({ width }) => ({
-				header,
-				sections: questions.length > 0 ? [{ content: questions.flatMap(q => md(q, width)) }] : [],
-				phase: "warning",
-				borderColor: "borderMuted",
-			}));
+			return framedToolCard(
+				uiTheme,
+				({ width }) => ({
+					header,
+					sections: questions.length > 0 ? [{ content: questions.flatMap(q => md(q, width)) }] : [],
+					phase: "warning",
+					borderColor: "borderMuted",
+				}),
+				WIDTH_MEMO_CARD,
+			);
 		}
 
 		// Multi-part results: one divider-labelled section per question.
@@ -552,35 +572,39 @@ export const askToolRenderer = {
 				},
 				uiTheme,
 			);
-			return framedToolCard(uiTheme, ({ width }) => {
-				const rawResults = rawDetails.results ?? [];
-				const sections = results.map((r, index) => {
-					// Sanitizing preserves order and length, so raw indices align with `r`.
-					const raw = rawResults[index];
-					// md() returns a shared cached array (module-level Markdown LRU) — copy before appending.
-					const lines = [
-						...md(r.question, width),
-						...renderAnswerOptionLines(
-							uiTheme,
-							mdTheme,
-							r.options,
-							r.selectedOptions,
-							r.multi,
-							r.customInput,
-							r.note,
-							width,
-							selectedIndicesFor(raw?.options, raw?.selectedOptions),
-						),
-					];
-					return { label: uiTheme.fg("dim", `[${r.id}]`), content: lines };
-				});
-				return {
-					header,
-					sections,
-					phase: hasAnySelection ? "success" : "warning",
-					borderColor: "borderMuted",
-				};
-			});
+			return framedToolCard(
+				uiTheme,
+				({ width }) => {
+					const rawResults = rawDetails.results ?? [];
+					const sections = results.map((r, index) => {
+						// Sanitizing preserves order and length, so raw indices align with `r`.
+						const raw = rawResults[index];
+						// md() returns a shared cached array (module-level Markdown LRU) — copy before appending.
+						const lines = [
+							...md(r.question, width),
+							...renderAnswerOptionLines(
+								uiTheme,
+								mdTheme,
+								r.options,
+								r.selectedOptions,
+								r.multi,
+								r.customInput,
+								r.note,
+								width,
+								selectedIndicesFor(raw?.options, raw?.selectedOptions),
+							),
+						];
+						return { label: uiTheme.fg("dim", `[${r.id}]`), content: lines };
+					});
+					return {
+						header,
+						sections,
+						phase: hasAnySelection ? "success" : "warning",
+						borderColor: "borderMuted",
+					};
+				},
+				WIDTH_MEMO_CARD,
+			);
 		}
 
 		// Single question result
@@ -607,32 +631,36 @@ export const askToolRenderer = {
 		const dCustom = details.customInput;
 		const dNote = details.note;
 		const dTimedOut = details.timedOut;
-		return framedToolCard(uiTheme, ({ width }) => {
-			// md() returns a shared cached array (module-level Markdown LRU) — copy before appending.
-			const bodyLines = [
-				...md(question, width),
-				...renderAnswerOptionLines(
-					uiTheme,
-					mdTheme,
-					dOptions,
-					dSelected,
-					dMulti,
-					dCustom,
-					dNote,
-					width,
-					selectedIndicesFor(rawDetails.options, rawDetails.selectedOptions),
-				),
-			];
-			if (dTimedOut) {
-				// Distinguish auto-selection from a real user choice in the transcript.
-				bodyLines.push(uiTheme.fg("dim", "auto-selected after timeout — not a user choice"));
-			}
-			return {
-				header,
-				sections: bodyLines.length > 0 ? [{ content: bodyLines }] : [],
-				phase: hasSelection ? "success" : "warning",
-				borderColor: "borderMuted",
-			};
-		});
+		return framedToolCard(
+			uiTheme,
+			({ width }) => {
+				// md() returns a shared cached array (module-level Markdown LRU) — copy before appending.
+				const bodyLines = [
+					...md(question, width),
+					...renderAnswerOptionLines(
+						uiTheme,
+						mdTheme,
+						dOptions,
+						dSelected,
+						dMulti,
+						dCustom,
+						dNote,
+						width,
+						selectedIndicesFor(rawDetails.options, rawDetails.selectedOptions),
+					),
+				];
+				if (dTimedOut) {
+					// Distinguish auto-selection from a real user choice in the transcript.
+					bodyLines.push(uiTheme.fg("dim", "auto-selected after timeout — not a user choice"));
+				}
+				return {
+					header,
+					sections: bodyLines.length > 0 ? [{ content: bodyLines }] : [],
+					phase: hasSelection ? "success" : "warning",
+					borderColor: "borderMuted",
+				};
+			},
+			WIDTH_MEMO_CARD,
+		);
 	},
 } satisfies ToolRenderer<AskRenderArgs, AskToolDetails>;

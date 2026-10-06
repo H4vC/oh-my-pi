@@ -182,6 +182,7 @@ export function urlHyperlinkAlways(url: string, displayText: string): string {
  * Unlike the OSC 8 wrappers this ignores terminal capability detection — a
  * TSP terminal always handles `href` — but honours an explicit `off` policy.
  * Non-HTTP(S) or unparsable URLs yield a plain span.
+ * @deprecated Unused TSP helper; build the span with `span()` and an `href`. Will be removed in the next major.
  */
 export function urlLinkSpan(target: string, displayText: string, s = "link"): TspSpan {
 	if (hyperlinkMode === "off") return span(displayText, s);

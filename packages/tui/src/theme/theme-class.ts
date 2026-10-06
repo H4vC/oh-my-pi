@@ -132,13 +132,15 @@ const LANG_BRAND_COLORS: Partial<Record<SymbolKey, string>> = {
 const BACKGROUND_RESET_PATTERN = /\x1b\[(?:0|49)m/g;
 const FOREGROUND_RESET_PATTERN = /\x1b\[(?:0|39)m/g;
 
-// Prebuilt stylers: each `chalk.<style>` access builds a fresh builder. Builders share the
-// root chalk context, so later `chalk.level` changes still apply.
-const boldStyler = chalk.bold;
-const italicStyler = chalk.italic;
-const underlineStyler = chalk.underline;
-const strikethroughStyler = chalk.strikethrough;
-const inverseStyler = chalk.inverse;
+/**
+ * Pins a frozen symbol-group view as an own data property, shadowing the prototype getter so
+ * later reads skip the getter. `#symbols` is fixed after construction, so the view never goes stale.
+ */
+function pinSymbolGroup<T extends object>(theme: Theme, key: string, group: T): Readonly<T> {
+	const frozen = Object.freeze(group);
+	Object.defineProperty(theme, key, { value: frozen, enumerable: false, configurable: true });
+	return frozen;
+}
 
 /** Theme token of a thinking/effort level name (`off`…`max`); unknown levels (`auto`) map to `thinkingOff`. */
 export function thinkingLevelToken(level: string): ThemeColor {
@@ -337,6 +339,7 @@ export class Theme {
 			resolved = ansi === "\x1b[39m" ? colorToAnsi(this.getColorHex(color), this.mode) : ansi;
 			this.#resolvedFgColors.set(color, resolved);
 		}
+		if (!text.includes("\x1b[")) return `${resolved}${text}\x1b[39m`;
 		return `${resolved}${text.replace(FOREGROUND_RESET_PATTERN, `$&${resolved}`)}\x1b[39m`;
 	}
 
@@ -355,6 +358,7 @@ export class Theme {
 	bgFill(color: ThemeBg, text: string): string {
 		const ansi = this.#bgColors[color];
 		if (!ansi) throw new Error(`Unknown theme background color: ${color}`);
+		if (!text.includes("\x1b[")) return `${ansi}${text}\x1b[49m`;
 		return `${ansi}${text.replace(BACKGROUND_RESET_PATTERN, `$&${ansi}`)}\x1b[49m`;
 	}
 
@@ -365,27 +369,28 @@ export class Theme {
 	 */
 	fgOnBg(color: ThemeColor, background: ThemeBg, text: string): string {
 		const ansi = this.getFgOnBgAnsi(color, background);
+		if (!text.includes("\x1b[")) return `${ansi}${text}\x1b[39m`;
 		return `${ansi}${text.replace(FOREGROUND_RESET_PATTERN, `$&${ansi}`)}\x1b[39m`;
 	}
 
 	bold(text: string): string {
-		return boldStyler(text);
+		return chalk.bold(text);
 	}
 
 	italic(text: string): string {
-		return italicStyler(text);
+		return chalk.italic(text);
 	}
 
 	underline(text: string): string {
-		return underlineStyler(text);
+		return chalk.underline(text);
 	}
 
 	strikethrough(text: string): string {
-		return strikethroughStyler(text);
+		return chalk.strikethrough(text);
 	}
 
 	inverse(text: string): string {
-		return inverseStyler(text);
+		return chalk.inverse(text);
 	}
 
 	getFgAnsi(color: ThemeColor): string {
@@ -483,7 +488,7 @@ export class Theme {
 	// ============================================================================
 
 	get status() {
-		return {
+		return pinSymbolGroup(this, "status", {
 			success: this.#symbols["status.success"],
 			error: this.#symbols["status.error"],
 			warning: this.#symbols["status.warning"],
@@ -495,38 +500,38 @@ export class Theme {
 			shadowed: this.#symbols["status.shadowed"],
 			aborted: this.#symbols["status.aborted"],
 			done: this.#symbols["status.done"],
-		};
+		});
 	}
 
 	get nav() {
-		return {
+		return pinSymbolGroup(this, "nav", {
 			cursor: this.#symbols["nav.cursor"],
 			selected: this.#symbols["nav.selected"],
 			expand: this.#symbols["nav.expand"],
 			collapse: this.#symbols["nav.collapse"],
 			back: this.#symbols["nav.back"],
-		};
+		});
 	}
 
 	get tree() {
-		return {
+		return pinSymbolGroup(this, "tree", {
 			branch: this.#symbols["tree.branch"],
 			last: this.#symbols["tree.last"],
 			vertical: this.#symbols["tree.vertical"],
 			horizontal: this.#symbols["tree.horizontal"],
 			hook: this.#symbols["tree.hook"],
-		};
+		});
 	}
 
 	get progress() {
-		return {
+		return pinSymbolGroup(this, "progress", {
 			filled: this.#symbols["progress.filled"],
 			empty: this.#symbols["progress.empty"],
-		};
+		});
 	}
 
 	get boxRound() {
-		return {
+		return pinSymbolGroup(this, "boxRound", {
 			topLeft: this.#symbols["boxRound.topLeft"],
 			topRight: this.#symbols["boxRound.topRight"],
 			bottomLeft: this.#symbols["boxRound.bottomLeft"],
@@ -541,7 +546,7 @@ export class Theme {
 			teeUp: this.#symbols["boxSharp.teeUp"],
 			teeRight: this.#symbols["boxSharp.teeRight"],
 			teeLeft: this.#symbols["boxSharp.teeLeft"],
-		};
+		});
 	}
 
 	/**
@@ -549,14 +554,14 @@ export class Theme {
 	 * {@link boxRound} — Unicode has no rounded dotted corner glyphs.
 	 */
 	get boxDotted() {
-		return {
+		return pinSymbolGroup(this, "boxDotted", {
 			horizontal: this.#symbols["boxDotted.horizontal"],
 			vertical: this.#symbols["boxDotted.vertical"],
-		};
+		});
 	}
 
 	get boxSharp() {
-		return {
+		return pinSymbolGroup(this, "boxSharp", {
 			topLeft: this.#symbols["boxSharp.topLeft"],
 			topRight: this.#symbols["boxSharp.topRight"],
 			bottomLeft: this.#symbols["boxSharp.bottomLeft"],
@@ -568,11 +573,11 @@ export class Theme {
 			teeUp: this.#symbols["boxSharp.teeUp"],
 			teeRight: this.#symbols["boxSharp.teeRight"],
 			teeLeft: this.#symbols["boxSharp.teeLeft"],
-		};
+		});
 	}
 
 	get sep() {
-		return {
+		return pinSymbolGroup(this, "sep", {
 			powerline: this.#symbols["sep.powerline"],
 			powerlineThin: this.#symbols["sep.powerlineThin"],
 			powerlineLeft: this.#symbols["sep.powerlineLeft"],
@@ -587,11 +592,11 @@ export class Theme {
 			dot: this.#symbols["sep.dot"],
 			slash: this.#symbols["sep.slash"],
 			pipe: this.#symbols["sep.pipe"],
-		};
+		});
 	}
 
 	get icon() {
-		return {
+		return pinSymbolGroup(this, "icon", {
 			model: this.#symbols["icon.model"],
 			plan: this.#symbols["icon.plan"],
 			prewalk: this.#symbols["icon.prewalk"],
@@ -644,12 +649,12 @@ export class Theme {
 			vimVisualLine: this.#symbols["icon.vimVisualLine"],
 			mic: this.#symbols["icon.mic"],
 			camera: this.#symbols["icon.camera"],
-		};
+		});
 	}
 
 	/** Slash-command type-indicator glyphs for the autocomplete icon column. */
 	get cmd(): Record<SlashCommandIconName, string> {
-		return {
+		return pinSymbolGroup(this, "cmd", {
 			action: this.#symbols["cmd.action"],
 			prompt: this.#symbols["cmd.prompt"],
 			extension: this.#symbols["cmd.extension"],
@@ -719,11 +724,11 @@ export class Theme {
 			skill: this.#symbols["icon.extensionSkill"],
 			mcp: this.#symbols["icon.extensionMcp"],
 			pin: this.#symbols["icon.pin"],
-		};
+		});
 	}
 
 	get thinking() {
-		return {
+		return pinSymbolGroup(this, "thinking", {
 			minimal: this.#symbols["thinking.minimal"],
 			low: this.#symbols["thinking.low"],
 			medium: this.#symbols["thinking.medium"],
@@ -731,39 +736,39 @@ export class Theme {
 			xhigh: this.#symbols["thinking.xhigh"],
 			max: this.#symbols["thinking.max"],
 			autoPending: this.#symbols["thinking.autoPending"],
-		};
+		});
 	}
 
 	get checkbox() {
-		return {
+		return pinSymbolGroup(this, "checkbox", {
 			checked: this.#symbols["checkbox.checked"],
 			unchecked: this.#symbols["checkbox.unchecked"],
-		};
+		});
 	}
 
 	get radio() {
-		return {
+		return pinSymbolGroup(this, "radio", {
 			selected: this.#symbols["radio.selected"],
 			unselected: this.#symbols["radio.unselected"],
-		};
+		});
 	}
 
 	get format() {
-		return {
+		return pinSymbolGroup(this, "format", {
 			bullet: this.#symbols["format.bullet"],
 			dash: this.#symbols["format.dash"],
 			bracketLeft: this.#symbols["format.bracketLeft"],
 			bracketRight: this.#symbols["format.bracketRight"],
-		};
+		});
 	}
 
 	get md() {
-		return {
+		return pinSymbolGroup(this, "md", {
 			quoteBorder: this.#symbols["md.quoteBorder"],
 			hrChar: this.#symbols["md.hrChar"],
 			bullet: this.#symbols["md.bullet"],
 			colorSwatch: this.#symbols["md.colorSwatch"],
-		};
+		});
 	}
 
 	/**

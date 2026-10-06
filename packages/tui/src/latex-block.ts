@@ -1434,6 +1434,9 @@ function splitLines(src: string): string[] {
  * The native form of {@link latexToBlock}: the TeX source as a `math` node
  * the terminal typesets (display style by default, `display: false` for
  * inline `$…$` math).
+ *
+ * @deprecated Unused; build the node directly with `node("math", { text, display })` from
+ * `native/describe`. Will be removed in the next major.
  */
 export function describeLatex(src: string, display = true): NativeNode {
 	return node("math", { text: src, display });

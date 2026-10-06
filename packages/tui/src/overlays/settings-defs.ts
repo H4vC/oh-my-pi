@@ -155,7 +155,11 @@ export interface SettingsHost {
 	validateProviderLimits(value: unknown): Record<string, number>;
 }
 
-/** Primitive value displayed by a settings control. */
+/**
+ * Primitive value displayed by a settings control.
+ *
+ * @deprecated Unused; use `SettingsDisplayEntry["defaultValue"]`. Will be removed in the next major.
+ */
 export type SettingsDisplayValue = boolean | string;
 
 interface BaseSettingDef {
@@ -354,7 +358,11 @@ export function numberSteps(def: SettingDef): Record<string, string> | undefined
 	return labels;
 }
 
-/** Format a setting's declared default for display. */
+/**
+ * Format a setting's declared default for display.
+ *
+ * @deprecated Unused; read `defaultValue` from the matching {@link SettingsDisplayEntry} and `String()` it. Will be removed in the next major.
+ */
 export function getDisplayDefault(entries: readonly SettingsDisplayEntry[], path: string): string {
 	const value = entries.find(entry => entry.path === path)?.defaultValue;
 	if (value === undefined) return "";

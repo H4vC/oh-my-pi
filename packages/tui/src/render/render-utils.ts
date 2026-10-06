@@ -676,7 +676,10 @@ export function getDiffStats(diffText: string): DiffStats {
 	return { added, removed, hunks, lines: lines.length };
 }
 
-/** Render a compact themed summary of diff counts. */
+/**
+ * Render a compact themed summary of diff counts.
+ * @deprecated Unused; format counts with `theme.fg("toolDiffAdded" | "toolDiffRemoved", …)` at the call site. Will be removed in the next major.
+ */
 export function formatDiffStats(added: number, removed: number, hunks: number, theme: Theme): string {
 	const parts: string[] = [];
 	if (added > 0) parts.push(theme.fg("toolDiffAdded", `+${added}`));

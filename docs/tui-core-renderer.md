@@ -135,8 +135,9 @@ second visible frame.
 
 ## 5. Terminal capabilities and input probes
 
-Terminal detection selects optimizations such as synchronized output, DECCARA,
-and image protocols; it does not change history semantics.
+Terminal detection selects optimizations such as synchronized output and image
+protocols; it does not change history semantics. DECCARA rectangular fills are
+deprecated and no longer used by the renderer.
 
 Inside tmux, the pane environment identifies tmux rather than the attached
 emulator. At startup, terminal detection asks the local tmux server for

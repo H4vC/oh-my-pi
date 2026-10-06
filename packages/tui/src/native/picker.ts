@@ -57,7 +57,10 @@ export function pickerKeys(key: KeyName | string): string[] {
 	return parts.filter(part => part.length > 0).map(part => (part === "escape" ? "esc" : part));
 }
 
-/** The keycaps of a keybinding's primary key, empty when unbound. */
+/**
+ * The keycaps of a keybinding's primary key, empty when unbound.
+ * @deprecated Unused; call {@link pickerKeys} on the first of `getKeybindings().getKeys(binding)`. Will be removed in the next major.
+ */
 export function bindingKeys(binding: Keybinding): string[] {
 	const [key] = getKeybindings().getKeys(binding);
 	return key ? pickerKeys(key) : [];

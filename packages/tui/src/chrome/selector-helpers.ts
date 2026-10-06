@@ -32,6 +32,7 @@ export function renderScrollableList(
  * Center a viewport window of `maxVisible` rows on `selectedIndex` within a
  * list of `total` rows, clamped to valid bounds. Used by the selection-centered
  * list panes (history search, tree selector).
+ * @deprecated Unused; compute the visible window inline. Will be removed in the next major.
  */
 export function centeredWindow(
 	selectedIndex: number,

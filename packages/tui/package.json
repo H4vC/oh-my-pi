@@ -99,6 +99,7 @@
       "types": "./src/components/*.ts",
       "import": "./src/components/*.ts"
     },
+    "./theme/*.js": "./src/theme/*.ts",
     "./*.js": "./src/*.ts"
   }
 }

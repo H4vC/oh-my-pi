@@ -59,10 +59,6 @@ function formatGlobRenderPaths(args: GlobRenderArgs | undefined): string | undef
 	return list.length > 0 ? list.join(", ") : undefined;
 }
 
-function globStatusIcon(uiTheme: Theme): string {
-	return uiTheme.fg("toolTitle", uiTheme.symbol("icon.search"));
-}
-
 /** Most files a native glob lists as rows; more wrap as chips (§7.3 glob). */
 const NATIVE_LIST_MAX = 6;
 /** Collapsed clamp: the whole ≤ 6-row list, or about six rows of chips. */
@@ -157,7 +153,7 @@ export const globToolRenderer = {
 			const lines = textContent.split("\n").filter(l => l.trim());
 			const header = renderStatusLine(
 				{
-					iconOverride: globStatusIcon(uiTheme),
+					iconOverride: uiTheme.fg("toolTitle", uiTheme.symbol("icon.search")),
 					title: "Glob",
 					titleColor: "toolTitle",
 					description: formatGlobRenderPaths(args),
@@ -224,7 +220,9 @@ export const globToolRenderer = {
 		if (truncated) meta.push(uiTheme.fg("warning", timedOut ? "timed out" : "truncated"));
 		const header = renderStatusLine(
 			{
-				...(truncated ? { icon: "warning" as const } : { iconOverride: globStatusIcon(uiTheme) }),
+				...(truncated
+					? { icon: "warning" as const }
+					: { iconOverride: uiTheme.fg("toolTitle", uiTheme.symbol("icon.search")) }),
 				title: "Glob",
 				titleColor: "toolTitle",
 				description: formatGlobRenderPaths(args),

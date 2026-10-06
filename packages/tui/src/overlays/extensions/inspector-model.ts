@@ -6,7 +6,7 @@
  */
 import * as path from "node:path";
 import { arkToWireSchema, isArkSchema } from "@oh-my-pi/pi-ai/utils/schema";
-import { normalizePathForComparison, parseFrontmatter } from "@oh-my-pi/pi-utils";
+import { asRecord, isFilesystemSourcePath, normalizePathForComparison, parseFrontmatter } from "@oh-my-pi/pi-utils";
 import {
 	sanitizeDisplayField,
 	sanitizeDisplayLine,
@@ -80,10 +80,6 @@ export interface ExtensionInspectorSource {
 	};
 }
 
-function isFilesystemSourcePath(value: string): boolean {
-	return path.posix.isAbsolute(value) || path.win32.isAbsolute(value);
-}
-
 function optionalTrimmedString(value: unknown): string | undefined {
 	if (typeof value !== "string") return undefined;
 	const trimmed = value.trim();
@@ -115,10 +111,6 @@ export function commandPreview(content: string | undefined): CommandPreview {
 		argumentHint: sanitizeDisplayField(display.argumentHint),
 		usesArguments: /\$ARGUMENTS\b/.test(body),
 	};
-}
-
-function asRecord(raw: unknown): Record<string, unknown> | null {
-	return raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
 }
 
 function stringField(raw: Record<string, unknown>, key: string): string | undefined {

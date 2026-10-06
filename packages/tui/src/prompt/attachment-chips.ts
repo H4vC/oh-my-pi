@@ -33,12 +33,13 @@ const RESET_FG = "\x1b[39m";
  *  (pastes are usually re-encoded JPEG/WebP) convert before transmit — the same pipeline
  *  the transcript uses. `null` = conversion in flight or failed. */
 const kImagePng = Symbol("omp.imagePng");
-/** Content address of the draft image's decoded bytes, registered once for TSP `image` nodes. */
-const kImageBlob = Symbol("omp.imageBlob");
+/** The draft image's decoded bytes, kept so its TSP blob stays available while the draft lives
+ *  (the blob store holds unreferenced blobs only weakly); registration reuses their cached hash. */
+const kImageBytes = Symbol("omp.imageBytes");
 
 interface ImageContentWithPng extends ImageContent {
 	[kImagePng]?: ImageContent | null;
-	[kImageBlob]?: string;
+	[kImageBytes]?: Uint8Array;
 }
 
 /**
@@ -87,8 +88,8 @@ export class AttachmentChipsBand implements Component {
 				const dims = this.#imageDims(chip.image);
 				caption = dims ? `${dims.width}x${dims.height}` : "";
 				const image = chip.image as ImageContentWithPng;
-				const blob = image[kImageBlob] ?? registerNativeBlob(Buffer.from(image.data, "base64"), image.mimeType);
-				image[kImageBlob] = blob;
+				const bytes = (image[kImageBytes] ??= Buffer.from(image.data, "base64"));
+				const blob = registerNativeBlob(bytes, image.mimeType);
 				content = node("image", {
 					blob,
 					alt: title,
@@ -249,7 +250,8 @@ export class AttachmentChipsBand implements Component {
 
 	/** Leading 4 rows x 12 cols of the pasted text, muted. */
 	#textInterior(entry: TextAttachment): string[] {
-		const lines = entry.content.split("\n");
+		// Only the leading rows are drawn; don't split a multi-KB paste every frame.
+		const lines = entry.content.split("\n", INNER_ROWS);
 		const rows: string[] = [];
 		for (let r = 0; r < INNER_ROWS; r++) {
 			const cut = truncateToWidth(replaceTabs(lines[r] ?? ""), INNER_COLS);

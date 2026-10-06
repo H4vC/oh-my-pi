@@ -2,10 +2,9 @@ import { Text } from "../components/text";
 import { ansi } from "../native/describe";
 import type { DescribeContext, NativeNode } from "../native/node";
 import { ImageProtocol, TERMINAL } from "../terminal-capabilities";
-import type { Theme } from "../theme/theme";
+import { getThemeEpoch, type Theme } from "../theme/theme";
 import type { Component } from "../tui";
-import { getPaddingX } from "../utils";
-import { truncateToVisualLines } from "../chrome/visual-truncate";
+import { getPaddingX, getWidthConfigEpoch, padding, visibleWidth, wrapTextWithAnsi } from "../utils";
 import { getSixelLineMask } from "./sixel";
 import { formatExpandHint, replaceTabs } from "./render-utils";
 
@@ -58,6 +57,46 @@ function defaultHiddenLabel(hidden: number, shown: number, total: number, edge: 
 }
 
 /**
+ * Visual-row tail cap that styles and wraps only the trailing logical rows
+ * needed to fill `limit` rows (each logical row wraps to at least one).
+ * `hiddenCount` counts logical rows not fully shown. Rows match a `Text`
+ * render of the window: tabs expanded, padded to `width`.
+ */
+function formatVisualTail(
+	total: number,
+	styleAt: (index: number) => string,
+	limit: number,
+	width: number,
+): { lines: string[]; hiddenCount: number } {
+	const window: string[] = [];
+	let start = total;
+	let rowCount = 0;
+	while (start > 0 && rowCount < limit) {
+		start--;
+		const line = replaceTabs(styleAt(start));
+		window.push(line);
+		rowCount += wrapTextWithAnsi(line, width).length;
+	}
+	window.reverse();
+	const windowText = window.join("\n");
+	if (windowText.trim() === "") {
+		// A blank stream renders nothing, matching an empty `Text`.
+		let index = start - 1;
+		while (index >= 0 && styleAt(index).trim() === "") index--;
+		if (index < 0) return { lines: [], hiddenCount: 0 };
+	}
+	// Re-wrap the window as one text so SGR state carries across its rows.
+	const wrapped = wrapTextWithAnsi(windowText, width);
+	const skippedRows = Math.max(0, wrapped.length - limit);
+	const lines: string[] = [];
+	for (let index = skippedRows; index < wrapped.length; index++) {
+		const row = wrapped[index]!;
+		lines.push(row + padding(width - visibleWidth(row)));
+	}
+	return { lines, hiddenCount: start + (skippedRows > 0 ? 1 : 0) };
+}
+
+/**
  * Style and cap output rows for code cells, tool cards, and live execution
  * panes. Sixel rows are never styled or split; with `uncapSixel`, the complete
  * payload is retained so terminal image protocols remain valid.
@@ -65,43 +104,55 @@ function defaultHiddenLabel(hidden: number, shown: number, total: number, edge: 
 export function formatOutputPaneLines(options: OutputPaneFormatOptions, theme: Theme): OutputPaneFormatResult {
 	const edge = options.edge ?? "head";
 	const rawLines = options.lines;
+	const total = rawLines.length;
 	const sixelMask =
-		TERMINAL.imageProtocol === ImageProtocol.Sixel && rawLines.length > 0 ? getSixelLineMask(rawLines) : undefined;
+		TERMINAL.imageProtocol === ImageProtocol.Sixel && total > 0 ? getSixelLineMask(rawLines) : undefined;
 	const hasSixel = sixelMask?.some(Boolean) ?? false;
-	const styledLines = rawLines.map((line, index) =>
-		sixelMask?.[index] ? line : (options.styleLine?.(line, index) ?? line),
-	);
+	// Styling runs only on rows that can become visible; `index` stays the
+	// row's position in the full stream.
+	const styleLine = options.styleLine;
+	const styleAt = (index: number): string => {
+		const line = rawLines[index]!;
+		return sixelMask?.[index] || !styleLine ? line : (styleLine(line, index) ?? line);
+	};
+	const styleRange = (start: number, end: number): string[] => {
+		const styled: string[] = [];
+		for (let index = start; index < end; index++) styled.push(styleAt(index));
+		return styled;
+	};
 
 	const configuredLimit = options.expanded ? options.expandedMaxLines : options.collapsedMaxLines;
 	const limit = hasSixel && options.uncapSixel ? undefined : configuredLimit;
-	let visibleLines: readonly string[] = styledLines;
+	let lines: string[];
 	let hiddenCount = 0;
 
-	if (limit !== undefined && Number.isFinite(limit)) {
+	if (limit === undefined || !Number.isFinite(limit)) {
+		lines = styleRange(0, total);
+	} else {
 		const boundedLimit = Math.max(0, Math.floor(limit));
+		const width = Math.max(1, options.width ?? 1);
 		if (boundedLimit === 0) {
-			visibleLines = [];
-			hiddenCount = styledLines.length;
+			lines = [];
+			hiddenCount = total;
 		} else if (options.visual && edge === "tail") {
-			const visual = truncateToVisualLines(styledLines.join("\n"), boundedLimit, Math.max(1, options.width ?? 1));
-			visibleLines = visual.visualLines;
-			hiddenCount = visual.skippedCount;
+			({ lines, hiddenCount } = formatVisualTail(total, styleAt, boundedLimit, width));
 		} else if (options.visual) {
-			const rendered = new Text(styledLines.join("\n"), 0, 0).render(Math.max(1, options.width ?? 1));
-			visibleLines = rendered.slice(0, boundedLimit);
-			hiddenCount = Math.max(0, rendered.length - visibleLines.length);
-		} else if (styledLines.length > boundedLimit) {
-			hiddenCount = styledLines.length - boundedLimit;
-			visibleLines = edge === "tail" ? styledLines.slice(-boundedLimit) : styledLines.slice(0, boundedLimit);
+			const rendered = new Text(styleRange(0, total).join("\n"), 0, 0).render(width);
+			lines = rendered.slice(0, boundedLimit);
+			hiddenCount = Math.max(0, rendered.length - lines.length);
+		} else if (total > boundedLimit) {
+			hiddenCount = total - boundedLimit;
+			lines = edge === "tail" ? styleRange(total - boundedLimit, total) : styleRange(0, boundedLimit);
+		} else {
+			lines = styleRange(0, total);
 		}
 	}
 
-	const lines = [...visibleLines];
 	if (hiddenCount > 0 && options.showHiddenMarker !== false) {
 		const label = (options.formatHidden ?? defaultHiddenLabel)(
 			hiddenCount,
-			visibleLines.length,
-			hiddenCount + visibleLines.length,
+			lines.length,
+			hiddenCount + lines.length,
 			edge,
 		);
 		const hint = options.showExpandHint === false ? "" : formatExpandHint(theme, options.expanded, true);
@@ -131,10 +182,14 @@ export interface NativeOutputOptions {
  * affordance); a tail edge follows the stream.
  */
 export function describeOutputLines(lines: readonly string[], options: NativeOutputOptions): NativeNode {
+	return describeOutputText(lines.join("\n"), options);
+}
+
+function describeOutputText(text: string, options: NativeOutputOptions): NativeNode {
 	const limit = options.expanded ? options.expandedMaxLines : options.collapsedMaxLines;
 	const preview =
 		limit !== undefined && Number.isFinite(limit) ? { lines: Math.max(0, Math.floor(limit)) } : undefined;
-	const described = ansi(lines.join("\n"), { follow: options.edge === "tail" ? true : undefined, preview });
+	const described = ansi(text, { follow: options.edge === "tail" ? true : undefined, preview });
 	return options.key === undefined ? described : { ...described, key: options.key };
 }
 
@@ -149,16 +204,26 @@ export interface OutputPaneOptions extends Omit<OutputPaneFormatOptions, "lines"
 
 /**
  * Stateful, cached output viewport. Streaming callers append chunks while
- * settled callers may replace all rows. Unchanged renders preserve array
- * identity through the inner Text cache.
+ * settled callers may replace all rows. Renders are memoized on a content
+ * version plus width and theme/width-config epochs, so unchanged frames do
+ * no formatting work and preserve array identity.
  */
 export class OutputPane implements Component {
 	readonly #theme: Theme;
 	#options: OutputPaneOptions;
 	#lines: string[] = [];
+	// `#lines` minus its last row, joined by "\n"; extended incrementally as
+	// rows complete so streamed text is never re-joined. `undefined` = stale.
+	#head: string | undefined;
 	#pendingCarriageReturn = false;
 	#text: Text;
-	#renderKey = "";
+	// Bumped by every content or presentation change.
+	#version = 0;
+	#renderedVersion = -1;
+	#renderedWidth = -1;
+	#renderedContentWidth = -1;
+	#renderedThemeEpoch = -1;
+	#renderedWidthEpoch = -1;
 	#native: NativeNode | undefined;
 
 	constructor(theme: Theme, options: OutputPaneOptions, text = "") {
@@ -176,8 +241,9 @@ export class OutputPane implements Component {
 	/** Replace the complete output snapshot with caller-owned immutable rows. */
 	setLines(lines: readonly string[]): void {
 		const normalizeLine = this.#options.normalizeLine;
-		const normalized = normalizeLine ? lines.map(line => normalizeLine(line)) : [...lines];
-		this.#lines = this.#clampStoredLines(normalized);
+		this.#lines = normalizeLine ? lines.map(line => normalizeLine(line)) : [...lines];
+		this.#head = undefined;
+		this.#clampStoredLines();
 		this.#pendingCarriageReturn = false;
 		this.invalidate();
 	}
@@ -224,7 +290,7 @@ export class OutputPane implements Component {
 			segmentStart = index;
 		}
 		this.#appendToTail(chunk.slice(segmentStart));
-		this.#lines = this.#clampStoredLines(this.#lines);
+		this.#clampStoredLines();
 		this.invalidate();
 	}
 
@@ -242,7 +308,7 @@ export class OutputPane implements Component {
 		this.#options = { ...this.#options, ...options };
 		const nextPadding = this.#options.paddingX ?? 0;
 		if (previousPadding !== nextPadding) this.#text = new Text("", nextPadding, 0);
-		this.#lines = this.#clampStoredLines(this.#lines);
+		this.#clampStoredLines();
 		this.invalidate();
 	}
 
@@ -262,12 +328,15 @@ export class OutputPane implements Component {
 	}
 
 	getText(): string {
-		return this.#lines.join("\n");
+		const lines = this.#lines;
+		if (lines.length <= 1) return lines[0] ?? "";
+		this.#head ??= lines.slice(0, -1).join("\n");
+		return `${this.#head}\n${lines[lines.length - 1]}`;
 	}
 
 	/** The retained rows as an `ansi` node; streamed appends grow its text, so the reconciler sends `text append`. */
 	describe(_cx: DescribeContext): NativeNode {
-		this.#native ??= describeOutputLines(this.#lines, {
+		this.#native ??= describeOutputText(this.getText(), {
 			expanded: this.#options.expanded,
 			collapsedMaxLines: this.#options.collapsedMaxLines,
 			expandedMaxLines: this.#options.expandedMaxLines,
@@ -279,25 +348,37 @@ export class OutputPane implements Component {
 	render(width: number): readonly string[] {
 		const paddingX = getPaddingX(this.#options.paddingX ?? 0);
 		const contentWidth = Math.max(1, width - paddingX * 2);
-		const formatted = formatOutputPaneLines(
-			{
-				...this.#options,
-				lines: this.#lines,
-				width: contentWidth,
-			},
-			this.#theme,
-		);
-		const content = `${this.#options.leadingBlank && formatted.lines.length > 0 ? "\n" : ""}${formatted.lines.join("\n")}`;
-		const key = `${width}:${content.length}:${Bun.hash(content).toString(36)}`;
-		if (key !== this.#renderKey) {
-			this.#renderKey = key;
-			this.#text.setText(content);
+		const themeEpoch = getThemeEpoch();
+		const widthEpoch = getWidthConfigEpoch();
+		if (
+			this.#renderedVersion !== this.#version ||
+			this.#renderedWidth !== width ||
+			this.#renderedContentWidth !== contentWidth ||
+			this.#renderedThemeEpoch !== themeEpoch ||
+			this.#renderedWidthEpoch !== widthEpoch
+		) {
+			const formatted = formatOutputPaneLines(
+				{
+					...this.#options,
+					lines: this.#lines,
+					width: contentWidth,
+				},
+				this.#theme,
+			);
+			this.#text.setText(
+				`${this.#options.leadingBlank && formatted.lines.length > 0 ? "\n" : ""}${formatted.lines.join("\n")}`,
+			);
+			this.#renderedVersion = this.#version;
+			this.#renderedWidth = width;
+			this.#renderedContentWidth = contentWidth;
+			this.#renderedThemeEpoch = themeEpoch;
+			this.#renderedWidthEpoch = widthEpoch;
 		}
 		return this.#text.render(width);
 	}
 
 	invalidate(): void {
-		this.#renderKey = "";
+		this.#version++;
 		this.#native = undefined;
 		this.#text.invalidate();
 	}
@@ -317,15 +398,20 @@ export class OutputPane implements Component {
 	}
 
 	#startLine(): void {
-		if (this.#lines.length === 0) this.#lines.push("");
-		this.#lines.push("");
+		const lines = this.#lines;
+		if (lines.length === 0) lines.push("");
+		// The completed row joins the head; it is no longer the mutable tail.
+		if (lines.length === 1) this.#head = lines[0];
+		else if (this.#head !== undefined) this.#head = `${this.#head}\n${lines[lines.length - 1]}`;
+		lines.push("");
 	}
 
-	#clampStoredLines(lines: string[]): string[] {
+	#clampStoredLines(): void {
 		const maxStoredLines = this.#options.maxStoredLines;
-		if (maxStoredLines === undefined || lines.length <= maxStoredLines) return lines;
+		if (maxStoredLines === undefined || this.#lines.length <= maxStoredLines) return;
 		const boundedMax = Math.max(0, Math.floor(maxStoredLines));
-		return boundedMax === 0 ? [] : lines.slice(-boundedMax);
+		this.#lines = boundedMax === 0 ? [] : this.#lines.slice(-boundedMax);
+		this.#head = undefined;
 	}
 }
 

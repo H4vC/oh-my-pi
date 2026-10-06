@@ -765,6 +765,8 @@ export class Image implements Component {
 	// (its rows may already be committed to native scrollback).
 	#renderedGraphicRows = 0;
 	#native?: NativeNode;
+	/** Bytes behind `#native`'s blob; held so the blob store's weak tier can serve re-shows after a sweep. */
+	#nativeBytes?: Uint8Array;
 	/** Newest SIXEL encode: its target size and, once settled, the sequence (`null` on failure). */
 	#sixel?: { widthPx: number; heightPx: number; sequence?: string | null };
 
@@ -826,8 +828,9 @@ export class Image implements Component {
 			if (this.#options.requestRender) this.#options.requestRender();
 			else this.#budget?.requestRender();
 		};
-		encodeSixelAsync(new Uint8Array(Buffer.from(this.#base64Data, "base64")), widthPx, heightPx).then(settle, () =>
-			settle(null),
+		encodeSixelAsync(this.#nativeBytes ?? Buffer.from(this.#base64Data, "base64"), widthPx, heightPx).then(
+			settle,
+			() => settle(null),
 		);
 		return undefined;
 	}
@@ -839,7 +842,8 @@ export class Image implements Component {
 	 */
 	describe(_cx: DescribeContext): NativeNode {
 		if (this.#native) return this.#native;
-		const blob = registerNativeBlob(Buffer.from(this.#base64Data, "base64"), this.#mimeType);
+		this.#nativeBytes = Buffer.from(this.#base64Data, "base64");
+		const blob = registerNativeBlob(this.#nativeBytes, this.#mimeType);
 		const maxW = this.#options.maxWidthCells;
 		const maxH = this.#options.maxHeightCells;
 		this.#native = node("image", {

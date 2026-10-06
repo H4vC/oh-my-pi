@@ -40,7 +40,7 @@ import {
 } from "../theme/theme";
 import type { Component, OverlayOptions, RenderScheduler, RenderTimer } from "../tui";
 import { TspDocument } from "./apply";
-import { getNativeBlob } from "./blobs";
+import { getNativeBlob, releaseNativeBlobs, sweepNativeBlobs } from "./blobs";
 import { node } from "./describe";
 import { encodeTspJson, encodeTspMessage, type TspHello, TspReader, splitTspMessage } from "./encode";
 import type { DescribeContext, NativeChild, NativeNode, NativeSurface, NativeUiEvent } from "./node";
@@ -250,7 +250,12 @@ export class NativeBackend {
 	#recent: TspFrame[] = [];
 	#sawResize = false;
 	#live = false;
-	#overlayNodes = new Map<Component, { key: string; node: NativeNode }>();
+	#overlayNodes = new Map<Component, { key: string; head: unknown; node: NativeNode }>();
+	/** Blob ids the open surfaces' documents reference, for {@link sweepNativeBlobs}. */
+	#collectBlobs = (live: Set<string>): void => {
+		this.#inline.reconciler.collectBlobs(live);
+		this.#screen?.reconciler.collectBlobs(live);
+	};
 	#unbindTheme: (() => void) | undefined;
 	#palette: NativeThemePalette | undefined;
 	#paletteKey: string | undefined;
@@ -360,6 +365,8 @@ export class NativeBackend {
 	stop(keep = true): void {
 		if (!this.#live) return;
 		this.#live = false;
+		// A revoked start discards the backend; a kept surface may be adopted again.
+		if (!keep) releaseNativeBlobs(this);
 		if (this.#screen) this.#close(this.#screen, false);
 		this.#screen = null;
 		this.#close(this.#inline, keep);
@@ -490,9 +497,11 @@ export class NativeBackend {
 		if (this.#stats) {
 			logger.debug("TSP frame", { sf: surface.id, ops: ops.length, rows: surface.reconciler.fallbackCount });
 		}
-		if (ops.length === 0) return;
-		this.#uploadBlobs(surface, ops);
-		this.#sendFrame(surface, ops);
+		if (ops.length > 0) {
+			this.#uploadBlobs(surface, ops);
+			this.#sendFrame(surface, ops);
+		}
+		sweepNativeBlobs(this, this.#collectBlobs);
 	}
 
 	/**
@@ -759,16 +768,16 @@ export class NativeBackend {
 		const modal = overlay.focused || overlay.options?.fullscreen === true;
 		const role = own?.role;
 		const head = own?.head;
-		const key = `${anchor}|${size}|${modal}|${role}|${JSON.stringify(head)}`;
+		const key = `${anchor}|${size}|${modal}|${role}`;
 		const cached = this.#overlayNodes.get(overlay.component);
-		if (cached?.key === key) return cached.node;
+		if (cached?.key === key && (cached.head === head || Bun.deepEquals(cached.head, head))) return cached.node;
 		const wrapper = node(
 			"overlay",
 			{ anchor, size, modal, ...(role ? { role } : {}), ...(head ? { head } : {}) },
 			[overlay.component],
 			`ov-${nativeComponentId(overlay.component)}`,
 		);
-		this.#overlayNodes.set(overlay.component, { key, node: wrapper });
+		this.#overlayNodes.set(overlay.component, { key, head, node: wrapper });
 		return wrapper;
 	}
 

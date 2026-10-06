@@ -8,7 +8,10 @@ import { colorLuma, hexToRgb, rgbToHex } from "@oh-my-pi/pi-utils/color";
 import { colorToAnsi } from "../../theme/color";
 import { theme } from "../../theme/theme";
 
-/** Decode a hex color into RGB channels. */
+/**
+ * Decode a hex color into RGB channels.
+ * @deprecated Unused; use `hexToRgb` from `@oh-my-pi/pi-utils/color`. Will be removed in the next major.
+ */
 export function hexChannels(hex: string): [number, number, number] {
 	const { r, g, b } = hexToRgb(hex);
 	return [r, g, b];
@@ -80,6 +83,7 @@ export function pill(label: string, hex: string, options: { selected?: boolean; 
  * Flat filled chip with a contrast-computed label — readable on any theme,
  * unlike accent-on-selection combinations that can collapse (e.g. dark blue
  * on light blue).
+ * @deprecated Only used within this module; use {@link softPill}. Will become module-private in the next major.
  */
 export function chipFill(label: string, hex: string): string {
 	const labelHex = luminance(hex) > 0.5 ? mixHex(hex, "#000000", 0.82) : mixHex(hex, "#ffffff", 0.92);

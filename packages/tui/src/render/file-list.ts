@@ -34,6 +34,7 @@ export interface FileListOptions {
  * by path, linked to their absolute path, with language/folder icons and the
  * meta as detail. Collapsed, the list is clamped to `maxCollapsed` lines and
  * the terminal scrolls the rest.
+ * @deprecated Unused TSP helper; use {@link renderFileList}. Will be removed in the next major.
  */
 export function describeFileList(options: Omit<FileListOptions, "hyperlinkFn">): NativeNode {
 	const { files, expanded = false, maxCollapsed = 8, showIcons = true } = options;

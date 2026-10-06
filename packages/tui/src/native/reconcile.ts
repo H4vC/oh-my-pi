@@ -104,6 +104,15 @@ function asProps(node: NativeNode): Readonly<Record<string, unknown>> | undefine
 	return node.p as Readonly<Record<string, unknown>> | undefined;
 }
 
+/** Blob ids of the `image` nodes in `node`'s own subtree (nested components excluded). */
+function collectNodeBlobs(node: NativeNode, out: Set<string>): void {
+	if (node.k === "image") {
+		const blob = asProps(node)?.blob;
+		if (typeof blob === "string") out.add(blob);
+	}
+	if (node.c) for (const child of node.c) if (!isComponent(child)) collectNodeBlobs(child, out);
+}
+
 /** Longest increasing subsequence over non-negative `sources`; marks the members. */
 function stableMask(sources: readonly number[]): boolean[] {
 	const n = sources.length;
@@ -148,6 +157,15 @@ interface CompEntry {
 }
 
 type Entry = NodeEntry | CompEntry;
+
+/** A node's child entries and wire props at one position (keypath, owner, hoisting). */
+interface NodeShape {
+	readonly keypath: string;
+	readonly owner: Owner;
+	readonly hoist: boolean;
+	readonly entries: readonly Entry[];
+	readonly props: Readonly<Record<string, unknown>> | undefined;
+}
 
 /**
  * What a component's walk met, in walk order: nested component boundaries
@@ -239,6 +257,14 @@ export class Reconciler {
 		dock: { base: "dock", state: null },
 		layer: { base: "layer", state: null },
 	};
+	/** Entries and wire props computed this frame, per node; last frame's are the next diff's old side. */
+	#shapes = new Map<NativeNode, NodeShape>();
+	#prevShapes = new Map<NativeNode, NodeShape>();
+	/** Bumped whenever the document may have changed; keys the {@link focusTarget} memo. */
+	#generation = 0;
+	#focusComp: Component | null = null;
+	#focusId: string | null = null;
+	#focusGeneration = -1;
 
 	constructor(surface: string) {
 		this.surface = surface;
@@ -261,6 +287,10 @@ export class Reconciler {
 		this.#selectedIds.clear();
 		this.#framePortals = [];
 		this.#rows = 0;
+		// The previous frame's map was cleared at its end; reuse it for this frame.
+		const spare = this.#prevShapes;
+		this.#prevShapes = this.#shapes;
+		this.#shapes = spare;
 		let prev = this.#regions;
 		if (prev === null) {
 			for (const region of REGION_IDS) this.#ops.push(["add", region, this.surface, null, { id: region, k: "col" }]);
@@ -304,6 +334,8 @@ export class Reconciler {
 		if (cx.feature("scroll")) for (const [id, by] of this.#scrolls) this.#ops.push(["scroll", id, by]);
 		const ops = this.#ops;
 		this.#ops = [];
+		this.#prevShapes.clear();
+		if (ops.length > 0) this.#generation++;
 		return this.#gone.size === 0 ? ops : ops.filter(op => !this.#touchesGone(op));
 	}
 
@@ -317,6 +349,7 @@ export class Reconciler {
 		if (!regions) return;
 		// A fresh frame number so every state below counts as unvisited.
 		this.#frame++;
+		this.#generation++;
 		for (const region of ["dock", "layer"] as const) {
 			for (const entry of regions[region]) {
 				if (entry.comp === undefined) this.#dropSubtree(entry);
@@ -369,15 +402,41 @@ export class Reconciler {
 		return unescapeKey(id.slice(Math.max(dot, slash) + 1));
 	}
 
-	/** Wire id of the first `editor`/`input` `component` describes (for `focus`), or null. */
+	/**
+	 * Wire id of the first `editor`/`input` `component` describes (for `focus`), or null.
+	 * Memoized for the last component asked until the document changes.
+	 */
 	focusTarget(component: Component): string | null {
+		if (component === this.#focusComp && this.#focusGeneration === this.#generation) return this.#focusId;
 		const state = this.#states.get(component);
-		return state ? this.#findEditor(state, 0) : null;
+		const id = state ? this.#findEditor(state, 0) : null;
+		this.#focusComp = component;
+		this.#focusId = id;
+		this.#focusGeneration = this.#generation;
+		return id;
 	}
 
 	/** Stop referencing ids the terminal dropped (`gone`). */
 	forget(ids: readonly string[]): void {
 		for (const id of ids) this.#gone.add(id);
+		this.#generation++;
+	}
+
+	/**
+	 * Add the blob ids of every `image` node in the current document to `out`
+	 * (a settled component's only while its last description is still alive).
+	 */
+	collectBlobs(out: Set<string>): void {
+		for (const state of this.#states.values()) {
+			const node = state.node ?? (state.weak?.deref() as NativeNode | undefined);
+			if (node && typeof node.k === "string") collectNodeBlobs(node, out);
+		}
+		const regions = this.#regions;
+		if (regions) {
+			for (const region of REGION_IDS) {
+				for (const entry of regions[region]) if (entry.comp === undefined) collectNodeBlobs(entry.node, out);
+			}
+		}
 	}
 
 	#touchesGone(op: TspOp): boolean {
@@ -590,6 +649,23 @@ export class Reconciler {
 		return entry.hoist === walk.hoist ? walk : { ...walk, hoist: entry.hoist };
 	}
 
+	/**
+	 * `node`'s child entries and wire props at this position, reused when this
+	 * or the last frame computed them (the last frame's new side is this
+	 * frame's old side). A walk always recomputes the entries: it records the
+	 * overlays they hoist.
+	 */
+	#shape(node: NativeNode, keypath: string, owner: Owner, hoist: boolean, walk: Walk | null): NodeShape {
+		if (walk === null) {
+			const known = this.#shapes.get(node) ?? this.#prevShapes.get(node);
+			if (known && known.keypath === keypath && known.owner === owner && known.hoist === hoist) return known;
+		}
+		const entries = this.#entries(node.c, keypath, owner, hoist, walk);
+		const shape: NodeShape = { keypath, owner, hoist, entries, props: this.#wireProps(node, owner, entries) };
+		this.#shapes.set(node, shape);
+		return shape;
+	}
+
 	// ── Nodes ────────────────────────────────────────────────────────────
 
 	#diffNode(old: NodeEntry, next: NodeEntry, parent: string, before: string | null, walk: Walk): void {
@@ -618,15 +694,10 @@ export class Reconciler {
 			const presses = jump ? 1 : Math.min(Math.max(scroll.n - (old.node.scroll?.n ?? 0), 1), MAX_SCROLL_REPEAT);
 			for (let i = 0; i < presses; i++) this.#scrolls.push([next.id, scroll.by]);
 		}
-		const oldEntries = this.#entries(old.node.c, old.keypath, old.owner, old.hoist, null);
-		const newEntries = this.#entries(next.node.c, next.keypath, next.owner, next.hoist, inner);
-		this.#diffProps(
-			next.id,
-			next.node.k,
-			this.#wireProps(old.node, old.owner, oldEntries),
-			this.#wireProps(next.node, next.owner, newEntries),
-		);
-		this.#diffChildren(next.id, oldEntries, newEntries, null, inner);
+		const oldShape = this.#shape(old.node, old.keypath, old.owner, old.hoist, null);
+		const newShape = this.#shape(next.node, next.keypath, next.owner, next.hoist, inner);
+		this.#diffProps(next.id, next.node.k, oldShape.props, newShape.props);
+		this.#diffChildren(next.id, oldShape.entries, newShape.entries, null, inner);
 	}
 
 	/** Walk an unchanged node for the component boundaries and overlays inside it. */
@@ -752,7 +823,7 @@ export class Reconciler {
 	/** A full wire subtree for an entry; nested components get states (or pending moves when mounted elsewhere). */
 	#materialize(entry: NodeEntry, walk: Walk): TspNode {
 		if (typeof entry.node.reveal === "string") this.#reveals.push([entry.id, entry.node.reveal]);
-		const entries = this.#entries(entry.node.c, entry.keypath, entry.owner, entry.hoist, walk);
+		const { entries, props } = this.#shape(entry.node, entry.keypath, entry.owner, entry.hoist, walk);
 		const children: TspNode[] = [];
 		for (let i = 0; i < entries.length; i++) {
 			const child = entries[i]!;
@@ -790,7 +861,7 @@ export class Reconciler {
 			state = this.#createState(child.comp, entry.id);
 			children.push(this.#materializeComponent(state, walk.settled));
 		}
-		return this.#wire(entry.id, entry.node.k, this.#wireProps(entry.node, entry.owner, entries), children);
+		return this.#wire(entry.id, entry.node.k, props, children);
 	}
 
 	#wire(
@@ -964,7 +1035,9 @@ export class Reconciler {
 				state.node = next;
 			}
 		} else if (state.weak?.deref() === this.#identity(state, next)) {
+			// Settled and unchanged: what #finish keeps already describes `next`.
 			this.#revisitComponent(state, settled);
+			return;
 		} else {
 			this.#replaceSettled(state, next, parent, before, settled);
 		}
@@ -993,8 +1066,7 @@ export class Reconciler {
 			state.inner = inner;
 			return;
 		}
-		const entries = this.#entries(next.c, "", state.owner, true, walk);
-		const props = this.#wireProps(next, state.owner, entries);
+		const { entries, props } = this.#shape(next, "", state.owner, true, walk);
 		const textKind = TEXT_KINDS.has(next.k);
 		let set: Record<string, unknown> | undefined;
 		if (props) {
@@ -1028,8 +1100,7 @@ export class Reconciler {
 			state.settleSent = true;
 			this.#settles.push(state.id);
 		}
-		const entries = this.#entries(node.c, "", state.owner, true, null);
-		const props = this.#wireProps(node, state.owner, entries);
+		const { entries, props } = this.#shape(node, "", state.owner, true, null);
 		const keys: string[] = [];
 		if (props) for (const key in props) if (props[key] !== undefined) keys.push(key);
 		state.kind = node.k;

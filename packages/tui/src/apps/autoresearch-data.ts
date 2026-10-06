@@ -21,7 +21,10 @@ export function currentResults(results: ExperimentResult[], segment: number): Ex
 	return results.filter(result => result.segment === segment);
 }
 
-/** Find the first unflagged kept experiment in a segment. */
+/**
+ * Find the first unflagged kept experiment in a segment.
+ * @deprecated Only used within this module; use {@link findBaselineMetric} or {@link findBaselineRunNumber}. Will become module-private in the next major.
+ */
 export function findBaselineResult(results: ExperimentResult[], segment: number): ExperimentResult | null {
 	return currentResults(results, segment).find(result => result.status === "keep" && !result.flagged) ?? null;
 }

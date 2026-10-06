@@ -244,6 +244,7 @@ function describeCellOutput(
  * `code` node (numbered from `codeStartLine`, or the first explicit line
  * number) and an `ansi` output section. The collapsed code clamp is the
  * card preview; highlighting and gutters are the terminal's.
+ * @deprecated Unused TSP helper; use {@link renderCodeCell}. Will be removed in the next major.
  */
 export function describeCodeCell(options: Omit<CodeCellOptions, "width">, theme: Theme): NativeNode {
 	const { expanded = false, outputMaxLines = 6, codeMaxLines = 12 } = options;
@@ -269,7 +270,10 @@ export function describeCodeCell(options: Omit<CodeCellOptions, "width">, theme:
 	});
 }
 
-/** The native form of {@link renderMarkdownCell}: a collapsible `card` holding `md` source and optional output. */
+/**
+ * The native form of {@link renderMarkdownCell}: a collapsible `card` holding `md` source and optional output.
+ * @deprecated Unused TSP helper; use {@link renderMarkdownCell}. Will be removed in the next major.
+ */
 export function describeMarkdownCell(options: Omit<MarkdownCellOptions, "width">, theme: Theme): NativeNode {
 	const { expanded = false, outputMaxLines = 6, contentMaxLines = 12 } = options;
 	const { head, meta } = describeHeader(options, theme);

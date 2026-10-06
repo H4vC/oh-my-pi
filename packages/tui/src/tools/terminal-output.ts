@@ -6,10 +6,8 @@ let xtermTerminalCtor: typeof XtermModule.Terminal | undefined;
 
 /** Lazily load the headless terminal shared by PTY display paths. */
 export async function loadXtermTerminal(): Promise<typeof XtermModule.Terminal> {
-	if (!xtermTerminalCtor) {
-		const mod = (await import("@oh-my-pi/pi-utils/vterm")) as typeof XtermModule & { default?: typeof XtermModule };
-		xtermTerminalCtor = (mod.default ?? mod).Terminal;
-	}
+	// Deferred so the TUI does not load the terminal emulator until a PTY view opens.
+	xtermTerminalCtor ??= (await import("@oh-my-pi/pi-utils/vterm")).Terminal;
 	return xtermTerminalCtor;
 }
 
@@ -105,10 +103,30 @@ export function styleTerminalRow(row: string, baseForeground: string): string {
 	return hasText ? `${output}${RESET}` : "";
 }
 
+/** True when two cells carry the same rendition (and therefore the same {@link cellStyle}). */
+function sameRendition(a: TerminalCell, b: TerminalCell): boolean {
+	return (
+		a.getFgColor() === b.getFgColor() &&
+		a.getBgColor() === b.getBgColor() &&
+		a.isFgRGB() === b.isFgRGB() &&
+		a.isFgPalette() === b.isFgPalette() &&
+		a.isBgRGB() === b.isBgRGB() &&
+		a.isBgPalette() === b.isBgPalette() &&
+		a.isBold() === b.isBold() &&
+		a.isDim() === b.isDim() &&
+		a.isItalic() === b.isItalic() &&
+		a.isUnderline() === b.isUnderline() &&
+		a.isInverse() === b.isInverse() &&
+		a.isStrikethrough() === b.isStrikethrough() &&
+		a.isOverline() === b.isOverline()
+	);
+}
+
 /** Reads terminal screen rows as sanitized text plus only the styles the TUI may replay. */
 export function readTerminalRows(terminal: XtermTerminal, startRow: number, rowCount: number): string[] {
 	const buffer = terminal.buffer.active;
-	const reusableCell = buffer.getNullCell();
+	const cell = buffer.getNullCell();
+	const previousCell = buffer.getNullCell();
 	const rows: string[] = [];
 	const endRow = Math.min(buffer.length, Math.max(0, startRow) + Math.max(0, rowCount));
 
@@ -119,32 +137,36 @@ export function readTerminalRows(terminal: XtermTerminal, startRow: number, rowC
 			continue;
 		}
 
-		const cells: Array<{ chars: string; style: string }> = [];
+		// First pass: the last column holding visible content.
 		let lastContent = -1;
 		for (let column = 0; column < line.length;) {
-			const cell = line.getCell(column, reusableCell);
-			if (!cell) break;
+			if (!line.getCell(column, cell)) break;
 			const chars = cell.getChars();
-			const width = Math.max(1, cell.getWidth());
-			cells.push({ chars: chars || " ", style: cellStyle(cell) });
-			if (chars && chars !== " ") lastContent = cells.length - 1;
-			column += width;
+			if (chars && chars !== " ") lastContent = column;
+			column += Math.max(1, cell.getWidth());
 		}
-
 		if (lastContent < 0) {
 			rows.push("");
 			continue;
 		}
 
+		// Second pass: emit text, building an SGR string only when the rendition changes.
 		let rendered = "";
 		let previousStyle: string | undefined;
-		for (let index = 0; index <= lastContent; index++) {
-			const cell = cells[index]!;
-			if (cell.style !== previousStyle) {
-				rendered += `${RESET}${cell.style}`;
-				previousStyle = cell.style;
+		let hasPrevious = false;
+		for (let column = 0; column <= lastContent;) {
+			if (!line.getCell(column, cell)) break;
+			if (!hasPrevious || !sameRendition(cell, previousCell)) {
+				const style = cellStyle(cell);
+				if (style !== previousStyle) {
+					rendered += `${RESET}${style}`;
+					previousStyle = style;
+				}
+				line.getCell(column, previousCell);
+				hasPrevious = true;
 			}
-			rendered += cell.chars;
+			rendered += cell.getChars() || " ";
+			column += Math.max(1, cell.getWidth());
 		}
 		rows.push(rendered);
 	}

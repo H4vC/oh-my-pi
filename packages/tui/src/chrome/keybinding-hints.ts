@@ -66,6 +66,7 @@ export function keyHint(action: Keybinding, description: string): string {
  * @param action - App keybinding name (e.g., "app.interrupt", "app.editor.external")
  * @param description - Description text
  * @returns Formatted string with dim key and muted description
+ * @deprecated Unused; use `appKey` with `theme.fg`. Will be removed in the next major.
  */
 export function appKeyHint(keybindings: KeybindingsManager, action: AppKeybinding, description: string): string {
 	return theme.fg("dim", appKey(keybindings, action)) + theme.fg("muted", ` ${description}`);
