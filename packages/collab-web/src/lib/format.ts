@@ -1,4 +1,5 @@
 /** Small pure formatting helpers shared across collab-web components. */
+import { shortenPath } from "../tool-render/util";
 
 /** HTML-escape text destined for `dangerouslySetInnerHTML`. */
 export function escapeHtml(s: string): string {
@@ -28,18 +29,6 @@ export function fmtCost(usd: number): string {
 	return `$${usd >= 1 ? usd.toFixed(2) : usd.toFixed(3)}`;
 }
 
-/** "847ms", "12.3s", "4m05s", "1h12m". */
-export function fmtDuration(ms: number): string {
-	if (!Number.isFinite(ms) || ms < 0) return "0ms";
-	if (ms < 1000) return `${Math.round(ms)}ms`;
-	const s = ms / 1000;
-	if (s < 60) return `${s.toFixed(1)}s`;
-	const min = Math.floor(s / 60);
-	if (min < 60) return `${min}m${String(Math.round(s % 60)).padStart(2, "0")}s`;
-	const h = Math.floor(min / 60);
-	return `${h}h${String(min % 60).padStart(2, "0")}m`;
-}
-
 /** "now", "42s ago", "5m ago", "3h ago", "2d ago". Input: epoch ms. */
 export function relTime(tsMs: number): string {
 	if (!Number.isFinite(tsMs)) return "";
@@ -60,10 +49,10 @@ export function fmtPercent(p: number | null | undefined): string {
 	return `${Math.round(Math.min(100, Math.max(0, p)))}%`;
 }
 
-/** Home-relative, middle-elided path: "~/…/packages/collab-web". */
-export function shortenPath(p: string): string {
+/** Home-relative, middle-elided cwd: "~/…/packages/collab-web". */
+export function shortenCwd(p: string): string {
 	if (typeof p !== "string" || p.length === 0) return "";
-	let out = p.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, "~");
+	let out = shortenPath(p);
 	const segs = out.split("/");
 	if (segs.length > 4) out = `${segs[0]}/…/${segs.slice(-2).join("/")}`;
 	return out;

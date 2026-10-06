@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added binary embedding storage, making the recall vector stage ~12× faster; older databases stay compatible ([#14642](https://github.com/can1357/oh-my-pi/pull/14642) by [@H4vC](https://github.com/H4vC))
+
+### Changed
+
+- Made `remember()` atomic: the memory, annotations, links and working-memory trim commit together ([#14642](https://github.com/can1357/oh-my-pi/pull/14642) by [@H4vC](https://github.com/H4vC))
+- Sped up fact recall and lexical relevance scoring on large memories ([#14642](https://github.com/can1357/oh-my-pi/pull/14642) by [@H4vC](https://github.com/H4vC))
+- Allowed `recall()` and `recallEnhanced()` to take a `Float32Array` `queryEmbedding` ([#14642](https://github.com/can1357/oh-my-pi/pull/14642) by [@H4vC](https://github.com/H4vC))
+
+### Fixed
+
+- Fixed embedding-model rebuilds timing out and killing the embedding worker on large memory banks; interrupted rebuilds resume on next open ([#14642](https://github.com/can1357/oh-my-pi/pull/14642) by [@H4vC](https://github.com/H4vC))
+
+### Deprecated
+
+- Deprecated `detectLanguage(text)` from `core/beam/helpers` (use `core/beam/consolidate`), `vecSearch`, `inMemoryVecSearch`, `workingMemoryVecSearch`, `BinaryVectorStore`, `FastBinarySearch`, `setEmbeddingProvider` (use `setEmbeddingProviderForTests`) and `resetEmbeddingStateForTests` (use `resetEmbeddingProviderForTests`) ([#14642](https://github.com/can1357/oh-my-pi/pull/14642) by [@H4vC](https://github.com/H4vC))
+
 ## [18.5.1] - 2026-10-03
 
 ### Changed

@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Reduced web guest re-rendering and Markdown re-parsing while responses stream ([#14642](https://github.com/can1357/oh-my-pi/pull/14642) by [@H4vC](https://github.com/H4vC))
+- Stopped polling transcripts of finished subagents in the agent drawer ([#14642](https://github.com/can1357/oh-my-pi/pull/14642) by [@H4vC](https://github.com/H4vC))
+- Formatted job and task tool card durations consistently with the rest of the UI (e.g. `1m05s`) ([#14642](https://github.com/can1357/oh-my-pi/pull/14642) by [@H4vC](https://github.com/H4vC))
+
+### Fixed
+
+- Fixed memory growth from subagents the host no longer lists ([#14642](https://github.com/can1357/oh-my-pi/pull/14642) by [@H4vC](https://github.com/H4vC))
+- Fixed slow Markdown rendering for transcripts with many unclosed `\[`/`$$` openers ([#14642](https://github.com/can1357/oh-my-pi/pull/14642) by [@H4vC](https://github.com/H4vC))
+
 ## [18.4.10] - 2026-10-02
 
 ### Fixed

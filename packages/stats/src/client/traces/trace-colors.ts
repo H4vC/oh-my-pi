@@ -3,7 +3,7 @@
  * design tokens so canvas drawing follows the active theme.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import type { TraceSpanKind } from "../types";
 import { useSystemTheme } from "../useSystemTheme";
 
@@ -67,18 +67,9 @@ function readTheme(): TraceTheme {
 	};
 }
 
-/**
- * Current trace palette. Re-reads the tokens whenever the resolved theme
- * changes (store or a direct `data-theme` attribute write).
- */
+/** Current trace palette; re-reads the tokens whenever the resolved theme changes. */
 export function useTraceTheme(): TraceTheme {
 	const theme = useSystemTheme();
-	const [attrVersion, setAttrVersion] = useState(0);
-	useEffect(() => {
-		const observer = new MutationObserver(() => setAttrVersion(n => n + 1));
-		observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
-		return () => observer.disconnect();
-	}, []);
-	// biome-ignore lint/correctness/useExhaustiveDependencies: theme/attrVersion are re-read triggers.
-	return useMemo(readTheme, [theme, attrVersion]);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: theme is the re-read trigger.
+	return useMemo(readTheme, [theme]);
 }

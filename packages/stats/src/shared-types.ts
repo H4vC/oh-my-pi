@@ -5,6 +5,28 @@
  * without dragging server dependencies into its bundle.
  */
 
+export const HOUR_MS = 60 * 60 * 1000;
+export const DAY_MS = 24 * HOUR_MS;
+
+/** Dashboard time-range selector values (`?range=`). */
+export type TimeRange = "1h" | "24h" | "7d" | "30d" | "90d" | "all";
+
+/** Span (`null` = all time) and primary series bucket size of a {@link TimeRange}. */
+export interface TimeRangeWindow {
+	spanMs: number | null;
+	bucketMs: number;
+}
+
+/** Window of each range: the server resolves `?range=` with it, the client lays out chart axes from it. */
+export const RANGE_WINDOWS: Readonly<Record<TimeRange, Readonly<TimeRangeWindow>>> = {
+	"1h": { spanMs: HOUR_MS, bucketMs: 5 * 60 * 1000 },
+	"24h": { spanMs: DAY_MS, bucketMs: HOUR_MS },
+	"7d": { spanMs: 7 * DAY_MS, bucketMs: DAY_MS },
+	"30d": { spanMs: 30 * DAY_MS, bucketMs: DAY_MS },
+	"90d": { spanMs: 90 * DAY_MS, bucketMs: DAY_MS },
+	all: { spanMs: null, bucketMs: DAY_MS },
+};
+
 /**
  * Aggregated stats for a model or folder.
  */

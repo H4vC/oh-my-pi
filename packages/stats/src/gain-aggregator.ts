@@ -10,7 +10,7 @@
 import type { Stats } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { getStatsDbPath, isEnoent, logger } from "@oh-my-pi/pi-utils";
+import { getStatsDbPath, isEnoent, logger, parseJsonlLenient } from "@oh-my-pi/pi-utils";
 import { getTimeRangeConfig } from "./aggregator";
 import { initDb } from "./db";
 import type { GainDashboardStats, GainSourceTotals, GainTimeSeriesPoint } from "./shared-types";
@@ -184,16 +184,7 @@ async function readSnapcompactRecords(cutoff: number | null, project: string | n
 			return { records: [], projects: new Set() };
 		}
 
-		parsed = [];
-		for (const line of text.split("\n")) {
-			if (!line.trim()) continue;
-			try {
-				const rec = JSON.parse(line) as SnapcompactRecord;
-				parsed.push(rec);
-			} catch {
-				/* skip malformed line */
-			}
-		}
+		parsed = parseJsonlLenient<SnapcompactRecord>(text);
 		snapcompactCache = { key: cacheKey, records: parsed };
 	}
 

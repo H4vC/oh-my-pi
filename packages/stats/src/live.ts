@@ -5,15 +5,17 @@
  * The dashboard never waits for ingest. {@link StatsLive.start} kicks a full
  * sync in the background and watches the sessions directory; changed
  * transcripts are re-synced (only those files) shortly after they are written.
- * Every committed batch bumps {@link LiveStatus.version} (throttled), so open
- * pages refetch and fill in while parsing is still running.
+ * Every batch that changes stored rows bumps {@link LiveStatus.version}
+ * (throttled), so open pages refetch and fill in while parsing is still
+ * running; syncs that change nothing leave the version alone. Ingest stops a
+ * minute after the last subscriber leaves.
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getSessionsDir, logger } from "@oh-my-pi/pi-utils";
 import { syncAllSessions } from "./aggregator";
-import { initDb } from "./db";
+import { getDataVersion, initDb } from "./db";
 import { getRollupStatus, refreshRollups } from "./rollup";
 import type { LiveStatus, LiveSyncStatus } from "./shared-types";
 
@@ -28,7 +30,11 @@ const SYNC_RETRY_MS = 10_000;
 /** Minimum spacing of progress-only status events. */
 const PROGRESS_THROTTLE_MS = 150;
 
-type Listener = (status: LiveStatus) => void;
+/** Receives each distinct status and its JSON serialization (shared by every listener). */
+type Listener = (status: LiveStatus, frame: string) => void;
+
+/** Keep ingesting this long after the last subscriber leaves, so a page reload does not restart it. */
+const IDLE_STOP_MS = 60_000;
 
 /** One per process; owned by the dashboard server (see `startServer`). */
 export class StatsLive {
@@ -36,6 +42,10 @@ export class StatsLive {
 	#sync: LiveSyncStatus = { phase: "idle", current: 0, total: 0, processed: 0, lastSyncedAt: null, error: null };
 	#indexingHours = 0;
 	#listeners = new Set<Listener>();
+	/** Last frame sent to listeners; identical statuses are not re-sent. */
+	#lastFrame: string | null = null;
+	/** `PRAGMA data_version` at the last sync; null before the first. */
+	#dataVersion: number | null = null;
 
 	#started = false;
 	#watcher: fs.FSWatcher | null = null;
@@ -44,6 +54,7 @@ export class StatsLive {
 	#versionTimer: NodeJS.Timeout | null = null;
 	#progressTimer: NodeJS.Timeout | null = null;
 	#retryTimer: NodeJS.Timeout | null = null;
+	#idleTimer: NodeJS.Timeout | null = null;
 	#lastVersionAt = 0;
 
 	/** Queued work: specific files, or `"all"` for a full sync. */
@@ -56,10 +67,26 @@ export class StatsLive {
 		return { version: this.#version, sync: { ...this.#sync }, indexingHours: this.#indexingHours };
 	}
 
-	/** Receive every status change; returns the unsubscribe function. */
+	/**
+	 * Receive every status change; returns the unsubscribe function. Once the
+	 * last subscriber of a started hub leaves, ingest stops after
+	 * {@link IDLE_STOP_MS} unless someone subscribes again.
+	 */
 	subscribe(listener: Listener): () => void {
-		this.#listeners.add(listener);
-		return () => this.#listeners.delete(listener);
+		// A wrapper per subscription, so subscribing one function twice still counts twice.
+		const entry: Listener = (status, frame) => listener(status, frame);
+		this.#listeners.add(entry);
+		clearTimeout(this.#idleTimer ?? undefined);
+		this.#idleTimer = null;
+		return () => {
+			if (!this.#listeners.delete(entry) || this.#listeners.size > 0 || !this.#started) return;
+			clearTimeout(this.#idleTimer ?? undefined);
+			this.#idleTimer = setTimeout(() => {
+				this.#idleTimer = null;
+				if (this.#listeners.size === 0) this.stop();
+			}, IDLE_STOP_MS);
+			this.#idleTimer.unref?.();
+		};
 	}
 
 	/** Begin background ingest: an immediate full sync, the transcript watcher, and periodic resyncs. Idempotent. */
@@ -77,10 +104,22 @@ export class StatsLive {
 		this.#watcher?.close();
 		this.#watcher = null;
 		clearInterval(this.#fullSyncTimer ?? undefined);
-		for (const timer of [this.#debounceTimer, this.#versionTimer, this.#progressTimer, this.#retryTimer]) {
+		for (const timer of [
+			this.#debounceTimer,
+			this.#versionTimer,
+			this.#progressTimer,
+			this.#retryTimer,
+			this.#idleTimer,
+		]) {
 			clearTimeout(timer ?? undefined);
 		}
-		this.#fullSyncTimer = this.#debounceTimer = this.#versionTimer = this.#progressTimer = this.#retryTimer = null;
+		this.#fullSyncTimer =
+			this.#debounceTimer =
+			this.#versionTimer =
+			this.#progressTimer =
+			this.#retryTimer =
+			this.#idleTimer =
+				null;
 		this.#queued = null;
 	}
 
@@ -133,8 +172,9 @@ export class StatsLive {
 						};
 						this.#emitProgress();
 					}
-					if (event.processed > committed) {
-						committed = event.processed;
+					// Only committed row changes make pages refetch; unchanged transcripts cost nothing.
+					if (event.changes > committed) {
+						committed = event.changes;
 						this.#changed();
 					}
 				},
@@ -159,14 +199,28 @@ export class StatsLive {
 				}, SYNC_RETRY_MS);
 			}
 		}
-		// Another process may have ingested too; always let clients revalidate.
-		this.#changed();
+		// Another process may have ingested too; its commits move SQLite's data_version.
+		if (this.#externalWrites()) this.#changed();
 		this.#emit();
+	}
+
+	/** Whether another connection committed since the last check (always true on the first). */
+	#externalWrites(): boolean {
+		const current = getDataVersion();
+		if (current === null) return false;
+		const changed = current !== this.#dataVersion;
+		this.#dataVersion = current;
+		return changed;
 	}
 
 	/** Stored data changed: refresh rollups and (throttled) bump the version. */
 	#changed(): void {
 		void this.#refresh();
+		this.#bumpVersion();
+	}
+
+	/** Bump the data version (throttled), making open pages refetch. */
+	#bumpVersion(): void {
 		if (this.#versionTimer) return;
 		const wait = Math.max(0, this.#lastVersionAt + VERSION_THROTTLE_MS - Date.now());
 		this.#versionTimer = setTimeout(() => {
@@ -190,8 +244,9 @@ export class StatsLive {
 				await refreshRollups({
 					onProgress: remaining => {
 						this.#indexingHours = remaining;
-						// Each rolled batch fills in more history for open pages.
-						if (remaining > 0) this.#changed();
+						// Each rolled batch fills in more history for open pages; the rows
+						// themselves are already being rolled, so only the version moves.
+						if (remaining > 0) this.#bumpVersion();
 					},
 				});
 			} while (this.#refreshAgain);
@@ -240,9 +295,12 @@ export class StatsLive {
 
 	#emit(): void {
 		const status = this.status();
+		const frame = JSON.stringify(status);
+		if (frame === this.#lastFrame) return;
+		this.#lastFrame = frame;
 		for (const listener of this.#listeners) {
 			try {
-				listener(status);
+				listener(status, frame);
 			} catch (error) {
 				logger.warn("Stats live listener failed", { error: String(error) });
 			}

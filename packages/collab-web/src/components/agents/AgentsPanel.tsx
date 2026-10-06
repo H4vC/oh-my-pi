@@ -5,8 +5,9 @@ import type {
 	SubagentProgressPayload,
 } from "@oh-my-pi/pi-wire";
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
-import { fmtCost, fmtDuration, fmtTokens, relTime } from "../../lib/format";
+import { memo, useEffect, useMemo, useState } from "react";
+import { fmtCost, fmtTokens, relTime } from "../../lib/format";
+import { fmtDurationMs } from "../../tool-render/util";
 import "./agents.css";
 
 /** Re-render tick so running-tool durations and relative times stay live. */
@@ -39,7 +40,7 @@ function activityLine(
 ): string {
 	if (p?.currentTool) {
 		const start = toolStartMs(p);
-		if (start !== null) return `${p.currentTool} · ${fmtDuration(Math.max(0, now - start))}`;
+		if (start !== null) return `${p.currentTool} · ${fmtDurationMs(Math.max(0, now - start))}`;
 		return p.currentTool;
 	}
 	if (p?.lastIntent) return p.lastIntent;
@@ -47,7 +48,7 @@ function activityLine(
 	return agent.status;
 }
 
-function AgentRow(props: {
+const AgentRow = memo(function AgentRow(props: {
 	agent: AgentSnapshot;
 	payload: SubagentProgressPayload | undefined;
 	lifecycle: SubagentLifecyclePayload | undefined;
@@ -76,12 +77,17 @@ function AgentRow(props: {
 			</span>
 		</button>
 	);
-}
+});
 
-export function AgentsPanel(props: {
+/**
+ * Memoized: `progress`/`lifecycle` are mutated in place by the client, so
+ * `busVersion` is the prop that changes when either does.
+ */
+export const AgentsPanel = memo(function AgentsPanel(props: {
 	agents: readonly AgentSnapshot[];
 	progress: ReadonlyMap<string, SubagentProgressPayload>;
 	lifecycle: ReadonlyMap<string, SubagentLifecyclePayload>;
+	busVersion: number;
 	selectedId: string | null;
 	onSelect(id: string | null): void;
 }): ReactNode {
@@ -133,4 +139,4 @@ export function AgentsPanel(props: {
 			{sorted.subs.length === 0 ? <div className="ag-empty">No subagents yet</div> : null}
 		</div>
 	);
-}
+});

@@ -13,7 +13,7 @@ import {
 	type Usage,
 } from "@oh-my-pi/pi-ai";
 import { classifyModel } from "@oh-my-pi/pi-catalog/compat/taxonomy";
-import { getSessionsDir, isEnoent, readLines } from "@oh-my-pi/pi-utils";
+import { getSessionsDir, isEnoent } from "@oh-my-pi/pi-utils";
 import type {
 	AgentType,
 	MessageStatsInput,
@@ -688,30 +688,51 @@ export async function listSessionFiles(folderPath: string): Promise<string[]> {
  */
 export async function listAllSessionFiles(): Promise<string[]> {
 	const folders = await listSessionFolders();
-	const allFiles: string[] = [];
+	return (await Promise.all(folders.map(listSessionFiles))).flat();
+}
 
-	for (const folder of folders) {
-		const files = await listSessionFiles(folder);
-		allFiles.push(...files);
+/** Read a transcript, gunzipping `.gz`; a missing `.jsonl` falls back to the `.jsonl.gz` gc compressed it to. */
+async function readSessionBytes(sessionPath: string): Promise<Uint8Array | null> {
+	const candidates = sessionPath.endsWith(".jsonl") ? [sessionPath, `${sessionPath}.gz`] : [sessionPath];
+	for (const candidate of candidates) {
+		try {
+			const bytes = await Bun.file(candidate).bytes();
+			return candidate.endsWith(".gz") ? Bun.gunzipSync(bytes) : bytes;
+		} catch (err) {
+			if (!isEnoent(err)) throw err;
+		}
 	}
-
-	return allFiles;
+	return null;
 }
 
 /**
- * Find a specific entry in a session file.
+ * Find a specific entry in a session file (`.jsonl`, `.jsonl.gz`, or a
+ * `.jsonl` that gc has since compressed). Only lines containing the id's
+ * `"id":"…"` bytes are parsed; a transcript that mentions the id in any other
+ * form falls back to a line-by-line scan.
  */
 export async function getSessionEntry(sessionPath: string, entryId: string): Promise<SessionEntry | null> {
-	try {
-		for await (const line of readLines(Bun.file(sessionPath).stream())) {
-			const entry = parseJsonLine(line, 0, line.length);
-			if (entry && "id" in entry && entry.id === entryId) {
-				return entry;
-			}
-		}
-	} catch (err) {
-		if (isEnoent(err)) return null;
-		throw err;
+	const bytes = await readSessionBytes(sessionPath);
+	if (!bytes) return null;
+	const haystack = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+	const idJson = JSON.stringify(entryId);
+	const needle = Buffer.from(`"id":${idJson}`);
+	for (let hit = haystack.indexOf(needle); hit !== -1;) {
+		const lineStart = haystack.lastIndexOf(LF, hit) + 1;
+		const newline = haystack.indexOf(LF, hit);
+		const lineEnd = newline === -1 ? haystack.length : newline;
+		const entry = parseJsonLine(bytes, lineStart, lineEnd);
+		if (entry && "id" in entry && entry.id === entryId) return entry;
+		hit = newline === -1 ? -1 : haystack.indexOf(needle, newline + 1);
+	}
+	// Absent everywhere: no other spelling of the entry can exist.
+	if (!haystack.includes(idJson)) return null;
+	for (let cursor = 0; cursor < bytes.length;) {
+		const newline = bytes.indexOf(LF, cursor);
+		const lineEnd = newline === -1 ? bytes.length : newline;
+		const entry = parseJsonLine(bytes, cursor, lineEnd);
+		if (entry && "id" in entry && entry.id === entryId) return entry;
+		cursor = lineEnd + 1;
 	}
 	return null;
 }

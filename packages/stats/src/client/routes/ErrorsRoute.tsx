@@ -13,7 +13,7 @@ import {
 } from "../data/formatters";
 import { useQuery } from "../data/query";
 import { rangeMeta } from "../data/range";
-import { type ErrorGroupView, errorSignature, groupErrorsBySignature } from "../data/view-models";
+import { buildErrorsView, type ErrorGroupView } from "../data/view-models";
 import type { MessageStats, TimeRange } from "../types";
 import {
 	Card,
@@ -44,31 +44,15 @@ const LOAD_STEPS = [50, 200, 1_000] as const;
 export function ErrorsRoute({ active, range, onRequestClick }: ErrorsRouteProps) {
 	const [step, setStep] = useState(0);
 	const limit = LOAD_STEPS[step];
-	const errors = useQuery(["errors", range, limit], () => getRecentErrors(range, limit), { enabled: active });
+	const errors = useQuery(["errors", range, limit], ({ signal }) => getRecentErrors(range, limit, signal), {
+		enabled: active,
+	});
 	const [selectedSignature, setSelectedSignature] = useState<string | null>(null);
 	const [selectedModel, setSelectedModel] = useState<string | null>(null);
 	const [search, setSearch] = useState("");
 	const meta = rangeMeta(range);
 
-	const view = useMemo(() => {
-		const rows = (errors.data ?? []).map(row => ({ row, signature: errorSignature(row.errorMessage) }));
-		const groups = groupErrorsBySignature(errors.data ?? []);
-		const byModel = new Map<string, { model: string; provider: string; count: number }>();
-		for (const { row } of rows) {
-			const key = modelKey(row.model, row.provider);
-			const entry = byModel.get(key);
-			if (entry) entry.count++;
-			else byModel.set(key, { model: row.model, provider: row.provider, count: 1 });
-		}
-		const models = [...byModel.entries()]
-			.map(([key, entry]) => ({ key, ...entry }))
-			.sort((a, b) => b.count - a.count || a.model.localeCompare(b.model));
-		const newest = rows.reduce<MessageStats | null>(
-			(best, { row }) => (!best || row.timestamp > best.timestamp ? row : best),
-			null,
-		);
-		return { rows, groups, models, newest };
-	}, [errors.data]);
+	const view = useMemo(() => buildErrorsView(errors.data ?? []), [errors.data]);
 
 	// Selections that no longer exist in this range's data are ignored.
 	const signature = view.groups.some(g => g.signature === selectedSignature) ? selectedSignature : null;

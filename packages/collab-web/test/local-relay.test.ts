@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { type LocalRelay, startLocalRelay } from "../scripts/local-relay";
-import { packEnvelope, unpackEnvelope } from "../src/lib/link";
+import { packEnvelope, unpackEnvelope } from "@oh-my-pi/pi-wire/collab";
 
 const ROOM = "RelayRoom_12345";
 const REQUEST_TIMEOUT_MS = 1_000;

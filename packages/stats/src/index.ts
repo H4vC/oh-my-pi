@@ -4,7 +4,7 @@ import { parseArgs } from "node:util";
 import { formatDuration, formatNumber, formatPercent, normalizePremiumRequests } from "@oh-my-pi/pi-utils";
 import chalk from "@oh-my-pi/pi-utils/chalk";
 import { formatErrorRate } from "./client/data/formatters";
-import { getDashboardStats, getTotalMessageCount, syncAllSessions } from "./aggregator";
+import { getDashboardStats, getTotalMessageCount, type SyncProgress, syncAllSessions } from "./aggregator";
 import { closeDb } from "./db";
 import { refreshRollups } from "./rollup";
 import { formatStatsDashboardUrl, startServer } from "./server";
@@ -94,6 +94,67 @@ export async function printStatsSummary(): Promise<void> {
 	console.log("");
 }
 
+/** Options for {@link runStatsReport}. */
+export interface StatsReportOptions {
+	/** Print the dashboard stats as JSON instead of the console summary. */
+	json?: boolean;
+	/**
+	 * Sync progress callback. Defaults to a plain single-line progress on a
+	 * stderr TTY. A custom reporter should clear its own line once
+	 * `event.current >= event.total`: the "Synced …" line follows right after.
+	 */
+	onProgress?: (event: SyncProgress) => void;
+}
+
+/** Plain single-line TTY sync progress on stderr, cleared after the last file; silent off a TTY. */
+function plainSyncProgress(): (event: SyncProgress) => void {
+	const stream = process.stderr;
+	let lastWidth = 0;
+	let lastRender = 0;
+	return event => {
+		if (stream.isTTY !== true) return;
+		if (event.current >= event.total) {
+			if (lastWidth > 0) stream.write(`\r${" ".repeat(lastWidth)}\r`);
+			lastWidth = 0;
+			return;
+		}
+		const now = Date.now();
+		if (now - lastRender < 33) return;
+		lastRender = now;
+		const marker = "/sessions/";
+		const idx = event.sessionFile.indexOf(marker);
+		const short = idx >= 0 ? event.sessionFile.slice(idx + marker.length) : event.sessionFile;
+		const pct = ((event.current / event.total) * 100).toFixed(0).padStart(3, " ");
+		const line = `[${event.current}/${event.total}] ${pct}%  ${short}`;
+		const columns = stream.columns ?? 120;
+		const clipped = line.length > columns - 1 ? `${line.slice(0, columns - 2)}\u2026` : line;
+		stream.write(`\r${clipped.padEnd(lastWidth)}`);
+		lastWidth = clipped.length;
+	};
+}
+
+/**
+ * One-shot report shared by `omp stats --json|--summary` and the standalone
+ * `omp-stats --json|--sync`: sync every session, roll up, then print the
+ * stats as JSON (stdout) or the console summary. Progress goes to stderr.
+ */
+export async function runStatsReport({
+	json = false,
+	onProgress = plainSyncProgress(),
+}: StatsReportOptions = {}): Promise<void> {
+	// One-shot reports need fully ingested, fully rolled-up data before printing.
+	process.stderr.write("Syncing session files...\n");
+	const { processed, files } = await syncAllSessions({ onProgress });
+	await refreshRollups();
+	const total = await getTotalMessageCount();
+	process.stderr.write(`Synced ${processed} new entries from ${files} files (${total} total)\n\n`);
+	if (json) {
+		console.log(JSON.stringify(await getDashboardStats(), null, 2));
+	} else {
+		await printStatsSummary();
+	}
+}
+
 /** Parsed arguments for the standalone `omp-stats` entry point. */
 export interface StandaloneStatsArgs {
 	port: number;
@@ -168,38 +229,7 @@ Examples:
 			return;
 		}
 
-		// One-shot reports need fully ingested, fully rolled-up data before printing.
-		const tty = process.stderr.isTTY === true;
-		process.stderr.write("Syncing session files...\n");
-		let lastWidth = 0;
-		let lastRender = 0;
-		const { processed, files } = await syncAllSessions({
-			onProgress: event => {
-				if (!tty) return;
-				const now = Date.now();
-				if (event.current < event.total && now - lastRender < 33) return;
-				lastRender = now;
-				const marker = "/sessions/";
-				const idx = event.sessionFile.indexOf(marker);
-				const short = idx >= 0 ? event.sessionFile.slice(idx + marker.length) : event.sessionFile;
-				const pct = ((event.current / event.total) * 100).toFixed(0).padStart(3, " ");
-				const line = `[${event.current}/${event.total}] ${pct}%  ${short}`;
-				const columns = process.stderr.columns ?? 120;
-				const clipped = line.length > columns - 1 ? `${line.slice(0, columns - 2)}\u2026` : line;
-				process.stderr.write(`\r${clipped.padEnd(lastWidth)}`);
-				lastWidth = clipped.length;
-			},
-		});
-		if (tty && lastWidth > 0) process.stderr.write(`\r${" ".repeat(lastWidth)}\r`);
-		await refreshRollups();
-		const total = await getTotalMessageCount();
-		process.stderr.write(`Synced ${processed} new entries from ${files} files (${total} total)\n\n`);
-
-		if (values.json) {
-			console.log(JSON.stringify(await getDashboardStats(), null, 2));
-		} else {
-			await printStatsSummary();
-		}
+		await runStatsReport({ json: values.json });
 	} catch (error) {
 		console.error("Error:", error);
 		closeDb();

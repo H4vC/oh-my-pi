@@ -44,7 +44,7 @@ omp stats --json
 ### Programmatic
 
 ```typescript
-import { getDashboardStats, syncAllSessions } from "@oh-my-pi/omp-stats";
+import { getDashboardStats, runStatsReport, syncAllSessions } from "@oh-my-pi/omp-stats";
 
 // Sync session logs to database
 const { processed, files } = await syncAllSessions();
@@ -53,6 +53,9 @@ const { processed, files } = await syncAllSessions();
 const stats = await getDashboardStats();
 console.log(stats.overall.totalCost);
 console.log(stats.byModel[0].avgTokensPerSecond);
+
+// One-shot sync + roll-up + console summary (or JSON), as `omp stats --summary|--json` does
+await runStatsReport({ json: false });
 ```
 
 ## API Endpoints
@@ -63,7 +66,7 @@ console.log(stats.byModel[0].avgTokensPerSecond);
 | `GET /api/stats/models` | Per-model statistics |
 | `GET /api/stats/folders` | Per-folder/project statistics |
 | `GET /api/stats/timeseries` | Hourly time series data |
-| `GET /api/events` | Server-sent live status: sync progress, data version, rollup backlog |
+| `GET /api/events` | Server-sent live status: sync progress, data version, rollup backlog. Background ingest starts with the first subscriber and stops a minute after the last one leaves |
 | `GET /api/status` | Current live status (same shape as the events) |
 | `POST /api/sync` | Start a background sync; progress arrives on `/api/events` |
 

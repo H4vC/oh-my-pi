@@ -1,6 +1,7 @@
 import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
 import { Sparkline } from "../charts/Sparkline";
 
+/** @deprecated No dashboard tile shows a delta; render the change in `hint` instead. Will be removed in the next major. */
 export interface StatDelta {
 	/** Relative change vs the previous period (0.12 = +12%). `null` when there is no baseline. */
 	change: number | null;
@@ -13,6 +14,7 @@ export interface StatProps {
 	value: ReactNode;
 	/** Small print under the value. */
 	hint?: ReactNode;
+	/** @deprecated No dashboard tile shows a delta; render the change in `hint` instead. Will be removed in the next major. */
 	delta?: StatDelta;
 	/** Trend under the value. */
 	spark?: readonly number[];
@@ -67,7 +69,10 @@ export function StatGrid({ min, children }: StatGridProps) {
 	);
 }
 
-/** Signed percentage change pill, green when the move is good news. */
+/**
+ * Signed percentage change pill, green when the move is good news.
+ * @deprecated No dashboard tile shows a delta; render the change in `hint` instead. Will be removed in the next major.
+ */
 export function Delta({ change, good = "up" }: StatDelta) {
 	if (change === null || !Number.isFinite(change)) return <span className="delta">new</span>;
 	const rounded = Math.abs(change) < 0.0005 ? 0 : change;
@@ -82,7 +87,10 @@ export function Delta({ change, good = "up" }: StatDelta) {
 	);
 }
 
-/** Relative change from `previous` to `current`; `null` when there is no baseline. */
+/**
+ * Relative change from `previous` to `current`; `null` when there is no baseline.
+ * @deprecated Unused by the dashboard; compute `(current - previous) / previous` inline. Will be removed in the next major.
+ */
 export function relativeChange(current: number, previous: number): number | null {
 	if (previous === 0) return current === 0 ? 0 : null;
 	return (current - previous) / previous;

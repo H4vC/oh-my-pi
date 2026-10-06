@@ -6,6 +6,29 @@
 
 - Fixed Ultrafast turns not counting toward the Premium Reqs stat: each message now records the service tier its provider reported serving, and the backfill counts it without needing discovery metadata ([#14471](https://github.com/can1357/oh-my-pi/pull/14471) by [@eggpeat](https://github.com/eggpeat)).
 - Fixed the stats dashboard menu button showing on desktop, where clicking it dimmed the page without opening navigation ([#14406](https://github.com/can1357/oh-my-pi/pull/14406) by [@lin-snow](https://github.com/lin-snow)).
+- Fixed the request drawer returning 404 for sessions compressed to `.jsonl.gz` by `omp gc` ([#14642](https://github.com/can1357/oh-my-pi/pull/14642) by [@H4vC](https://github.com/H4vC))
+- Fixed migrated `user_messages` tables missing indexes ([#14642](https://github.com/can1357/oh-my-pi/pull/14642) by [@H4vC](https://github.com/H4vC))
+- Fixed the stats database file staying locked on Windows after closing ([#14642](https://github.com/can1357/oh-my-pi/pull/14642) by [@H4vC](https://github.com/H4vC))
+
+### Added
+
+- Added `runStatsReport({ json, onProgress })`, the one-shot sync and report behind `omp stats --summary|--json` ([#14642](https://github.com/can1357/oh-my-pi/pull/14642) by [@H4vC](https://github.com/H4vC))
+- Added `TimeRange`, `RANGE_WINDOWS`, `HOUR_MS` and `DAY_MS` exports to `shared-types` ([#14642](https://github.com/can1357/oh-my-pi/pull/14642) by [@H4vC](https://github.com/H4vC))
+- Added `SyncProgress.changes`, `getDataVersion()`, `getDailyActivityFromRollup()` and conditional trace revalidation (`fingerprint`/`previous` arguments) ([#14642](https://github.com/can1357/oh-my-pi/pull/14642) by [@H4vC](https://github.com/H4vC))
+- Added `clampViewport`, `MIN_WINDOW_U` and `buildErrorsView` exports ([#14642](https://github.com/can1357/oh-my-pi/pull/14642) by [@H4vC](https://github.com/H4vC))
+
+### Changed
+
+- Stopped dashboard background ingest a minute after the last page closes ([#14642](https://github.com/can1357/oh-my-pi/pull/14642) by [@H4vC](https://github.com/H4vC))
+- Reduced dashboard refetching: syncs that change nothing no longer trigger reloads, and unchanged traces are not re-downloaded ([#14642](https://github.com/can1357/oh-my-pi/pull/14642) by [@H4vC](https://github.com/H4vC))
+- Sped up session syncs, stats database opening, package import and the `/usage`, models and timeseries endpoints ([#14642](https://github.com/can1357/oh-my-pi/pull/14642) by [@H4vC](https://github.com/H4vC))
+- Reduced dashboard re-rendering during syncs and trace timeline hover, pan and zoom ([#14642](https://github.com/can1357/oh-my-pi/pull/14642) by [@H4vC](https://github.com/H4vC))
+- Cancelled abandoned dashboard requests (e.g. large traces when switching sessions) and bounded the in-memory trace cache ([#14642](https://github.com/can1357/oh-my-pi/pull/14642) by [@H4vC](https://github.com/H4vC))
+
+### Deprecated
+
+- Deprecated `RollupStatus.dirtySessions`, `traceMemoForTests` and `EMPTY_USER_METRICS`; removal in the next major ([#14642](https://github.com/can1357/oh-my-pi/pull/14642) by [@H4vC](https://github.com/H4vC))
+- Deprecated unused dashboard exports `StatDelta`, `Stat` `delta` prop, `Delta`, `relativeChange`, `prefetchQuery` and `navItem` ([#14642](https://github.com/can1357/oh-my-pi/pull/14642) by [@H4vC](https://github.com/H4vC))
 
 ## [18.6.0] - 2026-10-03
 

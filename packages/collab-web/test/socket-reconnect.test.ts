@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "bun:test";
 import { GuestClient } from "../src/lib/client";
-import { encodeBase64Url } from "../src/lib/link";
+import { encodeBase64Url } from "@oh-my-pi/pi-wire/collab";
 
 const NativeWebSocket = globalThis.WebSocket;
 const LINK = `transient-network-room#${encodeBase64Url(new Uint8Array(32))}`;

@@ -1,15 +1,11 @@
 /**
- * Time-range metadata shared by every page: labels, the server's bucket size
- * for the range (mirrors `getTimeRangeConfig` in `aggregator.ts`), tick
- * formatting, and the contiguous bucket axis charts plot against.
+ * Time-range metadata shared by every page: labels, the server's span and
+ * bucket size for the range ({@link RANGE_WINDOWS}), tick formatting, and the
+ * contiguous bucket axis charts plot against.
  */
 
 import { format } from "@oh-my-pi/pi-utils/dates";
-import type { TimeRange } from "../types";
-
-const MINUTE_MS = 60 * 1000;
-const HOUR_MS = 60 * MINUTE_MS;
-const DAY_MS = 24 * HOUR_MS;
+import { DAY_MS, HOUR_MS, RANGE_WINDOWS, type TimeRange } from "../types";
 
 export interface RangeMeta {
 	/** Short selector label ("24h"). */
@@ -23,12 +19,12 @@ export interface RangeMeta {
 }
 
 const RANGE_META: Record<TimeRange, RangeMeta> = {
-	"1h": { label: "1h", windowLabel: "the last hour", spanMs: HOUR_MS, bucketMs: 5 * MINUTE_MS },
-	"24h": { label: "24h", windowLabel: "the last 24 hours", spanMs: DAY_MS, bucketMs: HOUR_MS },
-	"7d": { label: "7d", windowLabel: "the last 7 days", spanMs: 7 * DAY_MS, bucketMs: DAY_MS },
-	"30d": { label: "30d", windowLabel: "the last 30 days", spanMs: 30 * DAY_MS, bucketMs: DAY_MS },
-	"90d": { label: "90d", windowLabel: "the last 90 days", spanMs: 90 * DAY_MS, bucketMs: DAY_MS },
-	all: { label: "All", windowLabel: "all time", spanMs: null, bucketMs: DAY_MS },
+	"1h": { label: "1h", windowLabel: "the last hour", ...RANGE_WINDOWS["1h"] },
+	"24h": { label: "24h", windowLabel: "the last 24 hours", ...RANGE_WINDOWS["24h"] },
+	"7d": { label: "7d", windowLabel: "the last 7 days", ...RANGE_WINDOWS["7d"] },
+	"30d": { label: "30d", windowLabel: "the last 30 days", ...RANGE_WINDOWS["30d"] },
+	"90d": { label: "90d", windowLabel: "the last 90 days", ...RANGE_WINDOWS["90d"] },
+	all: { label: "All", windowLabel: "all time", ...RANGE_WINDOWS.all },
 };
 
 const MAX_BUCKETS = 1500;

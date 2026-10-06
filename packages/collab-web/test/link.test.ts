@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { DEFAULT_RELAY_URL } from "@oh-my-pi/pi-wire";
 import {
-	DEFAULT_RELAY_URL,
 	encodeBase64Url,
 	formatCollabLink,
 	generateRoomId,
@@ -8,7 +8,7 @@ import {
 	parseCollabLink,
 	rewriteEnvelopePeer,
 	unpackEnvelope,
-} from "../src/lib/link";
+} from "@oh-my-pi/pi-wire/collab";
 
 const KEY = Uint8Array.from({ length: 32 }, (_, i) => i);
 const KEY_TEXT = encodeBase64Url(KEY);

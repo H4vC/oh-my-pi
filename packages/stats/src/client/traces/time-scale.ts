@@ -8,6 +8,7 @@
  * - `calls`: each interval between consecutive span boundaries gets equal width
  */
 
+import { format } from "@oh-my-pi/pi-utils/dates";
 import type { TraceTrack } from "../types";
 
 export type AxisMode = "time" | "turns" | "calls";
@@ -21,6 +22,23 @@ export interface TraceScale {
 	domain: [number, number];
 	/** Idle bridges (time mode + compression): real gap [t0,t1] at virtual uMid. */
 	gaps: Array<{ t0: number; t1: number; uMid: number }>;
+}
+
+/** Narrowest viewport the timeline zooms to (virtual ms). */
+export const MIN_WINDOW_U = 10;
+
+/**
+ * Fit the window `[u0, u1]` inside `domain`: at least {@link MIN_WINDOW_U}
+ * wide, at most the whole domain, shifted (not shrunk) to stay in bounds.
+ */
+export function clampViewport(u0: number, u1: number, domain: readonly [number, number]): { u0: number; u1: number } {
+	const [d0, d1] = domain;
+	let span = Math.max(MIN_WINDOW_U, u1 - u0);
+	span = Math.min(span, d1 - d0 || MIN_WINDOW_U);
+	let start = u0;
+	if (start < d0) start = d0;
+	if (start + span > d1) start = d1 - span;
+	return { u0: start, u1: start + span };
 }
 
 /** Padding added around activity segments before gap detection (ms). */
@@ -201,14 +219,6 @@ function niceStep(raw: number): number {
 	return pow * 10;
 }
 
-function formatWallClock(t: number): string {
-	const date = new Date(t);
-	const hh = String(date.getHours()).padStart(2, "0");
-	const mm = String(date.getMinutes()).padStart(2, "0");
-	const ss = String(date.getSeconds()).padStart(2, "0");
-	return `${hh}:${mm}:${ss}`;
-}
-
 /** Offset label from trace start: `+mm:ss.mmm`, hours prepended when needed. */
 export function formatOffset(deltaMs: number): string {
 	const sign = deltaMs < 0 ? "-" : "+";
@@ -242,7 +252,7 @@ export function buildTicks(scale: TraceScale, u0: number, u1: number, widthPx: n
 		const major = Math.round((u - d0) / step) % 5 === 0;
 		ticks.push({
 			u,
-			label: major ? formatWallClock(t) : formatOffset(u - d0),
+			label: major ? format(t, "HH:mm:ss") : formatOffset(u - d0),
 			major,
 		});
 	}

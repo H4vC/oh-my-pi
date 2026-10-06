@@ -2,6 +2,7 @@ import type { SQLQueryBindings } from "bun:sqlite";
 import { logger } from "@oh-my-pi/pi-utils";
 import { polyphonicRecallEnabled } from "../../config";
 import { generateId, stableMemoryId } from "../../util/ids";
+import { sqlPlaceholders } from "../../util/sqlite";
 import { aaakEncode } from "../aaak";
 import { REGEX_EXTRACTION_MAX_INPUT_CHARS } from "../entities";
 import { EpisodicGraph } from "../episodic-graph";
@@ -1092,7 +1093,7 @@ export function sleep(beam: BeamMemoryState, dryRun = false): SleepResult {
 	if (!dryRun) {
 		const claimTs = isoNow();
 		const ids = rows.map(row => rowValue(row, "id")).filter((id): id is string => id !== null);
-		const placeholders = ids.map(() => "?").join(",");
+		const placeholders = sqlPlaceholders(ids.length);
 		beam.db.run(
 			`UPDATE working_memory SET consolidated_at = ? WHERE id IN (${placeholders}) AND consolidated_at IS NULL`,
 			[claimTs, ...ids],

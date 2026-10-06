@@ -1,10 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { computeUserMessageMetrics, EMPTY_USER_METRICS } from "@oh-my-pi/omp-stats/user-metrics";
+import { computeUserMessageMetrics } from "@oh-my-pi/omp-stats/user-metrics";
+
+const ZERO_METRICS = { chars: 0, words: 0, yelling: 0, profanity: 0, anguish: 0, negation: 0, repetition: 0, blame: 0 };
 
 describe("computeUserMessageMetrics", () => {
 	it("returns zeros for empty / whitespace-only text", () => {
-		expect(computeUserMessageMetrics("")).toEqual({ ...EMPTY_USER_METRICS });
-		expect(computeUserMessageMetrics("   \n\t ")).toEqual({ ...EMPTY_USER_METRICS });
+		expect(computeUserMessageMetrics("")).toEqual(ZERO_METRICS);
+		expect(computeUserMessageMetrics("   \n\t ")).toEqual(ZERO_METRICS);
 	});
 
 	it("counts multi-word caps as yelling when >50% of letters are uppercase", () => {

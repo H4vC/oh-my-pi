@@ -695,7 +695,10 @@ export function computeUserMessageMetrics(text: string): UserMessageMetrics {
 	};
 }
 
-/** Empty metrics constant for callers that need a default. */
+/**
+ * Empty metrics constant for callers that need a default.
+ * @deprecated No production callers; use `computeUserMessageMetrics("")` for an all-zero value. Will be removed in the next major.
+ */
 export const EMPTY_USER_METRICS: UserMessageMetrics = Object.freeze({
 	chars: 0,
 	words: 0,

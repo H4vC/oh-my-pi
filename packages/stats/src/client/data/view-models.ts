@@ -431,11 +431,35 @@ export interface ErrorGroupView {
 	models: ErrorGroupModel[];
 }
 
-/** Group failures by `errorSignature`; most frequent first, then most recent. */
-export function groupErrorsBySignature(rows: readonly MessageStats[]): ErrorGroupView[] {
+/** A failure with its precomputed `errorSignature`. */
+export interface ErrorRowView {
+	row: MessageStats;
+	signature: string;
+}
+
+export interface ErrorModelView extends ErrorGroupModel {
+	/** `modelKey(model, provider)`. */
+	key: string;
+}
+
+/** Everything the Errors page derives from one batch of failures. */
+export interface ErrorsView {
+	/** Input rows (input order) with their signatures. */
+	rows: ErrorRowView[];
+	/** Same as `groupErrorsBySignature(rows)`. */
+	groups: ErrorGroupView[];
+	/** Failures per model across all rows, most failures first. */
+	models: ErrorModelView[];
+	/** Most recent failure. */
+	newest: MessageStats | null;
+}
+
+const byFailuresThenName = (a: ErrorGroupModel, b: ErrorGroupModel): number =>
+	b.count - a.count || a.model.localeCompare(b.model);
+
+function groupSignedErrors(rows: readonly ErrorRowView[]): ErrorGroupView[] {
 	const groups = new Map<string, ErrorGroupView & { byModel: Map<string, ErrorGroupModel> }>();
-	for (const row of rows) {
-		const signature = errorSignature(row.errorMessage);
+	for (const { row, signature } of rows) {
 		let group = groups.get(signature);
 		if (!group) {
 			group = {
@@ -461,9 +485,31 @@ export function groupErrorsBySignature(rows: readonly MessageStats[]): ErrorGrou
 		else group.byModel.set(key, { model: row.model, provider: row.provider, count: 1 });
 	}
 	return [...groups.values()]
-		.map(({ byModel, ...group }) => ({
-			...group,
-			models: [...byModel.values()].sort((a, b) => b.count - a.count || a.model.localeCompare(b.model)),
-		}))
+		.map(({ byModel, ...group }) => ({ ...group, models: [...byModel.values()].sort(byFailuresThenName) }))
 		.sort((a, b) => b.count - a.count || b.lastSeen - a.lastSeen);
+}
+
+/** Group failures by `errorSignature`; most frequent first, then most recent. */
+export function groupErrorsBySignature(rows: readonly MessageStats[]): ErrorGroupView[] {
+	return groupSignedErrors(rows.map(row => ({ row, signature: errorSignature(row.errorMessage) })));
+}
+
+/** The Errors page view: signatures (computed once per row), signature groups, per-model counts, newest failure. */
+export function buildErrorsView(rows: readonly MessageStats[]): ErrorsView {
+	const signed = rows.map(row => ({ row, signature: errorSignature(row.errorMessage) }));
+	const byModel = new Map<string, ErrorModelView>();
+	let newest: MessageStats | null = null;
+	for (const row of rows) {
+		const key = modelKey(row.model, row.provider);
+		const entry = byModel.get(key);
+		if (entry) entry.count++;
+		else byModel.set(key, { key, model: row.model, provider: row.provider, count: 1 });
+		if (!newest || row.timestamp > newest.timestamp) newest = row;
+	}
+	return {
+		rows: signed,
+		groups: groupSignedErrors(signed),
+		models: [...byModel.values()].sort(byFailuresThenName),
+		newest,
+	};
 }

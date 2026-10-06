@@ -279,6 +279,9 @@ export function initBeam(db: Database): void {
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)
 	`);
+	// Unit-normalised Float32 bytes (see core/stored-embeddings.ts). Nullable and additive:
+	// `embedding_json` stays the NOT NULL source of truth for older readers of this file.
+	addColumnIfMissing(db, "memory_embeddings", "embedding", "BLOB");
 
 	addColumnIfMissing(db, "working_memory", "recall_count", "INTEGER DEFAULT 0");
 	addColumnIfMissing(db, "working_memory", "last_recalled", "TIMESTAMP DEFAULT NULL");

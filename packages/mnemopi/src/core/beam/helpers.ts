@@ -2,8 +2,10 @@ import type { Database } from "bun:sqlite";
 import { logger } from "@oh-my-pi/pi-utils";
 import { generateId as generateTimedId, sha256Hex16, stableMemoryId } from "../../util/ids";
 import { cjkFtsTerms, containsSpacelessCjk, ftsQueryTerms, hasCjk, isCjkChar, recallTokens } from "../../util/regex";
+import { tableExists } from "../../util/sqlite";
 import { currentEmbeddingModel, embed } from "../embeddings";
 import { getMnemopiRuntimeOptions, mnemopiDebugEnabled, withMnemopiRuntimeOptions } from "../runtime-options";
+import { encodeEmbeddingBlob, hasEmbeddingBlobColumn, parseEmbeddingJson } from "../stored-embeddings";
 import { buildExactVectorIndex, searchExactVectorIndex } from "../vector-index";
 import type { BeamMemoryState, JsonValue, Metadata } from "./types";
 
@@ -53,18 +55,6 @@ function clamp01(value: number): number {
 
 function asFiniteNonNegative(value: number): number {
 	return Number.isFinite(value) && value > 0 ? value : 0;
-}
-
-function tableExists(db: Database, table: string): boolean {
-	try {
-		return (
-			db
-				.query("SELECT 1 FROM sqlite_master WHERE type IN ('table','virtual table') AND name = ? LIMIT 1")
-				.get(table) !== null
-		);
-	} catch {
-		return false;
-	}
 }
 
 function rowValue<T>(row: unknown, key: string): T | undefined {
@@ -260,19 +250,7 @@ export function encodeVector(embedding: readonly number[]): string {
 }
 
 export function decodeVector(value: string | null | undefined): Vector | null {
-	if (!value) return null;
-	try {
-		const parsed = JSON.parse(value) as unknown;
-		if (!Array.isArray(parsed)) return null;
-		const vector: number[] = [];
-		for (const item of parsed) {
-			if (typeof item !== "number" || !Number.isFinite(item)) return null;
-			vector.push(item);
-		}
-		return vector;
-	} catch {
-		return null;
-	}
+	return parseEmbeddingJson(value);
 }
 
 export function vecAvailable(db: Database): boolean {
@@ -319,6 +297,9 @@ export function vecInsert(db: Database, rowid: number, embedding: readonly numbe
 	}
 }
 
+/**
+ * @deprecated Unused by mnemopi recall, which scores `memory_embeddings` directly; use `recall()` / `recallEnhanced()`. Will be removed in the next major.
+ */
 export function vecSearch(db: Database, embedding: readonly number[], k = 20): VectorDistanceResult[] {
 	const vecType = effectiveVecType(db);
 	const embJson = encodeVector(embedding);
@@ -348,6 +329,9 @@ export function vecSearch(db: Database, embedding: readonly number[], k = 20): V
 	}
 }
 
+/**
+ * @deprecated Unused by mnemopi recall, which scores `memory_embeddings` directly; use `recall()` / `recallEnhanced()`. Will be removed in the next major.
+ */
 export function inMemoryVecSearch(db: Database, queryEmbedding: readonly number[], k = 20): VectorDistanceResult[] {
 	if (queryEmbedding.length === 0) return [];
 	try {
@@ -368,6 +352,9 @@ export function inMemoryVecSearch(db: Database, queryEmbedding: readonly number[
 	}
 }
 
+/**
+ * @deprecated Unused by mnemopi recall, which scores `memory_embeddings` directly; use `recall()` / `recallEnhanced()`. Will be removed in the next major.
+ */
 export function workingMemoryVecSearch(
 	db: Database,
 	queryEmbedding: readonly number[],
@@ -440,6 +427,9 @@ export function metadataJson(input: unknown): string {
 	return JSON.stringify(normalizeMetadata(input));
 }
 
+/**
+ * @deprecated Divergent duplicate of the detector production uses; use `detectLanguage(beam, text)` from `core/beam/consolidate` (or `BeamMemory.detectLanguage`). Will be removed in the next major.
+ */
 export function detectLanguage(text: string): string {
 	if (!text) return "en";
 	const lower = text.toLowerCase();
@@ -723,13 +713,23 @@ export interface EmbedItem {
 	readonly content: string;
 }
 
-async function runEmbedding(beam: BeamMemoryState, items: readonly EmbedItem[]): Promise<void> {
+/**
+ * Embed `items` and store the vectors. Resolves true when the provider produced a
+ * matrix and the batch was written, false when embeddings are unavailable or the batch
+ * failed (logged, never thrown).
+ */
+async function runEmbedding(beam: BeamMemoryState, items: readonly EmbedItem[]): Promise<boolean> {
 	try {
 		const matrix = await embed(items.map(item => item.content));
-		if (matrix === null) return;
+		if (matrix === null) return false;
 		const model = currentEmbeddingModel();
-		using insertEmbedding = beam.db.prepare(
-			"INSERT OR REPLACE INTO memory_embeddings(memory_id, embedding_json, model) VALUES (?, ?, ?)",
+		// `embedding_json` is always written: older readers of the same database file only
+		// know that column. The BLOB is the fast path for current readers.
+		const withBlob = hasEmbeddingBlobColumn(beam.db);
+		const insertEmbedding = beam.db.query(
+			withBlob
+				? "INSERT OR REPLACE INTO memory_embeddings(memory_id, embedding_json, model, embedding) VALUES (?, ?, ?, ?)"
+				: "INSERT OR REPLACE INTO memory_embeddings(memory_id, embedding_json, model) VALUES (?, ?, ?)",
 		);
 		let committed = 0;
 		const insertMany = beam.db.transaction((rows: readonly EmbedItem[]) => {
@@ -737,7 +737,9 @@ async function runEmbedding(beam: BeamMemoryState, items: readonly EmbedItem[]):
 				const vector = matrix[i];
 				const item = rows[i];
 				if (vector === undefined || item === undefined) continue;
-				insertEmbedding.run(item.memoryId, JSON.stringify(Array.from(vector)), model);
+				const json = JSON.stringify(Array.from(vector));
+				if (withBlob) insertEmbedding.run(item.memoryId, json, model, encodeEmbeddingBlob(vector));
+				else insertEmbedding.run(item.memoryId, json, model);
 				committed += 1;
 			}
 		});
@@ -750,6 +752,7 @@ async function runEmbedding(beam: BeamMemoryState, items: readonly EmbedItem[]):
 		// affected; the polyphonic subject dictionary is built from facts/gists, which an embedding
 		// batch never touches.
 		if (committed > 0) beam.caches.queryCache?.invalidate();
+		return true;
 	} catch (error) {
 		// Background embedding generation is best-effort: a failing provider, a closed DB
 		// during shutdown, or a transient API error must never disrupt the synchronous
@@ -760,6 +763,24 @@ async function runEmbedding(beam: BeamMemoryState, items: readonly EmbedItem[]):
 			itemCount: items.length,
 			error: String(error),
 		});
+		return false;
+	}
+}
+
+/**
+ * Run `work` as a tracked background task: the active runtime options (provider, model,
+ * API URL/key) are captured now and re-entered inside the task because the
+ * `AsyncLocalStorage` scope set by `Mnemopi.#withRuntimeOptions` has already exited by
+ * the time it runs, and the task is registered on `beam.pendingExtractions` so tests and
+ * graceful shutdown can drain it via `flushExtractions()`.
+ */
+function trackEmbeddingTask(beam: BeamMemoryState, work: () => Promise<void>): void {
+	const runtimeOptions = getMnemopiRuntimeOptions();
+	const task = withMnemopiRuntimeOptions(runtimeOptions, work);
+	const pending = beam.pendingExtractions;
+	if (pending !== undefined) {
+		pending.add(task);
+		void task.finally(() => pending.delete(task));
 	}
 }
 
@@ -769,19 +790,36 @@ async function runEmbedding(beam: BeamMemoryState, items: readonly EmbedItem[]):
  * Mirrors the `scheduleFactExtraction` pattern in `beam/store.ts`: `remember()`,
  * `rememberBatch()`, and `consolidateToEpisodic()` are synchronous, but `embed()` is
  * async (it may hit an HTTP provider), so the task is fired-and-forgotten and tracked
- * on `beam.pendingExtractions` so tests and graceful shutdown can drain it via
- * `flushExtractions()`. The active runtime options (provider, model, API URL/key) are
- * captured here and re-entered inside the task because the `AsyncLocalStorage` scope
- * set by `Mnemopi.#withRuntimeOptions` has already exited by the time the task runs.
+ * on `beam.pendingExtractions`.
  */
 export function scheduleEmbedding(beam: BeamMemoryState, items: readonly EmbedItem[]): void {
 	const cleaned = items.filter(item => item.content.trim() !== "");
 	if (cleaned.length === 0) return;
-	const runtimeOptions = getMnemopiRuntimeOptions();
-	const task = withMnemopiRuntimeOptions(runtimeOptions, () => runEmbedding(beam, cleaned));
-	const pending = beam.pendingExtractions;
-	if (pending !== undefined) {
-		pending.add(task);
-		void task.finally(() => pending.delete(task));
-	}
+	trackEmbeddingTask(beam, async () => {
+		await runEmbedding(beam, cleaned);
+	});
+}
+
+/**
+ * Schedule one tracked background task that embeds batches strictly one after another.
+ * `nextBatch` is called lazily before each batch (so callers can page content from the
+ * database instead of holding the whole corpus) and returns an empty array when done.
+ * The task stops at the first batch that fails or finds embeddings unavailable; the
+ * remaining rows are picked up by the next reconcile.
+ */
+export function scheduleSequentialEmbedding(beam: BeamMemoryState, nextBatch: () => readonly EmbedItem[]): void {
+	trackEmbeddingTask(beam, async () => {
+		for (;;) {
+			let batch: readonly EmbedItem[];
+			try {
+				batch = nextBatch();
+			} catch (error) {
+				logger.debug("mnemopi: embedding rebuild stopped", { error: String(error) });
+				return;
+			}
+			if (batch.length === 0) return;
+			const cleaned = batch.filter(item => item.content.trim() !== "");
+			if (cleaned.length > 0 && !(await runEmbedding(beam, cleaned))) return;
+		}
+	});
 }

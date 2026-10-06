@@ -41,6 +41,18 @@ export function shortenPath(p: string): string {
 	return p;
 }
 
+/** "847ms", "12.3s", "4m05s", "1h12m" — tolerant of non-finite input. */
+export function fmtDurationMs(ms: number): string {
+	if (!Number.isFinite(ms) || ms < 0) return "0ms";
+	if (ms < 1000) return `${Math.round(ms)}ms`;
+	const s = ms / 1000;
+	if (s < 60) return `${s.toFixed(1)}s`;
+	const min = Math.floor(s / 60);
+	if (min < 60) return `${min}m${String(Math.round(s % 60)).padStart(2, "0")}s`;
+	const h = Math.floor(min / 60);
+	return `${h}h${String(min % 60).padStart(2, "0")}m`;
+}
+
 /**
  * Search scope for display: the current `path` argument (else the legacy
  * `paths`), normalized from a single string, a JSON-encoded string array

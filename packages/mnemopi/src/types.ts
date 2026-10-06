@@ -129,6 +129,8 @@ export interface FactRow {
 export interface EmbeddingRow {
 	memory_id: string;
 	embedding_json: string;
+	/** Little-endian Float32 bytes of the unit-normalised vector; NULL on rows not yet backfilled. */
+	embedding?: Uint8Array | null;
 	model: string | null;
 	created_at: string;
 }

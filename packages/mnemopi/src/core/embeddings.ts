@@ -437,6 +437,7 @@ export function setEmbeddingProviderForTests(provider: EmbeddingProvider | null 
 	queryCache.clear();
 }
 
+/** @deprecated Test-only alias; use `setEmbeddingProviderForTests`. Will be removed in the next major. */
 export const setEmbeddingProvider = setEmbeddingProviderForTests;
 
 export function setLocalModelInitializerForTests(initializer: LocalModelInitializer | null | undefined): void {
@@ -463,6 +464,7 @@ export function resetEmbeddingProviderForTests(): void {
 	queryCache.clear();
 }
 
+/** @deprecated Test-only alias; use `resetEmbeddingProviderForTests`. Will be removed in the next major. */
 export const resetEmbeddingStateForTests = resetEmbeddingProviderForTests;
 
 export async function available(): Promise<boolean> {

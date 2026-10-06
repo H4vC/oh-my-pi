@@ -9,7 +9,8 @@
  */
 import type { HostFrame, SessionEntry } from "@oh-my-pi/pi-wire";
 import { GuestClient } from "../src/lib/client";
-import { COLLAB_PROTO, encodeBase64Url } from "../src/lib/link";
+import { COLLAB_PROTO } from "@oh-my-pi/pi-wire";
+import { encodeBase64Url } from "@oh-my-pi/pi-wire/collab";
 
 const LINK = `roomroomroom1234#${encodeBase64Url(new Uint8Array(32))}`;
 const N = 5000;

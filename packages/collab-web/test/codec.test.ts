@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { WireFrame } from "@oh-my-pi/pi-wire";
-import { generateRoomKey, importRoomKey, open, seal } from "../src/lib/codec";
-import { decodeBase64Url } from "../src/lib/link";
+import { decodeBase64Url, generateRoomKey, importRoomKey, open, seal } from "@oh-my-pi/pi-wire/collab";
 
 /** Interop vector generated with the real coding-agent `seal()` (see contract). */
 const VECTOR_KEY = "AAcOFRwjKjE4P0ZNVFtiaXB3foWMk5qhqK-2vcTL0tk";

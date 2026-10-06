@@ -73,6 +73,10 @@ export const NAV_ITEMS: readonly NavItem[] = NAV.flatMap(group => group.items);
 
 export const SECTIONS: readonly DashboardSection[] = NAV_ITEMS.map(item => item.id);
 
+/**
+ * Nav entry for `section` (first entry when unknown).
+ * @deprecated Unused by the dashboard; use `NAV_ITEMS.find(item => item.id === section)`. Will be removed in the next major.
+ */
 export function navItem(section: DashboardSection): NavItem {
 	return NAV_ITEMS.find(item => item.id === section) ?? NAV_ITEMS[0];
 }

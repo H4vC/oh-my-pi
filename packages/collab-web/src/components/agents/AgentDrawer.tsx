@@ -1,10 +1,11 @@
-import type { AgentSnapshot, SessionEntry, SubagentProgressPayload } from "@oh-my-pi/pi-wire";
+import type { AgentSnapshot, SessionEntry, SubagentLifecyclePayload, SubagentProgressPayload } from "@oh-my-pi/pi-wire";
 import { OctagonX, RotateCcw, SendHorizontal, X } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { GuestClient } from "../../lib/client";
-import { fmtCost, fmtDuration, fmtTokens } from "../../lib/format";
+import { fmtCost, fmtTokens } from "../../lib/format";
 import { decideTranscriptPoll } from "../../lib/transcript-poll";
+import { fmtDurationMs } from "../../tool-render/util";
 import type { TranscriptProps } from "../transcript/Transcript";
 import { Transcript } from "../transcript/Transcript";
 
@@ -14,6 +15,7 @@ const POLL_MS = 1200;
 export function AgentDrawer(props: {
 	agent: AgentSnapshot;
 	progress?: SubagentProgressPayload;
+	lifecycle?: SubagentLifecyclePayload;
 	client: GuestClient;
 	/** View-link guests: hide kill/revive/chat (the host rejects them anyway). */
 	readOnly?: boolean;
@@ -21,10 +23,16 @@ export function AgentDrawer(props: {
 	host?: TranscriptProps["host"];
 	onClose(): void;
 }): ReactNode {
-	const { agent, progress, client, readOnly, host, onClose } = props;
-	const [entries, setEntries] = useState<readonly SessionEntry[]>([]);
+	const { agent, progress, lifecycle, client, readOnly, host, onClose } = props;
+	/** Polled rows, appended in place; `entriesVersion` publishes each append. */
+	const entriesRef = useRef<SessionEntry[]>([]);
+	const [entriesVersion, setEntriesVersion] = useState(0);
 	const [fetchError, setFetchError] = useState<string | null>(null);
 	const [draft, setDraft] = useState("");
+	/** Resumes a stopped poll loop; null while no loop is mounted. */
+	const resumePollingRef = useRef<(() => void) | null>(null);
+	const quiescentRef = useRef(false);
+	quiescentRef.current = agent.status !== "running";
 
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
@@ -37,17 +45,20 @@ export function AgentDrawer(props: {
 	// Live transcript: poll the host-side session file while the drawer is
 	// open, appending parsed JSONL entries. State resets when the agent
 	// changes; the interval and any in-flight reply are dropped on cleanup.
+	// Once the agent is not running and a poll finds the file unchanged, the
+	// loop stops; host activity for the agent resumes it (effect below).
 	// A frame-level host error is terminal: stop polling and show it (the
 	// host replies with an unchanged cursor, so retrying would loop hot).
 	useEffect(() => {
-		setEntries([]);
+		entriesRef.current = [];
+		setEntriesVersion(version => version + 1);
 		setFetchError(null);
 		if (!agent.hasSessionFile) return;
 		let disposed = false;
+		let failed = false;
 		let inFlight = false;
 		let cursor = 0;
 		let carry = "";
-		let acc: readonly SessionEntry[] = [];
 		let timer: Timer | null = null;
 		const stopPolling = () => {
 			if (timer !== null) {
@@ -56,7 +67,7 @@ export function AgentDrawer(props: {
 			}
 		};
 		const poll = async (): Promise<void> => {
-			if (disposed || inFlight) return;
+			if (disposed || failed || inFlight) return;
 			inFlight = true;
 			try {
 				const reply = await client.fetchTranscript(agent.id, cursor);
@@ -66,31 +77,49 @@ export function AgentDrawer(props: {
 					case "retry":
 						return; // timeout/transient → keep polling from the same cursor
 					case "stop":
+						failed = true;
 						stopPolling();
 						setFetchError(decision.message);
 						return;
-					case "advance":
+					case "advance": {
+						const grew = decision.newSize !== cursor;
 						cursor = decision.newSize;
 						carry = decision.carry;
 						if (decision.fresh.length > 0) {
-							acc = [...acc, ...decision.fresh];
-							setEntries(acc);
+							const rows = entriesRef.current;
+							for (const entry of decision.fresh) rows.push(entry);
+							setEntriesVersion(version => version + 1);
 						}
+						if (!grew && quiescentRef.current) stopPolling();
 						return;
+					}
 				}
 			} finally {
 				inFlight = false;
 			}
 		};
-		void poll();
-		timer = setInterval(() => {
+		const startPolling = () => {
 			void poll();
-		}, POLL_MS);
+			timer = setInterval(() => {
+				void poll();
+			}, POLL_MS);
+		};
+		resumePollingRef.current = () => {
+			if (!disposed && !failed && timer === null) startPolling();
+		};
+		startPolling();
 		return () => {
 			disposed = true;
+			resumePollingRef.current = null;
 			stopPolling();
 		};
 	}, [agent.id, agent.hasSessionFile, client]);
+
+	// Progress/lifecycle bus frames and status/activity changes for this agent
+	// restart a stopped loop; a running loop ignores them.
+	useEffect(() => {
+		resumePollingRef.current?.();
+	}, [progress, lifecycle, agent.status, agent.lastActivity]);
 
 	const sendChat = () => {
 		const text = draft.trim();
@@ -162,7 +191,7 @@ export function AgentDrawer(props: {
 						<span className="ag-stat-value">{p.toolCount}</span>
 					</span>
 					<span className="ag-stat">
-						<span className="ag-stat-value">{fmtDuration(p.durationMs)}</span>
+						<span className="ag-stat-value">{fmtDurationMs(p.durationMs)}</span>
 					</span>
 				</div>
 			) : null}
@@ -171,7 +200,8 @@ export function AgentDrawer(props: {
 					<>
 						<Transcript
 							compact
-							entries={entries}
+							entries={entriesRef.current}
+							entriesVersion={entriesVersion}
 							stream={null}
 							streamDone={false}
 							activeTools={EMPTY_TOOLS}

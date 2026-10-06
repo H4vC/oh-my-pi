@@ -41,6 +41,7 @@ import {
 	getToolTimeSeries,
 	type RangeWindow,
 } from "./rollup";
+import { HOUR_MS, RANGE_WINDOWS, type TimeRange } from "./shared-types";
 import type { SyncWorkerRequest, SyncWorkerResponse } from "./sync-worker";
 // Coding-agent binary/bundle workers route through the CLI entrypoint with a
 // hidden argv mode, so the compiled binary and npm bundle only need one
@@ -85,11 +86,14 @@ export async function withStatsSyncLock<T>(dbPath: string, fn: () => Promise<T>)
  * `current` is the number of files completed (skipped + parsed),
  * `total` is the size of the work set. `processed` is the running total
  * of inserted rows. Parsed files are reported only after their batch commits.
+ * `changes` is the running total of stored rows the sync inserted, updated or
+ * deleted (0 while every transcript is unchanged).
  */
 export interface SyncProgress {
 	current: number;
 	total: number;
 	processed: number;
+	changes: number;
 	sessionFile: string;
 }
 
@@ -266,15 +270,20 @@ const INGEST_TIERS_MS = [24 * 60 * 60 * 1000, 7 * 24 * 60 * 60 * 1000];
  * exception is a from-scratch ingest where a fork was touched more recently
  * than a parent idle for a day: the fork then owns the copied entries, which
  * changes per-session attribution but never totals.
+ *
+ * Also returns each file's stats (null when it vanished), which the sync
+ * reuses instead of statting every transcript a second time.
  */
-async function orderForIngest(files: string[]): Promise<string[]> {
+async function orderForIngest(files: string[]): Promise<{ files: string[]; stats: Map<string, fs.Stats | null> }> {
 	const now = Date.now();
 	const ranked: { file: string; tier: number; born: number; index: number }[] = [];
+	const statsByFile = new Map<string, fs.Stats | null>();
 	for (let start = 0; start < files.length; start += SYNC_METADATA_FILES) {
 		const batch = files.slice(start, start + SYNC_METADATA_FILES);
 		const stats = await Promise.all(batch.map(file => fs.promises.stat(file).catch(() => null)));
 		for (let i = 0; i < batch.length; i++) {
 			const stat = stats[i];
+			statsByFile.set(batch[i], stat);
 			const age = stat ? now - stat.mtimeMs : Number.POSITIVE_INFINITY;
 			const tier = INGEST_TIERS_MS.findIndex(limit => age <= limit);
 			ranked.push({
@@ -286,7 +295,7 @@ async function orderForIngest(files: string[]): Promise<string[]> {
 		}
 	}
 	ranked.sort((a, b) => a.tier - b.tier || a.born - b.born || a.index - b.index);
-	return ranked.map(entry => entry.file);
+	return { files: ranked.map(entry => entry.file), stats: statsByFile };
 }
 
 async function syncAllSessionsLocked(
@@ -295,8 +304,13 @@ async function syncAllSessionsLocked(
 	await initDb();
 	const replay = prepareSessionSync();
 
-	const files = opts?.files ?? (await orderForIngest(await listAllSessionFiles()));
+	// Targeted syncs stat their few files fresh; a full sync reuses the ordering pass's stats.
+	let files: readonly string[];
+	let knownStats: Map<string, fs.Stats | null> | undefined;
+	if (opts?.files) files = opts.files;
+	else ({ files, stats: knownStats } = await orderForIngest(await listAllSessionFiles()));
 	let totalProcessed = 0;
+	let totalChanges = 0;
 	let filesProcessed = 0;
 	let completed = 0;
 	let cursor = 0;
@@ -314,6 +328,7 @@ async function syncAllSessionsLocked(
 			current: completed,
 			total: files.length,
 			processed: totalProcessed,
+			changes: totalChanges,
 			sessionFile,
 		});
 	};
@@ -325,6 +340,7 @@ async function syncAllSessionsLocked(
 		pending = [];
 		pendingRows = 0;
 		totalProcessed += applied.processed;
+		totalChanges += applied.changes;
 		filesProcessed += applied.files;
 		reconcile ||= applied.reconcile;
 		// Report only durable progress: callbacks may interrupt the sync.
@@ -358,9 +374,10 @@ async function syncAllSessionsLocked(
 			metadataEnd = index + batch.length;
 			metadata = Promise.all(
 				batch.map(async sessionFile => {
+					const stored = offsets.get(sessionFile);
+					if (knownStats) return { fileStats: knownStats.get(sessionFile) ?? undefined, stored };
 					try {
-						const fileStats = await fs.promises.stat(sessionFile);
-						return { fileStats, stored: offsets.get(sessionFile) };
+						return { fileStats: await fs.promises.stat(sessionFile), stored };
 					} catch {
 						return {};
 					}
@@ -415,7 +432,13 @@ async function syncAllSessionsLocked(
 		if (pending.length >= SYNC_BATCH_FILES || pendingRows >= SYNC_BATCH_ROWS) flush();
 	};
 
-	const requestedWorkers = Math.max(1, Math.floor(opts?.workers ?? defaultWorkerCount()));
+	let requestedWorkers = Math.max(1, Math.floor(opts?.workers ?? defaultWorkerCount()));
+	// A few already-tracked transcripts (the watcher's usual work) need only
+	// kilobyte tail reads: parsing them inline beats starting a worker.
+	if (requestedWorkers > 1 && opts?.workers === undefined && files.length <= SYNC_INLINE_READS) {
+		const offsets = getFileOffsets([...files]);
+		if (files.every(file => offsets.get(file)?.parserState)) requestedWorkers = 1;
+	}
 	if (requestedWorkers === 1) {
 		for (let start = 0; start < files.length; start += SYNC_INLINE_READS) {
 			const results = await Promise.allSettled(
@@ -437,14 +460,20 @@ async function syncAllSessionsLocked(
 
 	const handles: WorkerHandle[] = [];
 
-	async function drain(handle: WorkerHandle): Promise<void> {
+	// Each lane spawns its worker on its first real parse, so unchanged transcripts cost no worker.
+	async function drain(): Promise<void> {
+		let handle: WorkerHandle | null = null;
 		try {
 			while (!failed) {
 				const idx = cursor++;
 				if (idx >= files.length) return;
-				const parsed = await prepareFile(idx, (file, fromOffset, parserState, replay) =>
-					dispatch(handle, { sessionFile: file, fromOffset, parserState, replay }),
-				);
+				const parsed = await prepareFile(idx, (file, fromOffset, parserState, replay) => {
+					if (!handle) {
+						handle = spawnWorker();
+						handles.push(handle);
+					}
+					return dispatch(handle, { sessionFile: file, fromOffset, parserState, replay });
+				});
 				if (!failed) acceptFile(files[idx], parsed);
 			}
 		} catch (error) {
@@ -454,9 +483,8 @@ async function syncAllSessionsLocked(
 	}
 
 	try {
-		for (let i = 0; i < poolSize; i++) handles.push(spawnWorker());
 		// Drain in-flight work before releasing the sync lock, even after a failed batch.
-		const results = await Promise.allSettled(handles.map(drain));
+		const results = await Promise.allSettled(Array.from({ length: poolSize }, drain));
 		for (const result of results) {
 			if (result.status === "rejected") throw result.reason;
 		}
@@ -467,22 +495,7 @@ async function syncAllSessionsLocked(
 	return finish();
 }
 
-const HOUR_MS = 60 * 60 * 1000;
-const DAY_MS = 24 * HOUR_MS;
-
-type TimeRange = "1h" | "24h" | "7d" | "30d" | "90d" | "all";
-
 const DEFAULT_TIME_RANGE: TimeRange = "24h";
-
-/** Span and series bucket per range; mirrored by the client's `data/range.ts`. */
-const TIME_RANGES: Record<TimeRange, { spanMs: number | null; bucketMs: number }> = {
-	"1h": { spanMs: HOUR_MS, bucketMs: 5 * 60 * 1000 },
-	"24h": { spanMs: DAY_MS, bucketMs: HOUR_MS },
-	"7d": { spanMs: 7 * DAY_MS, bucketMs: DAY_MS },
-	"30d": { spanMs: 30 * DAY_MS, bucketMs: DAY_MS },
-	"90d": { spanMs: 90 * DAY_MS, bucketMs: DAY_MS },
-	all: { spanMs: null, bucketMs: DAY_MS },
-};
 
 /** Most folders the projects payload carries (busiest first); the tail is thousands of temp dirs. */
 const FOLDER_LIMIT = 2000;
@@ -490,7 +503,7 @@ const FOLDER_LIMIT = 2000;
 /** Resolve a `?range=` value (default 24h) to its cutoff and series bucket size. */
 export function getTimeRangeConfig(range?: string | null): RangeWindow {
 	const normalized = range?.trim().toLowerCase() ?? DEFAULT_TIME_RANGE;
-	const config = TIME_RANGES[normalized as TimeRange] ?? TIME_RANGES[DEFAULT_TIME_RANGE];
+	const config = RANGE_WINDOWS[normalized as TimeRange] ?? RANGE_WINDOWS[DEFAULT_TIME_RANGE];
 	return {
 		cutoff: config.spanMs === null ? null : Date.now() - config.spanMs,
 		bucketMs: config.bucketMs,

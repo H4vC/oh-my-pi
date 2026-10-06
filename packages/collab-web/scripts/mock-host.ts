@@ -10,8 +10,17 @@
  */
 
 import type { AgentSnapshot, HostFrame, SessionEntry, SessionState, WireFrame } from "@oh-my-pi/pi-wire";
-import { generateRoomKey, importRoomKey, open, seal } from "../src/lib/codec";
-import { COLLAB_PROTO, formatCollabLink, generateRoomId, packEnvelope, unpackEnvelope } from "../src/lib/link";
+import { COLLAB_PROTO } from "@oh-my-pi/pi-wire";
+import {
+	formatCollabLink,
+	generateRoomId,
+	generateRoomKey,
+	importRoomKey,
+	open,
+	packEnvelope,
+	seal,
+	unpackEnvelope,
+} from "@oh-my-pi/pi-wire/collab";
 import {
 	fixtureAgents,
 	fixtureEntries,

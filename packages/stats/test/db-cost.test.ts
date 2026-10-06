@@ -256,6 +256,8 @@ describe("stats subscription cost correction", () => {
 			0,
 			0,
 		);
+		// A database whose catalog backfill has not run for this release.
+		database.run("DELETE FROM meta WHERE key = 'catalog_cost_backfill'");
 		database.close();
 
 		await initDb();
@@ -380,6 +382,7 @@ describe("stats scheduled response costs", () => {
 
 		// Simulate a database predating the no-cache estimate column's backfill.
 		database.run("UPDATE messages SET cost_no_cache_input = NULL");
+		database.run("DELETE FROM meta WHERE key = 'cost_no_cache_input_v1'");
 		closeDb();
 		await initDb();
 		expect(getOverallStats().totalCost).toBeCloseTo(0.069, 8);

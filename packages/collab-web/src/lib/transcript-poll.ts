@@ -9,7 +9,27 @@
 
 import type { SessionEntry } from "@oh-my-pi/pi-wire";
 import type { TranscriptResult } from "./client";
-import { parseJsonl } from "./jsonl";
+
+/**
+ * Incremental JSONL decode: transcript bytes arrive in arbitrary chunks, so the
+ * trailing partial line is returned as `carry` for the next chunk. Unparseable
+ * complete lines are skipped (tolerant decode).
+ */
+function parseJsonl(text: string, carry: string): { items: unknown[]; carry: string } {
+	const lines = (carry + text).split("\n");
+	const nextCarry = lines.pop() ?? "";
+	const items: unknown[] = [];
+	for (const line of lines) {
+		const trimmed = line.trim();
+		if (!trimmed) continue;
+		try {
+			items.push(JSON.parse(trimmed));
+		} catch {
+			// skip unparseable line
+		}
+	}
+	return { items, carry: nextCarry };
+}
 
 /** What one transcript poll round decided (pure; the drawer's effect executes it). */
 export type TranscriptPollDecision =

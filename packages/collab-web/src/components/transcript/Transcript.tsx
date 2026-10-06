@@ -5,12 +5,17 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "rea
 import type { ActiveTool, ConnectionPhase } from "../../lib/client";
 import { fmtTokens } from "../../lib/format";
 import type { ToolRenderHost } from "../../tool-render";
-import { Markdown } from "./Markdown";
+import { Markdown, StreamingMarkdown } from "./Markdown";
 import { ToolCard } from "./ToolCard";
 import "./transcript.css";
 
 export interface TranscriptProps {
 	entries: readonly SessionEntry[];
+	/**
+	 * Bumped when `entries` was appended in place (same array reference), so
+	 * entry-derived state recomputes. Omit when every change replaces `entries`.
+	 */
+	entriesVersion?: number;
 	stream: AssistantMessage | null;
 	streamDone: boolean;
 	activeTools: ReadonlyMap<string, ActiveTool>;
@@ -124,7 +129,7 @@ function AssistantBody({
 			case "redactedThinking":
 				return <ThinkingBlock key={i} text="" redacted />;
 			case "text":
-				return <Markdown key={i} text={block.text} />;
+				return pending ? <StreamingMarkdown key={i} text={block.text} /> : <Markdown key={i} text={block.text} />;
 			case "toolCall": {
 				const act = active.get(block.id);
 				const result = results.get(block.id);
@@ -271,7 +276,7 @@ const WINDOW = 100;
 const EARLIER_TRIGGER_PX = 200;
 
 export function Transcript(props: TranscriptProps): ReactNode {
-	const { entries, stream, streamDone, activeTools, working, compact, host, phase } = props;
+	const { entries, entriesVersion, stream, streamDone, activeTools, working, compact, host, phase } = props;
 
 	// null follows the tail. A number pins the first mounted entry while the
 	// reader is scrolled away from the bottom, so appended entries never
@@ -279,7 +284,8 @@ export function Transcript(props: TranscriptProps): ReactNode {
 	const [pinnedStart, setPinnedStart] = useState<number | null>(null);
 	const tailStart = Math.max(0, entries.length - WINDOW);
 	const start = pinnedStart === null ? tailStart : Math.min(pinnedStart, tailStart);
-	const visible = useMemo(() => entries.slice(start), [entries, start]);
+	// `entriesVersion` re-slices after in-place appends to `entries`.
+	const visible = useMemo(() => entries.slice(start), [entries, entriesVersion, start]);
 
 	// A tool result always follows its call, so visible rows only pair with visible results.
 	const results = useMemo(() => {
@@ -305,7 +311,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 	useEffect(() => {
 		const el = rootRef.current;
 		if (el !== null) followTranscriptTail(el, lockRef);
-	}, [entries, stream, activeTools, working]);
+	}, [entries, entriesVersion, stream, activeTools, working]);
 
 	// A `live` transition (initial connect or reconnect) jumps to the latest message
 	// regardless of the prior scroll position. Absent for the agent drawer's compact transcript.
@@ -351,7 +357,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 			}
 		}
 		return ids;
-	}, [entries]);
+	}, [entries, entriesVersion]);
 
 	// Active tools not already represented as toolCall blocks in committed rows or the stream ghost.
 	const tailTools = useMemo(() => {

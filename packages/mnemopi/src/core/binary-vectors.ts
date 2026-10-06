@@ -175,6 +175,9 @@ export function informationTheoreticScore(distance: number, dim: number = EMBEDD
 	return 1.0 - distance / dim;
 }
 
+/**
+ * @deprecated Unused by mnemopi, which stores embeddings in `memory_embeddings`; use `maximallyInformativeBinarization` + `hammingDistance` directly. Will be removed in the next major.
+ */
 export class BinaryVectorStore {
 	readonly conn: Database;
 	readonly dbPath: DatabasePath;
@@ -275,6 +278,9 @@ export class BinaryVectorStore {
 	}
 }
 
+/**
+ * @deprecated Unused by mnemopi; use `maximallyInformativeBinarization` + `hammingDistance` directly. Will be removed in the next major.
+ */
 export class FastBinarySearch {
 	private readonly memoryIds: string[];
 	private readonly vectors: Uint8Array[];

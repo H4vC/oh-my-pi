@@ -1,14 +1,13 @@
 /**
- * Browser WebSocket wrapper for collab live-session sharing (vendored mirror
- * of `@oh-my-pi/pi-coding-agent/src/collab/relay-client.ts` semantics).
+ * Browser WebSocket wrapper for collab live-session sharing (guest side of
+ * `@oh-my-pi/pi-coding-agent/src/collab/relay-client.ts` semantics).
  *
- * Connects to a relay room, seals/opens AES-GCM frames, and reconnects with
+ * Connects to a relay room as a guest, seals/opens AES-GCM frames, and reconnects with
  * exponential backoff. Guests survive host-drop teardown while the host recreates the room.
  */
 
-import type { GuestFrame, HostFrame, RelayControlMessage } from "@oh-my-pi/pi-wire";
-import { open, seal } from "./codec";
-import { packEnvelope, unpackEnvelope } from "./link";
+import type { GuestFrame, HostFrame } from "@oh-my-pi/pi-wire";
+import { open, packEnvelope, seal, unpackEnvelope } from "@oh-my-pi/pi-wire/collab";
 
 const RELAY_CLOSE_REASONS: Record<number, string> = {
 	4001: "room closed",
@@ -25,20 +24,23 @@ const MAX_PENDING_SENDS = 256;
 export interface CollabSocketOptions {
 	/** wss://host[:port]/r/<roomId> — no query string. */
 	wsUrl: string;
-	role: "host" | "guest";
-	/** Room key; a pending import promise is awaited inside the seal/open chains. */
+	/** Room key; a pending import promise is resolved once, before the first seal/open. */
 	key: CryptoKey | PromiseLike<CryptoKey>;
 }
 
 export class CollabSocket {
 	/** Fires after every successful (re)connect. */
 	onOpen?: () => void;
-	onFrame?: (frame: HostFrame, fromPeer: number) => void;
-	onControl?: (msg: RelayControlMessage) => void;
+	onFrame?: (frame: HostFrame) => void;
 	/** Fires on each close; `willReconnect` distinguishes retries from terminal shutdown. */
 	onClose?: (reason: string, willReconnect: boolean) => void;
 
-	readonly #opts: CollabSocketOptions;
+	readonly #wsUrl: string;
+	/** Settles once with the imported room key; rejects when the import failed. */
+	readonly #keyReady: Promise<CryptoKey>;
+	/** The resolved room key, so frames after the first skip the promise hop. */
+	#key: CryptoKey | null = null;
+
 	#ws: WebSocket | null = null;
 	#retryTimer: Timer | undefined;
 	#attempt = 0;
@@ -54,7 +56,11 @@ export class CollabSocket {
 	#pendingSends: Uint8Array<ArrayBuffer>[] = [];
 
 	constructor(opts: CollabSocketOptions) {
-		this.#opts = opts;
+		this.#wsUrl = opts.wsUrl;
+		this.#keyReady = Promise.resolve(opts.key).then(key => {
+			this.#key = key;
+			return key;
+		});
 	}
 
 	get isOpen(): boolean {
@@ -69,12 +75,12 @@ export class CollabSocket {
 		this.#openSocket();
 	}
 
-	send(frame: GuestFrame, targetPeer = 0): void {
+	send(frame: GuestFrame): void {
 		this.#sendChain = this.#sendChain
 			.then(async () => {
 				if (this.#closed) return;
-				const sealed = await seal(await this.#opts.key, frame);
-				const envelope = packEnvelope(targetPeer, sealed);
+				const sealed = await seal(this.#key ?? (await this.#keyReady), frame);
+				const envelope = packEnvelope(0, sealed);
 				const ws = this.#ws;
 				if (ws && ws.readyState === WebSocket.OPEN) {
 					ws.send(envelope);
@@ -109,7 +115,7 @@ export class CollabSocket {
 	}
 
 	#openSocket(): void {
-		const ws = new WebSocket(`${this.#opts.wsUrl}?role=${this.#opts.role}`);
+		const ws = new WebSocket(`${this.#wsUrl}?role=guest`);
 		ws.binaryType = "arraybuffer";
 		this.#ws = ws;
 		ws.onopen = () => {
@@ -134,14 +140,8 @@ export class CollabSocket {
 	}
 
 	#handleMessage(ws: WebSocket, data: unknown): void {
-		if (typeof data === "string") {
-			try {
-				this.onControl?.(JSON.parse(data) as RelayControlMessage);
-			} catch {
-				console.warn("collab: ignoring malformed control message");
-			}
-			return;
-		}
+		// Relay control messages (text frames) carry nothing a guest acts on.
+		if (typeof data === "string") return;
 		const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : data instanceof Uint8Array ? data : null;
 		if (!bytes) {
 			console.warn("collab: ignoring binary message of unexpected shape");
@@ -157,7 +157,7 @@ export class CollabSocket {
 				if (this.#ws !== ws) return;
 				let frame: HostFrame;
 				try {
-					frame = (await open(await this.#opts.key, envelope.payload)) as HostFrame;
+					frame = (await open(this.#key ?? (await this.#keyReady), envelope.payload)) as HostFrame;
 				} catch {
 					this.#failFatal("bad key or corrupted frame");
 					return;
@@ -165,7 +165,7 @@ export class CollabSocket {
 				if (this.#ws !== ws) return;
 				this.#retryMissingRoom = false;
 				this.#attempt = 0;
-				this.onFrame?.(frame, envelope.peerId);
+				this.onFrame?.(frame);
 			})
 			.catch(() => {
 				// listener threw; keep the receive chain alive
@@ -176,7 +176,7 @@ export class CollabSocket {
 		if (this.#closed) return;
 		const fatalReason = RELAY_CLOSE_REASONS[code];
 		const closeReason = fatalReason ?? (reason || `connection lost (code ${code})`);
-		const retryRoom = this.#opts.role === "guest" && (code === 4001 || (code === 4004 && this.#retryMissingRoom));
+		const retryRoom = code === 4001 || (code === 4004 && this.#retryMissingRoom);
 		if (retryRoom) {
 			this.#retryMissingRoom = true;
 			this.onClose?.(closeReason, true);
