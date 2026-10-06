@@ -8,7 +8,7 @@ import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
-import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
+import { AuthStorage } from "@oh-my-pi/pi-ai";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { removeSyncWithRetries, Snowflake, TempDir } from "@oh-my-pi/pi-utils";
 import { createAssistantMessage } from "./helpers/agent-session-setup";
@@ -91,7 +91,7 @@ describe("AgentSession persistence-keys cache", () => {
 	});
 
 	it("caches missing-key checks across a growing branch", async () => {
-		const getBranch = spyOn(sessionManager, "getBranch");
+		const getBranch = spyOn(sessionManager, "getBranchView");
 
 		try {
 			for (let i = 0; i < 25; i++) {

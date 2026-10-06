@@ -55,6 +55,7 @@ export interface PushOptions {
 
 // ── Generators ──────────────────────────────────────────────────────────────
 
+/** @deprecated Internal to {@link ToolChoiceQueue}; will be unexported in the next major. */
 export function* onceGen(choice: ToolChoice): Generator<ToolChoice, void, unknown> {
 	yield choice;
 }

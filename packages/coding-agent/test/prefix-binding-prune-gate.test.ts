@@ -7,7 +7,8 @@ import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 
-const OLD_RESULT = "old file contents\n".repeat(100);
+// Large enough that superseding it clears the stale pass's minimum-savings gate.
+const OLD_RESULT = "old file contents\n".repeat(6000);
 const NEW_RESULT = "new file contents\n".repeat(100);
 
 function createPrefixBindingModel(): Model<"anthropic-messages"> {

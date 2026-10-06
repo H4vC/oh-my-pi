@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import type { FileEntry } from "@oh-my-pi/pi-coding-agent/session/session-entries";
-import { migrateSessionEntries } from "@oh-my-pi/pi-coding-agent/session/session-migrations";
+import { migrateToCurrentVersion } from "@oh-my-pi/pi-coding-agent/session/session-migrations";
 
-describe("migrateSessionEntries", () => {
+describe("migrateToCurrentVersion", () => {
 	it("should add id/parentId to v1 entries", () => {
 		const entries: FileEntry[] = [
 			{ type: "session", id: "sess-1", timestamp: "2025-01-01T00:00:00Z", cwd: "/tmp" },
@@ -23,7 +23,7 @@ describe("migrateSessionEntries", () => {
 			},
 		] as FileEntry[];
 
-		migrateSessionEntries(entries);
+		migrateToCurrentVersion(entries);
 
 		// Header should have version set to current
 		expect((entries[0] as any).version).toBe(3);
@@ -69,7 +69,7 @@ describe("migrateSessionEntries", () => {
 			},
 		] as FileEntry[];
 
-		migrateSessionEntries(entries);
+		migrateToCurrentVersion(entries);
 
 		// IDs should be unchanged
 		expect((entries[1] as any).id).toBe("abc12345");

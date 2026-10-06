@@ -7,11 +7,24 @@
 - Cancel a pending model handoff with `/prewalk off` without changing the active model, saved prewalk setting, or delivered continuation history ([#14587](https://github.com/can1357/oh-my-pi/pull/14587) by [@NaC-L](https://github.com/NaC-L)).
 - RPC clients can log out like `/logout`: `get_logout_accounts` lists a provider's stored credentials and `logout` removes one; the TypeScript client and the generated Python, Go, and Rust SDKs gain matching methods ([#14588](https://github.com/can1357/oh-my-pi/pull/14588) by [@andrebrait](https://github.com/andrebrait))
 - Custom providers can declare model kinds: `models` entries and `modelOverrides` in `models.yml`, and models registered by extensions through `registerProvider` or `fetchDynamicModels`, accept `kind` and the runner APIs (`openai-images`, `openai-speech`, `openai-embeddings`, …), so a gateway's image, speech, or embedding models reach their roles instead of registering as chat. A `kind` its api cannot serve is rejected; chat transports also accept `tiny`, and those that `generate_image` runs, such as `openai-responses`, accept `image` and generate through the hosted image tool. An omitted `kind` follows the api, so custom `typesafe`/`openrouter-decisions` models now register as `judge`. A configured `kind` outranks the bundled catalog's classification of the same id and survives `modelOverrides` and refreshes. A `modelOverrides` `kind` on a built-in or discovered model is checked against the api that model resolves to and, if that api does not serve it, ignored with a logged warning instead of rejected; an `api` override or a same-id `models` entry keeps a kind the new api still serves and otherwise makes the model chat. A `fetchDynamicModels` row whose api cannot serve its `kind` is dropped with a logged warning ([#14483](https://github.com/can1357/oh-my-pi/pull/14483) by [@oshinop](https://github.com/oshinop) and [@jimhester](https://github.com/jimhester))
+- Added optional `TtsrCheckOptions` (`{ final }`) to `TtsrManager.checkDelta`/`checkSnapshot` to defer or force evaluation of multi-line conditions ([#14644](https://github.com/can1357/oh-my-pi/pull/14644) by [@H4vC](https://github.com/H4vC))
+- Added optional streaming `writeLinesSync`/`writeLinesAtomic` methods to `SessionStorage`, implemented by `FileSessionStorage` ([#14644](https://github.com/can1357/oh-my-pi/pull/14644) by [@H4vC](https://github.com/H4vC))
+- Added `forgetExternalizedImages(blobStore)` in `session/session-persistence` ([#14644](https://github.com/can1357/oh-my-pi/pull/14644) by [@H4vC](https://github.com/H4vC))
+- Added `SessionManager.getBranchView()` returning a read-only, non-copied view of the active branch ([#14644](https://github.com/can1357/oh-my-pi/pull/14644) by [@H4vC](https://github.com/H4vC))
+- Added `AgentSession.getTokenTotals()` and `SessionStatsTracker.getTokenTotals()` ([#14644](https://github.com/can1357/oh-my-pi/pull/14644) by [@H4vC](https://github.com/H4vC))
+- Added `findLatestCompaction(entries)` in `session/session-context`; `getLatestCompactionEntry` accepts readonly arrays ([#14644](https://github.com/can1357/oh-my-pi/pull/14644) by [@H4vC](https://github.com/H4vC))
 - Added `session/auth-discovery` (`discoverAuthStorage`) and `extensibility/extensions/session-loader` (`discoverSessionExtensionPaths`, `loadSessionExtensions`, `loadCliExtensionProviders`) modules; `sdk.ts` still re-exports them ([#14643](https://github.com/can1357/oh-my-pi/pull/14643) by [@H4vC](https://github.com/H4vC))
+- Added `AgentSession.countRunningAsyncJobs()` ([#14644](https://github.com/can1357/oh-my-pi/pull/14644) by [@H4vC](https://github.com/H4vC))
+- Added `BlobPutOptions.hash` so `BlobStore.put`/`putSync` can skip re-hashing a known SHA-256 ([#14644](https://github.com/can1357/oh-my-pi/pull/14644) by [@H4vC](https://github.com/H4vC))
 
 ### Changed
 
 - Clarified how agents request line ranges in `read` calls with complete examples ([#13956](https://github.com/can1357/oh-my-pi/pull/13956) by [@Dante-dan](https://github.com/Dante-dan)).
+- Changed per-turn stale-result pruning to wait until it saves at least 20,000 tokens, avoiding a session rewrite every prompt ([#14644](https://github.com/can1357/oh-my-pi/pull/14644) by [@H4vC](https://github.com/H4vC))
+- Reduced per-prompt session overhead from pruning, goal-mode token accounting, branch appends, publishing and full session rewrites ([#14644](https://github.com/can1357/oh-my-pi/pull/14644) by [@H4vC](https://github.com/H4vC))
+- Removed quadratic slowdown of TTSR stream rules on long responses ([#14644](https://github.com/can1357/oh-my-pi/pull/14644) by [@H4vC](https://github.com/H4vC))
+- Changed `GoalRuntime.onAgentEnd({ currentUsage })` to also accept a thunk ([#14644](https://github.com/can1357/oh-my-pi/pull/14644) by [@H4vC](https://github.com/H4vC))
+- Changed prompt history search to show only prefix matches when they fill the page ([#14644](https://github.com/can1357/oh-my-pi/pull/14644) by [@H4vC](https://github.com/H4vC))
 
 ### Fixed
 
@@ -38,6 +51,13 @@
 - Fixed the `advisor.immuneTurns` setting description claiming blockers are suppressed during the cooldown; blockers are exempt from it ([#10493](https://github.com/can1357/oh-my-pi/issues/10493), [#14360](https://github.com/can1357/oh-my-pi/pull/14360) by [@F0Rextasy](https://github.com/F0Rextasy))
 - Fixed custom `GlobOperations` backends hanging a `glob` call forever: the call now stops at the tool's scan deadline and reports the scan as incomplete, and the backend receives the resolved hidden/gitignore/limit policy plus a cancellation signal ([#6370](https://github.com/can1357/oh-my-pi/issues/6370), [#14426](https://github.com/can1357/oh-my-pi/pull/14426) by [@F0Rextasy](https://github.com/F0Rextasy))
 - Fixed `--resume <path>` silently creating a brand new session when the path did not exist; it now fails with a message naming the path, matching `--fork <path>` and `--resume <id>` ([#14404](https://github.com/can1357/oh-my-pi/pull/14404) by [@F0Rextasy](https://github.com/F0Rextasy))
+- Fixed ephemeral side-channel replies (idle recap, completion probe, `runEphemeralTurn`) truncating in quadratic time and splitting multi-byte characters ([#14644](https://github.com/can1357/oh-my-pi/pull/14644) by [@H4vC](https://github.com/H4vC))
+
+### Deprecated
+
+- Deprecated `AgentSession.resolveRoleModel` (use `resolveRoleModelWithThinking`), `getLastVisibleHandoffText`, `hasCopyCandidateAssistantMessage`, `hasExtensionHandlers`, `hasPendingPythonMessages`, `titleSystemPrompt`, `cacheWarmingStatus`, and `formatCacheWarmingStatus` (`session/cache-warmer`) ([#14644](https://github.com/can1357/oh-my-pi/pull/14644) by [@H4vC](https://github.com/H4vC))
+- Deprecated `migrateSessionEntries` (use `migrateToCurrentVersion`), `onceGen` (`session/tool-choice-queue`), `snapcompactSavingsJournalPath` and `readSnapcompactSavingsJournal` (`session/snapcompact-savings-journal`) ([#14644](https://github.com/can1357/oh-my-pi/pull/14644) by [@H4vC](https://github.com/H4vC))
+- Deprecated `isImageBlock` and `isImageDataPayload` (`session/session-persistence`), `externalizeImageDataUrl` (`session/blob-store`; use `externalizeImageDataUrlSync`), and `SessionManager.sanitizeLoadedOpenAIResponsesReplayMetadata()` (load and fork already run it) ([#14644](https://github.com/can1357/oh-my-pi/pull/14644) by [@H4vC](https://github.com/H4vC))
 
 ## [18.6.3] - 2026-10-06
 

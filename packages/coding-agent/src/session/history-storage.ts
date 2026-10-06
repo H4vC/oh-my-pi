@@ -288,6 +288,12 @@ ON CONFLICT(prompt) DO UPDATE SET
 			logger.debug("HistoryStorage FTS query failed, using substring only", { error: String(error) });
 		}
 
+		// A full FTS page already answers the query; skip the substring scan
+		// (it walks the whole table) instead of merging infix-only matches in.
+		if (ftsRows.length >= safeLimit) {
+			return ftsRows.map(row => this.#toEntry(row));
+		}
+
 		// 2. Substring fallback (token-AND LIKE). Catches infix matches FTS5's
 		//    prefix-only wildcard cannot reach (e.g. "mit" -> "commit"). Bounded
 		//    by safeLimit, ordered by recency - no full-table load into JS.

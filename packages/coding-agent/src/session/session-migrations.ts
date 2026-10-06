@@ -72,7 +72,7 @@ export function migrateToCurrentVersion(entries: FileEntry[]): boolean {
 	return true;
 }
 
-/** Exported for testing */
+/** @deprecated Use {@link migrateToCurrentVersion}. Will be removed in the next major. */
 export function migrateSessionEntries(entries: FileEntry[]): void {
 	migrateToCurrentVersion(entries);
 }

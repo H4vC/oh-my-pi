@@ -8,7 +8,7 @@
  */
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import type { AssistantMessage, ImageContent, TextContent, ToolResultMessage } from "@oh-my-pi/pi-ai";
-import { escapeXmlText } from "@oh-my-pi/pi-utils";
+import { countNewlines, escapeXmlText } from "@oh-my-pi/pi-utils";
 import { INTENT_FIELD } from "@oh-my-pi/pi-wire";
 import type {
 	BashExecutionMessage,
@@ -20,6 +20,7 @@ import type {
 	PythonExecutionMessage,
 } from "./messages";
 import { truncateMiddle } from "@oh-my-pi/pi-tui/tools/streaming-output";
+import { longestBacktickRun, markdownFenceFor } from "../utils/markdown-fence";
 
 export interface HistoryFormatOptions {
 	/** Optional H1 prepended to the transcript. */
@@ -129,7 +130,7 @@ function contentToText(content: string | readonly (TextContent | ImageContent)[]
 
 function lineCount(text: string): number {
 	if (!text) return 0;
-	return text.split("\n").length;
+	return countNewlines(text) + 1;
 }
 
 function primaryArgValue(value: unknown): string {
@@ -204,8 +205,7 @@ export function formatToolResultErrorPreview(content: string | readonly (TextCon
  * out of the fence. Info string `diff` for syntax highlighting.
  */
 function fencedText(text: string, language: string): string {
-	const longest = text.match(/`+/g)?.reduce((max, run) => Math.max(max, run.length), 0) ?? 0;
-	const fence = "`".repeat(Math.max(3, longest + 1));
+	const fence = markdownFenceFor(text);
 	return `${fence}${language}\n${text}\n${fence}`;
 }
 
@@ -233,7 +233,7 @@ function boundedAskJson(value: unknown, transform?: (text: string) => string): s
 }
 
 function boundedFencedToolContext(text: string, language: string, maxLines = EXPANDED_TOOL_IO_MAX_LINES): string {
-	const longestFence = text.match(/`+/g)?.reduce((max, run) => Math.max(max, run.length), 0) ?? 0;
+	const longestFence = longestBacktickRun(text);
 	// A pathological run can make Markdown fences larger than the whole budget.
 	// Use indented code in that case: constant wrapper cost and no delimiter collision.
 	if (longestFence * 2 > EXPANDED_TOOL_IO_MAX_BYTES / 2) {

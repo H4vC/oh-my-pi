@@ -664,7 +664,11 @@ function formatCacheWarmingDecisionTime(nextWarmAt: number | undefined, now: num
 	return `Decision in ${parts.join(" ")}`;
 }
 
-/** One-line human-readable warming status for hosts that surface it. */
+/**
+ * One-line human-readable warming status for hosts that surface it.
+ *
+ * @deprecated No host renders it; will be removed in the next major.
+ */
 export function formatCacheWarmingStatus(status: CacheWarmingStatus, now = Date.now()): string {
 	const decision = status.decision;
 	// A decision is attached once the warmer (or an extension) acted on it; "inactive"

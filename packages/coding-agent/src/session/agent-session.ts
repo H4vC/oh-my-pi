@@ -164,7 +164,7 @@ import type { Skill, SkillWarning } from "../extensibility/skills";
 import { expandSlashCommand, type FileSlashCommand, loadSlashCommands } from "../extensibility/slash-commands";
 import { normalizeToolEventInput, resolveToolEventInput } from "../extensibility/tool-event-input";
 import { GoalRuntime } from "../goals/runtime";
-import type { GoalModeState } from "../goals/state";
+import type { GoalModeState, GoalTokenUsage } from "../goals/state";
 import type { HindsightSessionState } from "../hindsight/state";
 import { InternalUrlRouter, type LocalProtocolOptions } from "../internal-urls";
 import { hasNativeJudge, journalJudgmentUsage, resolveJudge, sharedJudgmentCache } from "../judgment";
@@ -664,6 +664,11 @@ type PersistedAssistantMessage = AssistantMessage & { [kPersistedSessionEntryId]
 
 const INTERRUPTED_THINKING_MIN_CHARS = 60;
 const SESSION_CWD_CHANGE_REJECTED = Symbol("sessionCwdChangeRejected");
+/**
+ * Queued extension `message_update` events beyond which consecutive deltas of
+ * one block are merged. Below it every delta is delivered as its own event.
+ */
+const MESSAGE_UPDATE_COALESCE_BACKLOG = 64;
 
 /**
  * Translate a `power.sleepPrevention` mode into `PowerAssertion.start` options,
@@ -678,6 +683,28 @@ export function powerAssertionOptions(mode: "off" | "idle" | "display" | "system
 		system: mode === "system",
 		user: mode === "system",
 	};
+}
+
+/**
+ * Merge two queued `message_update` events when both are deltas of the same
+ * block of the same assistant message: the result carries the concatenated
+ * delta and the newer snapshot. Lets a slow extension handler drain one
+ * combined delta instead of a backlog that pins every per-token snapshot.
+ */
+function coalesceMessageUpdates(previous: AgentSessionEvent, next: AgentSessionEvent): AgentSessionEvent | undefined {
+	if (previous.type !== "message_update" || next.type !== "message_update") return undefined;
+	const before = previous.assistantMessageEvent;
+	const after = next.assistantMessageEvent;
+	if (
+		(after.type !== "text_delta" && after.type !== "thinking_delta" && after.type !== "toolcall_delta") ||
+		(before.type !== "text_delta" && before.type !== "thinking_delta" && before.type !== "toolcall_delta") ||
+		before.type !== after.type ||
+		before.contentIndex !== after.contentIndex ||
+		before.partial.timestamp !== after.partial.timestamp
+	) {
+		return undefined;
+	}
+	return { ...next, assistantMessageEvent: { ...after, delta: before.delta + after.delta } };
 }
 
 export class AgentSession implements SettingsScope {
@@ -2069,15 +2096,7 @@ export class AgentSession implements SettingsScope {
 			setState: state => {
 				this.#goalModeState = state;
 			},
-			getCurrentUsage: () => {
-				const usage = this.getSessionStats().tokens;
-				return {
-					input: usage.input,
-					output: usage.output,
-					cacheRead: usage.cacheRead,
-					cacheWrite: usage.cacheWrite,
-				};
-			},
+			getCurrentUsage: () => this.#goalUsage(),
 			emit: event => {
 				if (event.type === "goal_updated") {
 					return this.#emitSessionEvent({ type: "goal_updated", goal: event.goal, state: event.state });
@@ -2766,6 +2785,22 @@ export class AgentSession implements SettingsScope {
 	}
 
 	/**
+	 * Count running async jobs under the same owner scope as
+	 * {@link getAsyncJobSnapshot}'s `running` list, without building the
+	 * snapshot. `include` narrows which jobs count; omitted, all count.
+	 */
+	countRunningAsyncJobs(include?: (job: { type: string; agentId?: string }) => boolean): number {
+		const manager = this.#asyncJobManager;
+		if (!manager) return 0;
+		const ownerFilter = this.#agentId ? { ownerId: this.#agentId } : undefined;
+		let count = 0;
+		for (const job of manager.getRunningJobs(ownerFilter)) {
+			if (!include || include(job)) count++;
+		}
+		return count;
+	}
+
+	/**
 	 * Inspect one async job this session owns: its command, live pids, exit
 	 * status and output. Undefined when the job is unknown, owned by another
 	 * agent, or evicted.
@@ -3017,9 +3052,9 @@ export class AgentSession implements SettingsScope {
 
 	/** Emit an event to all listeners */
 	#emit(event: AgentSessionEvent): void {
-		// Copy array before iteration to avoid mutation during iteration.
-		const listeners = [...this.#eventListeners];
-		for (const l of listeners) {
+		// Listener array is copy-on-write (see `subscribe`), so iterating the
+		// current array is safe against (un)subscribes made by a listener.
+		for (const l of this.#eventListeners) {
 			try {
 				const result = l(event) as unknown;
 				// Listener may be an async function whose returned Promise we don't await;
@@ -3131,7 +3166,14 @@ export class AgentSession implements SettingsScope {
 	#drainingExtensionEvents = false;
 
 	#queueExtensionEvent(event: AgentSessionEvent): void {
-		this.#queuedExtensionEvents.push(event);
+		const queue = this.#queuedExtensionEvents;
+		// Only a backlog (a slow handler) merges deltas; otherwise each delta is its own event.
+		const merged =
+			queue.length >= MESSAGE_UPDATE_COALESCE_BACKLOG
+				? coalesceMessageUpdates(queue[queue.length - 1], event)
+				: undefined;
+		if (merged) queue[queue.length - 1] = merged;
+		else queue.push(event);
 		if (this.#drainingExtensionEvents) return;
 		this.#drainingExtensionEvents = true;
 		queueMicrotask(() => void this.#drainExtensionEvents());
@@ -3367,14 +3409,6 @@ export class AgentSession implements SettingsScope {
 	 * per `onTurnEnd` on a long session and the load-bearing source of the
 	 * `ui.loop-blocked` warnings in the bug report.
 	 */
-	#indexPersistedMessageKeys(): Set<string> {
-		return this.#ensurePersistedMessageKeys();
-	}
-
-	#persistedMessageKeysAnchor(): string {
-		return `${this.sessionManager.getSessionFile() ?? ""}\u0000${this.sessionManager.getLeafId() ?? ""}`;
-	}
-
 	#ensurePersistedMessageKeys(): Set<string> {
 		const anchor = this.#persistedMessageKeysAnchor();
 		let cache = this.#persistedMessageKeys;
@@ -3385,9 +3419,13 @@ export class AgentSession implements SettingsScope {
 		return cache.keys;
 	}
 
+	#persistedMessageKeysAnchor(): string {
+		return `${this.sessionManager.getSessionFile() ?? ""}\u0000${this.sessionManager.getLeafId() ?? ""}`;
+	}
+
 	#buildPersistedMessageKeySet(): Set<string> {
 		const keys = new Set<string>();
-		for (const entry of this.sessionManager.getBranch()) {
+		for (const entry of this.sessionManager.getBranchView()) {
 			if (entry.type !== "message") continue;
 			const key = sessionMessagePersistenceKey(entry.message);
 			if (key !== undefined) keys.add(key);
@@ -3416,7 +3454,7 @@ export class AgentSession implements SettingsScope {
 		if (key === undefined) return false;
 		const keys = this.#ensurePersistedMessageKeys();
 		if (!keys.has(key)) return false;
-		const branch = this.sessionManager.getBranch();
+		const branch = this.sessionManager.getBranchView();
 		for (let index = branch.length - 1; index >= 0; index--) {
 			const entry = branch[index];
 			if (entry.type !== "message") continue;
@@ -3604,7 +3642,7 @@ export class AgentSession implements SettingsScope {
 		// JSON-compared every entry per turn message, which on long sessions
 		// turned each `onTurnEnd` into a seconds-long sync block (the
 		// `ui.loop-blocked` warnings tagged `subagent:*` in the bug report).
-		const branchKeys = this.#indexPersistedMessageKeys();
+		const branchKeys = this.#ensurePersistedMessageKeys();
 		const turnKeys = turnMessages.map(sessionMessagePersistenceKey);
 		const persistedKeys = new Set<string>();
 		for (let index = 0; index < turnMessages.length; index++) {
@@ -3800,13 +3838,7 @@ export class AgentSession implements SettingsScope {
 
 		if (event.type === "turn_start") {
 			this.#advisors.onPrimaryTurnStart();
-			const usage = this.getSessionStats().tokens;
-			this.#goalRuntime.onTurnStart(`turn-${++this.#goalTurnCounter}`, {
-				input: usage.input,
-				output: usage.output,
-				cacheRead: usage.cacheRead,
-				cacheWrite: usage.cacheWrite,
-			});
+			this.#goalRuntime.onTurnStart(`turn-${++this.#goalTurnCounter}`, this.#goalUsage());
 		}
 
 		if (event.type === "tool_execution_start") {
@@ -4036,18 +4068,10 @@ export class AgentSession implements SettingsScope {
 			const ttsrAbortPendingAtAgentEnd = this.#ttsr.abortPending;
 			const emitAgentEndNotification = (options?: AgentEndSettleOptions) =>
 				this.#settleAgentEnd(event, activeMessages, options);
-			const usage = this.getSessionStats().tokens;
-			await this.#goalRuntime.onAgentEnd({
-				currentUsage: {
-					input: usage.input,
-					output: usage.output,
-					cacheRead: usage.cacheRead,
-					cacheWrite: usage.cacheWrite,
-				},
-			});
-			const fallbackAssistant = [...settledMessages]
-				.reverse()
-				.find((message): message is AssistantMessage => message.role === "assistant");
+			await this.#goalRuntime.onAgentEnd({ currentUsage: () => this.#goalUsage() });
+			const fallbackAssistant = settledMessages.findLast(
+				(message): message is AssistantMessage => message.role === "assistant",
+			);
 			const msg = this.#lastAssistantMessage ?? fallbackAssistant;
 			this.#lastAssistantMessage = undefined;
 			if (!msg) {
@@ -5008,14 +5032,16 @@ export class AgentSession implements SettingsScope {
 	 * Multiple listeners can be added. Returns unsubscribe function for this listener.
 	 */
 	subscribe(listener: AgentSessionEventListener): () => void {
-		this.#eventListeners.push(listener);
+		// Copy-on-write: `#emit` iterates the array it read without copying it.
+		this.#eventListeners = [...this.#eventListeners, listener];
 
 		// Return unsubscribe function for this specific listener
 		return () => {
 			const index = this.#eventListeners.indexOf(listener);
-			if (index !== -1) {
-				this.#eventListeners.splice(index, 1);
-			}
+			if (index === -1) return;
+			const listeners = this.#eventListeners.slice();
+			listeners.splice(index, 1);
+			this.#eventListeners = listeners;
 		};
 	}
 
@@ -5048,6 +5074,8 @@ export class AgentSession implements SettingsScope {
 	/**
 	 * Current prompt-cache warming state, for hosts that surface it. Undefined
 	 * when the session has no warmer (side-channels, subagents, older hosts).
+	 *
+	 * @deprecated No host reads this status; it will be removed in the next major.
 	 */
 	get cacheWarmingStatus(): CacheWarmingStatus | undefined {
 		return this.#cacheWarmer?.status;
@@ -5319,6 +5347,7 @@ export class AgentSession implements SettingsScope {
 		return this.#isDisposed;
 	}
 
+	/** @internal Test seam. */
 	markMovedFromEmptySessionFile(sessionFile: string): void {
 		this.#movedFromEmptySessionFile = path.resolve(sessionFile);
 	}
@@ -6198,7 +6227,7 @@ export class AgentSession implements SettingsScope {
 		return this.#tools.resolveActiveEditMode();
 	}
 
-	/** Enabled MCP tools in their current presentation partition. */
+	/** Enabled MCP tools in their current presentation partition. @internal Test seam. */
 	getSelectedMCPToolNames(): string[] {
 		return this.#tools.getSelectedMCPToolNames();
 	}
@@ -6248,7 +6277,7 @@ export class AgentSession implements SettingsScope {
 		return this.#tools.reconcileCodeMode();
 	}
 
-	/** Current Code Mode `tool_namespaces_info` snapshot, or `undefined` when inactive. */
+	/** Current Code Mode `tool_namespaces_info` snapshot, or `undefined` when inactive. @internal Test seam. */
 	get codeModeNamespacesInfo(): unknown {
 		return this.#codeModeState.namespacesInfo;
 	}
@@ -6783,6 +6812,7 @@ export class AgentSession implements SettingsScope {
 		);
 	}
 
+	/** @deprecated Drops the role's thinking level; use {@link resolveRoleModelWithThinking}. Will be removed in the next major. */
 	resolveRoleModel(role: string): Model | undefined {
 		return this.#models.resolveRoleModel(role);
 	}
@@ -8109,7 +8139,7 @@ export class AgentSession implements SettingsScope {
 			// user's prompt anchor, matching the live agent_start clear.
 			synthetic: true,
 		});
-		this.#scheduleIdleQueueDrain();
+		this.#scheduleQueuedMessageDrain();
 	}
 
 	/**
@@ -8133,7 +8163,7 @@ export class AgentSession implements SettingsScope {
 		} finally {
 			this.#modeExitDrainSuppressionDepth--;
 			if (this.#modeExitDrainSuppressionDepth === 0) {
-				this.#scheduleIdleQueueDrain();
+				this.#scheduleQueuedMessageDrain();
 				this.#resumeStrandedIrcAsides();
 			}
 		}
@@ -8255,12 +8285,8 @@ export class AgentSession implements SettingsScope {
 			this.agent.steer(userMessage);
 		}
 		options?.onPromptAdmitted?.();
-		this.#scheduleIdleQueueDrain();
-		return true;
-	}
-
-	#scheduleIdleQueueDrain(): void {
 		this.#scheduleQueuedMessageDrain();
+		return true;
 	}
 
 	#scheduleQueuedMessageDrain(): void {
@@ -8295,7 +8321,7 @@ export class AgentSession implements SettingsScope {
 	}
 
 	/**
-	 * Gate for idle-path queued-message auto-continue. See `#scheduleIdleQueueDrain` for rationale.
+	 * Gate for idle-path queued-message auto-continue (see `#scheduleQueuedMessageDrain`).
 	 */
 	#canAutoContinueForFollowUp(): boolean {
 		if (this.isStreaming) return false;
@@ -8520,7 +8546,7 @@ export class AgentSession implements SettingsScope {
 			this.agent.steer(normalizedAppMessage);
 		}
 		onPromptAdmitted?.();
-		this.#scheduleIdleQueueDrain();
+		this.#scheduleQueuedMessageDrain();
 	}
 
 	/**
@@ -8635,7 +8661,7 @@ export class AgentSession implements SettingsScope {
 			} else {
 				this.agent.steer(normalizedAppMessage);
 			}
-			this.#scheduleIdleQueueDrain();
+			this.#scheduleQueuedMessageDrain();
 			return false;
 		}
 
@@ -8927,7 +8953,7 @@ export class AgentSession implements SettingsScope {
 		// agent's in-flight steering watchers wake.
 		this.agent.moveFollowUpsToSteering(this.#withoutQueuedUserMessage(followUp, index), promoted);
 		this.#allowQueuedMessageDrainRetry();
-		this.#scheduleIdleQueueDrain();
+		this.#scheduleQueuedMessageDrain();
 		return true;
 	}
 
@@ -9311,8 +9337,9 @@ export class AgentSession implements SettingsScope {
 	}
 
 	/** Currently-applied {@link TITLE_SYSTEM.md} override, or undefined when the
-	 *  bundled prompt is in effect. Consumed by {@link InteractiveMode} so the
-	 *  first-input title path and the replan refresh share one source. */
+	 *  bundled prompt is in effect.
+	 *  @deprecated Nothing reads it back; the override is supplied via the `titleSystemPrompt`
+	 *  session option. Will be removed in the next major. */
 	get titleSystemPrompt(): string | undefined {
 		return this.#titleSystemPrompt;
 	}
@@ -10591,7 +10618,7 @@ export class AgentSession implements SettingsScope {
 		return this.#bash.isRunning;
 	}
 
-	/** Whether there are pending bash messages waiting to be flushed */
+	/** Whether there are pending bash messages waiting to be flushed. @internal Test seam. */
 	get hasPendingBashMessages(): boolean {
 		return this.#bash.hasPendingMessages;
 	}
@@ -10645,7 +10672,10 @@ export class AgentSession implements SettingsScope {
 		return this.#eval.isRunning;
 	}
 
-	/** Whether there are pending Python messages waiting to be flushed */
+	/**
+	 * Whether there are pending Python messages waiting to be flushed.
+	 * @deprecated No callers; will be removed in the next major.
+	 */
 	get hasPendingPythonMessages(): boolean {
 		return this.#eval.hasPendingMessages;
 	}
@@ -12128,6 +12158,16 @@ export class AgentSession implements SettingsScope {
 		return this.#stats.getSessionStats();
 	}
 
+	/** Token totals of {@link getSessionStats}, without the message counts or context breakdown. */
+	getTokenTotals(): SessionStats["tokens"] {
+		return this.#stats.getTokenTotals();
+	}
+
+	#goalUsage(): GoalTokenUsage {
+		const { input, output, cacheRead, cacheWrite } = this.#stats.getTokenTotals();
+		return { input, output, cacheRead, cacheWrite };
+	}
+
 	/**
 	 * Get current context usage statistics.
 	 * Uses the last assistant message's usage data when available,
@@ -12769,6 +12809,7 @@ export class AgentSession implements SettingsScope {
 		return text.trim() || undefined;
 	}
 
+	/** @deprecated No callers; will be removed in the next major. */
 	hasCopyCandidateAssistantMessage(): boolean {
 		return this.#getLastCopyCandidateAssistantMessage() !== undefined;
 	}
@@ -12792,6 +12833,8 @@ export class AgentSession implements SettingsScope {
 	 * Sessions created by older versions injected the handoff document as a
 	 * custom message at the top of a fresh session; callers that copy the
 	 * "last" message use this as a fallback while no assistant response exists.
+	 *
+	 * @deprecated No callers; will be removed in the next major.
 	 */
 	getLastVisibleHandoffText(): string | undefined {
 		for (let i = this.messages.length - 1; i >= 0; i--) {
@@ -13150,7 +13193,7 @@ export class AgentSession implements SettingsScope {
 			});
 	}
 
-	/** Resolves once {@link beginInitialAdvisorCostRestore}'s scan has settled. */
+	/** Resolves once {@link beginInitialAdvisorCostRestore}'s scan has settled. @internal Test seam. */
 	get advisorCostRestore(): Promise<void> {
 		return this.#advisorCostRestore;
 	}
@@ -13202,6 +13245,8 @@ export class AgentSession implements SettingsScope {
 
 	/**
 	 * Check if extensions have handlers for a specific event type.
+	 *
+	 * @deprecated No callers; use `extensionRunner?.hasHandlers(eventType)`. Will be removed in the next major.
 	 */
 	hasExtensionHandlers(eventType: string): boolean {
 		return this.#extensionRunner?.hasHandlers(eventType) ?? false;

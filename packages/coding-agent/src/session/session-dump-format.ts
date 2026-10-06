@@ -13,6 +13,7 @@ import { renderDelimitedThinking, renderToolInventory } from "@oh-my-pi/pi-ai/di
 import { INTENT_FIELD } from "@oh-my-pi/pi-wire";
 import { YAML } from "bun";
 import { canonicalizeMessage } from "@oh-my-pi/pi-tui/chat/thinking-display";
+import { markdownFenceFor } from "../utils/markdown-fence";
 import {
 	type BashExecutionMessage,
 	type BranchSummaryMessage,
@@ -136,8 +137,7 @@ function appendCustomMessage(lines: string[], message: CustomMessage | HookMessa
 		return;
 	}
 
-	const longestBacktickRun = content.match(/`+/g)?.reduce((longest, run) => Math.max(longest, run.length), 0) ?? 0;
-	const fence = "`".repeat(Math.max(3, longestBacktickRun + 1));
+	const fence = markdownFenceFor(content);
 	lines.push(`## ${systemNoticeTitle(message.customType)}\n`);
 	lines.push(`${fence}xml`);
 	lines.push(content);

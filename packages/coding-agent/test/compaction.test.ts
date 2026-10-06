@@ -27,7 +27,7 @@ import type {
 	ThinkingLevelChangeEntry,
 } from "@oh-my-pi/pi-coding-agent/session/session-entries";
 import { parseSessionEntries } from "@oh-my-pi/pi-coding-agent/session/session-loader";
-import { migrateSessionEntries } from "@oh-my-pi/pi-coding-agent/session/session-migrations";
+import { migrateToCurrentVersion } from "@oh-my-pi/pi-coding-agent/session/session-migrations";
 import { mockFetch } from "./helpers/fetch-mock";
 import { e2eApiKey } from "./utilities";
 
@@ -41,7 +41,7 @@ async function loadLargeSessionEntries(): Promise<SessionEntry[]> {
 	const sessionPath = path.join(import.meta.dirname, "fixtures/large-session.jsonl");
 	const content = await Bun.file(sessionPath).text();
 	const entries = parseSessionEntries(content);
-	migrateSessionEntries(entries); // Add id/parentId for v1 fixtures
+	migrateToCurrentVersion(entries); // Add id/parentId for v1 fixtures
 	return entries.filter((e): e is SessionEntry => e.type !== "session");
 }
 

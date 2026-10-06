@@ -1,14 +1,9 @@
 import { Database, type Statement } from "bun:sqlite";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import {
-	type AuthCredential,
-	type AuthCredentialStore,
-	parseServiceTier,
-	SqliteAuthCredentialStore,
-	type ServiceTier,
-	type StoredAuthCredential,
-} from "@oh-my-pi/pi-ai";
+import type { AuthCredential, AuthCredentialStore, ServiceTier, StoredAuthCredential } from "@oh-my-pi/pi-ai";
+import { SqliteAuthCredentialStore } from "@oh-my-pi/pi-ai/auth/sqlite-credential-store";
+import { parseServiceTier } from "@oh-my-pi/pi-ai/types";
 import {
 	AsyncDrain,
 	checkpointWal,

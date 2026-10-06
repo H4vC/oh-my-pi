@@ -17,8 +17,8 @@ import {
 	type NonMessageTokenSource,
 } from "@oh-my-pi/pi-tui/status-line/context-usage";
 import type { ContextUsageBreakdown, SessionStats } from "./agent-session-types";
-import { getLatestCompactionEntry } from "./session-context";
-import type { ModelUsageEntry, SessionEntry } from "./session-entries";
+import { findLatestCompaction } from "./session-context";
+import type { SessionEntry } from "./session-entries";
 import type { SessionManager } from "./session-manager";
 import { cfgSkillful } from "./settings";
 
@@ -60,10 +60,15 @@ function isUsageWindowBoundary(entry: SessionEntry): boolean {
 }
 
 /** Model calls belonging to the same active transcript window as `agent.state.messages`. */
-function activeModelUsageEntries(branch: SessionEntry[]): ModelUsageEntry[] {
-	const latestCompaction = getLatestCompactionEntry(branch);
-	const compactionIndex = latestCompaction ? branch.lastIndexOf(latestCompaction) : -1;
-	const resetIndex = branch.reduce((latest, entry, index) => (entry.type === "reset_boundary" ? index : latest), -1);
+function forEachActiveModelUsage(branch: readonly SessionEntry[], visit: (usage: Usage) => void): void {
+	const { entry: latestCompaction, index: compactionIndex } = findLatestCompaction(branch);
+	let resetIndex = -1;
+	for (let index = branch.length - 1; index > compactionIndex; index--) {
+		if (branch[index].type === "reset_boundary") {
+			resetIndex = index;
+			break;
+		}
+	}
 	let startIndex = 0;
 	if (resetIndex > compactionIndex) {
 		startIndex = resetIndex + 1;
@@ -72,7 +77,10 @@ function activeModelUsageEntries(branch: SessionEntry[]): ModelUsageEntry[] {
 		startIndex = firstKeptIndex >= 0 ? firstKeptIndex : compactionIndex + 1;
 		while (startIndex > 0 && !isUsageWindowBoundary(branch[startIndex - 1])) startIndex--;
 	}
-	return branch.slice(startIndex).filter((entry): entry is ModelUsageEntry => entry.type === "model_usage");
+	for (let index = startIndex; index < branch.length; index++) {
+		const entry = branch[index];
+		if (entry.type === "model_usage") visit(entry.usage);
+	}
 }
 
 /** Computes session totals and tracks the in-flight context estimate. */
@@ -108,6 +116,33 @@ export class SessionStatsTracker {
 			this.#tokenizer.countMessages(activeMessages.slice(tailFromIndex)) +
 			pendingTokens
 		);
+	}
+
+	/**
+	 * Token totals of {@link getSessionStats} without the message counts or the
+	 * context breakdown — for per-turn accounting (goal budgets) that only
+	 * needs the counters.
+	 */
+	getTokenTotals(): SessionStats["tokens"] {
+		const tokens = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+		const addUsage = (usage: Usage): void => {
+			tokens.input += usage.input;
+			tokens.output += usage.output;
+			tokens.reasoning += usage.reasoningTokens ?? 0;
+			tokens.cacheRead += usage.cacheRead;
+			tokens.cacheWrite += usage.cacheWrite;
+			tokens.total += usage.totalTokens;
+		};
+		for (const message of this.#host.agent.state.messages) {
+			if (message.role === "assistant") {
+				if (message.usage) addUsage(message.usage);
+			} else if (message.role === "toolResult" && message.toolName === "task") {
+				const usage = taskToolUsage(message.details);
+				if (usage) addUsage(usage);
+			}
+		}
+		forEachActiveModelUsage(this.#host.sessionManager.getBranchView(), addUsage);
+		return tokens;
 	}
 
 	/** Returns aggregate message, token, and cost statistics for the session. */
@@ -170,7 +205,7 @@ export class SessionStatsTracker {
 				}
 			}
 		}
-		for (const entry of activeModelUsageEntries(this.#host.sessionManager.getBranch())) addUsage(entry.usage);
+		forEachActiveModelUsage(this.#host.sessionManager.getBranchView(), addUsage);
 		return {
 			sessionFile: this.#host.sessionManager.getSessionFile(),
 			sessionId: this.#host.sessionId(),
@@ -223,9 +258,8 @@ export class SessionStatsTracker {
 			this.#tokenizer,
 			this.#host.session.settings?.revision,
 		);
-		const branchEntries = this.#host.sessionManager.getBranch();
-		const latestCompaction = getLatestCompactionEntry(branchEntries);
-		const compactionIndex = latestCompaction ? branchEntries.lastIndexOf(latestCompaction) : -1;
+		const branchEntries = this.#host.sessionManager.getBranchView();
+		const compactionIndex = findLatestCompaction(branchEntries).index;
 		let usedTokens = 0;
 		let anchored = false;
 		const pendingMessages = options?.pendingMessages ?? [];
@@ -358,9 +392,8 @@ export class SessionStatsTracker {
 	recordAnchoredHistoryRewrite(tokensRemoved: number): void {
 		if (!Number.isFinite(tokensRemoved) || tokensRemoved <= 0) return;
 
-		const branchEntries = this.#host.sessionManager.getBranch();
-		const latestCompaction = getLatestCompactionEntry(branchEntries);
-		const compactionIndex = latestCompaction ? branchEntries.lastIndexOf(latestCompaction) : -1;
+		const branchEntries = this.#host.sessionManager.getBranchView();
+		const compactionIndex = findLatestCompaction(branchEntries).index;
 		for (let index = branchEntries.length - 1; index > compactionIndex; index--) {
 			const entry = branchEntries[index];
 			if (entry.type !== "message" || !isTranscriptUsageAnchor(entry.message)) continue;

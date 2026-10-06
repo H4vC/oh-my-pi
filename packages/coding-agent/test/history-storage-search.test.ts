@@ -100,9 +100,17 @@ describe("HistoryStorage.search", () => {
 		const storage = await freshStorage();
 		await seed(storage, ["commit one", "commit two", "precommit three", "precommit four"]);
 
+		// FTS finds 2 rows (< limit 3), so the substring fallback merges in the newer infix matches.
+		const results = storage.search("commit", 3);
+		expect(results.map(r => r.prompt)).toEqual(["precommit four", "precommit three", "commit two"]);
+	});
+
+	it("skips the substring fallback when FTS already fills the limit", async () => {
+		const storage = await freshStorage();
+		await seed(storage, ["commit one", "commit two", "precommit three", "precommit four"]);
+
 		const results = storage.search("commit", 2);
-		expect(results).toHaveLength(2);
-		expect(results.map(r => r.prompt)).toEqual(["precommit four", "precommit three"]);
+		expect(results.map(r => r.prompt)).toEqual(["commit two", "commit one"]);
 	});
 
 	it("matches short tokens via the substring fallback", async () => {

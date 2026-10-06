@@ -33,7 +33,11 @@ export interface SnapcompactSavingsRecord {
 	savedTokens: number;
 }
 
-/** `~/.omp/.../snapcompact-savings.jsonl`, colocated with stats.db. */
+/**
+ * `~/.omp/.../snapcompact-savings.jsonl`, colocated with stats.db.
+ *
+ * @deprecated Only the recorder's default path; will be unexported in the next major.
+ */
 export function snapcompactSavingsJournalPath(): string {
 	return path.join(path.dirname(getStatsDbPath()), "snapcompact-savings.jsonl");
 }
@@ -89,7 +93,11 @@ export function createSnapcompactSavingsRecorder(
 	};
 }
 
-/** Read all journal records. Malformed lines are skipped; a missing file is empty. */
+/**
+ * Read all journal records. Malformed lines are skipped; a missing file is empty.
+ *
+ * @deprecated Test-only reader; stats ingest reads the journal itself. Will be removed in the next major.
+ */
 export async function readSnapcompactSavingsJournal(
 	journalPath: string = snapcompactSavingsJournalPath(),
 ): Promise<SnapcompactSavingsRecord[]> {

@@ -2205,7 +2205,7 @@ export class SessionTools {
 		const extensionRunner = this.#host.extensionRunner();
 		const managerTools = deduplicateMCPToolsByName(mcpTools).map(customTool => {
 			const wrapped = wrapToolWithMetaNotice(
-				CustomToolAdapter.wrap(customTool, this.#getCustomToolContext) as AgentTool,
+				new CustomToolAdapter(customTool, this.#getCustomToolContext) as AgentTool,
 			);
 			return (extensionRunner ? new ExtensionToolWrapper(wrapped, extensionRunner) : wrapped) as AgentTool;
 		});

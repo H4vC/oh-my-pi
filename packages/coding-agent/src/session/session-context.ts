@@ -147,13 +147,20 @@ export function getRestorableSessionModels(
 	return [roleModel, defaultModel];
 }
 
-export function getLatestCompactionEntry(entries: SessionEntry[]): CompactionEntry | null {
+export function getLatestCompactionEntry(entries: readonly SessionEntry[]): CompactionEntry | null {
+	return findLatestCompaction(entries).entry;
+}
+
+/** The latest compaction entry on `entries` and its index (`-1` when there is none), in one reverse scan. */
+export function findLatestCompaction(entries: readonly SessionEntry[]): {
+	entry: CompactionEntry | null;
+	index: number;
+} {
 	for (let i = entries.length - 1; i >= 0; i--) {
-		if (entries[i].type === "compaction") {
-			return entries[i] as CompactionEntry;
-		}
+		const entry = entries[i];
+		if (entry.type === "compaction") return { entry, index: i };
 	}
-	return null;
+	return { entry: null, index: -1 };
 }
 
 export interface BuildSessionContextOptions {

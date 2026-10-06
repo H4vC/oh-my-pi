@@ -47,7 +47,7 @@ import type { Settings } from "../config/settings";
 import type { SessionManager } from "../session/session-manager";
 import { getTinyLocalModelSpec } from "../tiny/models";
 import localPromptTemplate from "../prompts/system/judgment-local.md" with { type: "text" };
-import { tinyModelClient } from "../tiny/title-client";
+import { tinyTitleClient } from "../tiny/title-client";
 import type { JudgmentCache } from "./cache";
 
 export * from "./cache";
@@ -381,7 +381,7 @@ class LocalTextBackend implements TextBackend {
 	async complete(judgment: TextPrompt, options: JudgeOptions): Promise<TextCompletion> {
 		// Sub-2B models answer a bare user message as a question (or echo the
 		// system prompt); one merged turn ending in `Answer:` keeps them classifying.
-		const text = await tinyModelClient.complete(
+		const text = await tinyTitleClient.complete(
 			this.model,
 			prompt.render(localPromptTemplate, { system: judgment.system, state: judgment.user }),
 			{
