@@ -2,7 +2,8 @@ import { describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { TempDir } from "@oh-my-pi/pi-utils";
-import { AgentActivityIndex, activityRowsFromProgress } from "../src/activity";
+import { activityRowsFromProgress } from "@oh-my-pi/pi-tui/overlays/agent-activity";
+import { AgentActivityIndex } from "../src/activity";
 
 function messageEntry(id: string, timestamp: number, message: Record<string, unknown>): string {
 	return JSON.stringify({ type: "message", id, timestamp, message: { timestamp, ...message } });

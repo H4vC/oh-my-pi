@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "bun:test";
-import { generateRoomKey, importRoomKey, open, seal } from "../../src/collab/crypto";
+import { generateRoomKey, importRoomKey, open, sealSerialized } from "../../src/collab/crypto";
 import { type CollabFrame, packEnvelope, unpackEnvelope } from "../../src/collab/protocol";
 import { CollabSocket } from "../../src/collab/relay-client";
 
@@ -220,7 +220,7 @@ describe("CollabSocket send backpressure", () => {
 			const ws = BackpressuredWebSocket.instances[0]!;
 			ws.open();
 			// Peer 1's hello arrives and is held mid-decryption, then peer 1 departs.
-			const sealed = await seal(key, { t: "hello", proto: 1, name: "flake" } as CollabFrame);
+			const sealed = await sealSerialized(key, JSON.stringify({ t: "hello", proto: 1, name: "flake" }));
 			ws.onmessage?.({ data: packEnvelope(1, sealed).buffer } as MessageEvent);
 			await waitUntil(() => decrypt.mock.calls.length > 0, "host never began opening the hello");
 			ws.onmessage?.({ data: JSON.stringify({ t: "peer-left", peer: 1 }) } as MessageEvent);
@@ -270,7 +270,7 @@ describe("CollabSocket send backpressure", () => {
 			// Old room: peer 1's frame is held mid-decryption, so the settlement its
 			// departure schedules is still queued behind it — and stays queued across
 			// everything that follows, because the receive chain is one chain.
-			const stale = await seal(key, { t: "hello", proto: 1, name: "old" } as CollabFrame);
+			const stale = await sealSerialized(key, JSON.stringify({ t: "hello", proto: 1, name: "old" }));
 			first.onmessage?.({ data: packEnvelope(1, stale).buffer } as MessageEvent);
 			await waitUntil(() => decrypt.mock.calls.length > 0, "socket never began opening the old room's frame");
 			first.onmessage?.({ data: JSON.stringify({ t: "peer-left", peer: 1 }) } as MessageEvent);
@@ -287,7 +287,7 @@ describe("CollabSocket send backpressure", () => {
 			// New room, same id, different client: it sends a frame and leaves. Its
 			// record may not be settled until that frame has been dispatched, which is
 			// the whole obligation the record exists for.
-			const fresh = await seal(key, { t: "hello", proto: 1, name: "new" } as CollabFrame);
+			const fresh = await sealSerialized(key, JSON.stringify({ t: "hello", proto: 1, name: "new" }));
 			second.onmessage?.({ data: packEnvelope(1, fresh).buffer } as MessageEvent);
 			second.onmessage?.({ data: JSON.stringify({ t: "peer-left", peer: 1 }) } as MessageEvent);
 			// Past the cap, so a record settled early is a record evicted early. None
@@ -337,7 +337,7 @@ describe("CollabSocket send backpressure", () => {
 			socket.connect();
 			const first = BackpressuredWebSocket.instances[0]!;
 			first.open();
-			const stale = await seal(key, { t: "hello", proto: 1, name: "old" } as CollabFrame);
+			const stale = await sealSerialized(key, JSON.stringify({ t: "hello", proto: 1, name: "old" }));
 			first.onmessage?.({ data: packEnvelope(1, stale).buffer } as MessageEvent);
 			await waitUntil(() => decrypt.mock.calls.length > 0, "socket never began opening the old room's frame");
 			first.onmessage?.({ data: JSON.stringify({ t: "peer-left", peer: 1 }) } as MessageEvent);
@@ -350,7 +350,7 @@ describe("CollabSocket send backpressure", () => {
 			const second = BackpressuredWebSocket.instances[1]!;
 			second.open();
 
-			const fresh = await seal(key, { t: "hello", proto: 1, name: "new" } as CollabFrame);
+			const fresh = await sealSerialized(key, JSON.stringify({ t: "hello", proto: 1, name: "new" }));
 			second.onmessage?.({ data: packEnvelope(1, fresh).buffer } as MessageEvent);
 			second.onmessage?.({ data: JSON.stringify({ t: "peer-left", peer: 1 }) } as MessageEvent);
 			for (let peer = 2; peer <= RETIREMENT_CAP + 45; peer++) {
@@ -389,7 +389,7 @@ describe("CollabSocket send backpressure", () => {
 			const first = BackpressuredWebSocket.instances[0]!;
 			first.open();
 			// A frame from this connection parks mid-decryption and will fail.
-			const stale = await seal(key, { t: "hello", proto: 1, name: "old" } as CollabFrame);
+			const stale = await sealSerialized(key, JSON.stringify({ t: "hello", proto: 1, name: "old" }));
 			first.onmessage?.({ data: packEnvelope(1, stale).buffer } as MessageEvent);
 			await waitUntil(() => decrypt.mock.calls.length > 0, "socket never began opening the frame");
 

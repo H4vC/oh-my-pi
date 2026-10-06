@@ -22,8 +22,9 @@ import {
 type StatsActivityWorkerHandle = WorkerHandle<StatsActivityWorkerInbound, StatsActivityWorkerOutbound>;
 
 /**
- * Spawn the stats activity worker as a subprocess. Exported for the smoke
- * probe; production callers go through {@link loadDailyActivity}.
+ * Spawn the stats activity worker as a subprocess. Production callers go
+ * through {@link loadDailyActivity}; {@link smokeTestStatsActivityWorker}
+ * probes it directly.
  */
 export function createStatsActivitySubprocess(): SpawnedSubprocess<StatsActivityWorkerOutbound> {
 	return createWorkerSubprocess<StatsActivityWorkerOutbound>({

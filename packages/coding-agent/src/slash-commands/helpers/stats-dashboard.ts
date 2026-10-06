@@ -1,4 +1,5 @@
-import * as stats from "@oh-my-pi/omp-stats";
+import type * as StatsModule from "@oh-my-pi/omp-stats";
+import type { StatsJudgeProvider } from "@oh-my-pi/omp-stats";
 import * as openUtils from "../../utils/open";
 
 export const DEFAULT_STATS_DASHBOARD_PORT = 3847;
@@ -20,6 +21,12 @@ export interface StatsDashboardLaunchResult {
 }
 
 let activeStatsServer: StatsDashboardServer | undefined;
+/**
+ * omp-stats is loaded lazily on first `/stats` (dynamic import on purpose): a
+ * static import would evaluate the whole package (db, rollup, trace,
+ * regex-heavy metrics) on every TUI start.
+ */
+let statsModule: typeof StatsModule | undefined;
 
 const STATS_DASHBOARD_USAGE = "Usage: /stats [--port <port>] [--host <host>]";
 
@@ -77,9 +84,11 @@ export function parseStatsDashboardArgs(args: string): StatsDashboardArgs | { er
  */
 export async function launchStatsDashboard(
 	args: StatsDashboardArgs,
-	judge?: stats.StatsJudgeProvider,
+	judge?: StatsJudgeProvider,
 ): Promise<StatsDashboardLaunchResult> {
 	let requestedAddressIgnored = false;
+	statsModule ??= await import("@oh-my-pi/omp-stats");
+	const stats = statsModule;
 
 	if (!activeStatsServer) {
 		activeStatsServer = await stats.startServer(args.port, args.host, { judge });
@@ -103,5 +112,5 @@ export function stopStatsDashboard(): void {
 	if (!activeStatsServer) return;
 	activeStatsServer.stop();
 	activeStatsServer = undefined;
-	stats.closeDb();
+	statsModule?.closeDb();
 }

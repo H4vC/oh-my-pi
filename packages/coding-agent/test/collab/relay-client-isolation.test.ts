@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { type LocalRelay, startLocalRelay } from "../../../collab-web/scripts/local-relay";
-import { generateRoomKey, importRoomKey, seal } from "../../src/collab/crypto";
+import { generateRoomKey, importRoomKey, sealSerialized } from "../../src/collab/crypto";
 import { type CollabFrame, packEnvelope } from "../../src/collab/protocol";
 import { CollabSocket } from "../../src/collab/relay-client";
 
@@ -53,9 +53,11 @@ describe("collab peer isolation", () => {
 			const payload =
 				corruption === "truncated"
 					? new Uint8Array(1)
-					: await seal(await importRoomKey(generateRoomKey()), { t: "abort" });
+					: await sealSerialized(await importRoomKey(generateRoomKey()), JSON.stringify({ t: "abort" }));
 			sender.send(packEnvelope(0, payload));
-			sender.send(packEnvelope(0, await seal(key, { t: "prompt", text: "after corruption" })));
+			sender.send(
+				packEnvelope(0, await sealSerialized(key, JSON.stringify({ t: "prompt", text: "after corruption" }))),
+			);
 			expect(await afterCorruption.promise).toBe("delivered");
 			guest.send({ t: "prompt", text: "healthy guest" });
 			expect(await received.promise).toEqual({ t: "error", message: "healthy reply" });

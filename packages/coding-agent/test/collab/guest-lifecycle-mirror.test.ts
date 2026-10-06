@@ -151,7 +151,7 @@ async function makeHarness(roomId: string, options: { isStreaming?: boolean } = 
 		},
 		updateEditorTopBorder: () => {},
 		updateEditorBorderColor: () => {},
-		eventController: { handleEvent: () => Promise.resolve(), takeDisplaceableComponents: () => [] },
+		eventController: { dispatchSessionEvent: () => Promise.resolve(), takeDisplaceableComponents: () => [] },
 		syncRunningSubagentBadge: () => {},
 		eventBus: new EventBus(),
 	} as unknown as InteractiveModeContext;

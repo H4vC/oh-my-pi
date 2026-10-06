@@ -21,7 +21,7 @@ import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import type { InteractiveModeContext } from "@oh-my-pi/pi-coding-agent/modes/types";
 import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
-import type { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
+import type { AuthStorage } from "@oh-my-pi/pi-ai";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { tryAcquireSessionLease } from "@oh-my-pi/pi-coding-agent/session/session-storage";
 import { refreshDirsFromEnv, TempDir } from "@oh-my-pi/pi-utils";
@@ -107,7 +107,7 @@ function makeGuestHarness(model: Model, modelRegistry: ModelRegistry): GuestHarn
 		reloadTodos: () => Promise.resolve(),
 		showStatus: () => {},
 		showError: () => {},
-		eventController: { handleEvent: () => Promise.resolve(), takeDisplaceableComponents: () => [] },
+		eventController: { dispatchSessionEvent: () => Promise.resolve(), takeDisplaceableComponents: () => [] },
 		eventBus: undefined,
 		collabGuest: undefined,
 		handleResumeSession: () => Promise.resolve(),

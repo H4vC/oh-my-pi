@@ -16,7 +16,8 @@ import { initTheme, theme } from "@oh-my-pi/pi-tui/theme";
 import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { visibleWidth } from "@oh-my-pi/pi-tui/utils";
-import { AgentActivityIndex, type AgentActivityRow } from "../src/activity";
+import type { AgentActivityRow } from "@oh-my-pi/pi-tui/overlays/agent-activity";
+import { AgentActivityIndex } from "../src/activity";
 
 interface GeometryStub {
 	setRows(n: number): void;

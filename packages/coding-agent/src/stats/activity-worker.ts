@@ -7,6 +7,7 @@
  */
 import { syncAllSessions } from "@oh-my-pi/omp-stats/aggregator";
 import { getDailyActivity } from "@oh-my-pi/omp-stats/db";
+import { refreshRollups } from "@oh-my-pi/omp-stats/rollup";
 import type { StatsActivityTransport, StatsActivityWorkerInbound } from "./activity-protocol";
 
 async function handleLoad(
@@ -15,10 +16,12 @@ async function handleLoad(
 ): Promise<void> {
 	try {
 		// Whatever the DB already has paints first; the incremental sync then
-		// converges the heatmap on fresh session data.
+		// converges the heatmap on fresh session data (re-read only if it stored anything).
 		transport.send({ type: "activity", id: message.id, points: await getDailyActivity() });
-		await syncAllSessions();
-		transport.send({ type: "activity", id: message.id, points: await getDailyActivity() });
+		const { processed } = await syncAllSessions();
+		if (processed > 0) transport.send({ type: "activity", id: message.id, points: await getDailyActivity() });
+		// Roll the hours this sync dirtied so the next open reads the rollup, not raw rows.
+		await refreshRollups();
 		transport.send({ type: "done", id: message.id });
 	} catch (error) {
 		transport.send({

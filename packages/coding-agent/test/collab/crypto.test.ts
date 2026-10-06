@@ -4,7 +4,7 @@ import {
 	generateWriteToken,
 	importRoomKey,
 	open,
-	seal,
+	sealSerialized,
 } from "@oh-my-pi/pi-coding-agent/collab/crypto";
 import {
 	type CollabFrame,
@@ -14,27 +14,37 @@ import {
 	generateRoomId,
 	packEnvelope,
 	parseCollabLink,
-	rewriteEnvelopePeer,
 	unpackEnvelope,
 } from "@oh-my-pi/pi-coding-agent/collab/protocol";
+import { rewriteEnvelopePeer, sealEnvelope } from "@oh-my-pi/pi-wire/collab";
 
 describe("collab crypto", () => {
-	it("round-trips a frame through seal/open", async () => {
+	it("round-trips a frame through sealSerialized/open", async () => {
 		const key = await importRoomKey(generateRoomKey());
 		const frame: CollabFrame = { t: "prompt", text: "check bun.lock — and ünïcode 🚀" };
-		const sealed = await seal(key, frame);
+		const sealed = await sealSerialized(key, JSON.stringify(frame));
 		expect(await open(key, sealed)).toEqual(frame);
+	});
+
+	it("seals straight into an envelope whose payload view opens in place", async () => {
+		const key = await importRoomKey(generateRoomKey());
+		const frame: CollabFrame = { t: "prompt", text: "envelope ünïcode" };
+		const envelope = await sealEnvelope(key, 7, JSON.stringify(frame));
+		const unpacked = unpackEnvelope(envelope);
+		expect(unpacked?.peerId).toBe(7);
+		expect(unpacked?.payload.byteOffset).toBe(4);
+		expect(await open(key, unpacked!.payload)).toEqual(frame);
 	});
 
 	it("rejects tampered ciphertext", async () => {
 		const key = await importRoomKey(generateRoomKey());
-		const sealed = await seal(key, { t: "abort" });
+		const sealed = await sealSerialized(key, JSON.stringify({ t: "abort" }));
 		sealed[sealed.length - 1]! ^= 0xff;
 		expect(open(key, sealed)).rejects.toThrow();
 	});
 
 	it("rejects frames sealed with a different key", async () => {
-		const sealed = await seal(await importRoomKey(generateRoomKey()), { t: "abort" });
+		const sealed = await sealSerialized(await importRoomKey(generateRoomKey()), JSON.stringify({ t: "abort" }));
 		const otherKey = await importRoomKey(generateRoomKey());
 		expect(open(otherKey, sealed)).rejects.toThrow();
 	});

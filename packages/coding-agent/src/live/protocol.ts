@@ -186,7 +186,11 @@ export function buildDelegationContextAppend(
 	};
 }
 
-/** Build context appended to the live session outside a delegation. */
+/**
+ * Build context appended to the live session outside a delegation.
+ * @deprecated Unused by omp (live context always rides a delegation); use
+ * {@link buildDelegationContextAppend}. Will be removed in the next major.
+ */
 export function buildSessionContextAppend(text: string, channel?: LiveContextChannel): LiveClientMessage {
 	return {
 		type: "session.context.append",
