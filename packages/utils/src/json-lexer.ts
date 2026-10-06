@@ -139,7 +139,8 @@ function skipInsignificant(s: string, i: number): number {
  * - `streaming`: mid-stream snapshot — incomplete tokens tolerated and unescaped
  *   inner double quotes recovered for display.
  * - `incoming`: incremental typed pulls — incomplete tokens tolerated, but double
- *   quotes close strictly so pulled values match the final parse.
+ *   quotes close strictly so pulled values match the final parse. Only used by the
+ *   deprecated `IncomingDoc` cursors; will be removed with them in the next major.
  */
 export type JsonLexerMode = "strict" | "streaming" | "incoming";
 

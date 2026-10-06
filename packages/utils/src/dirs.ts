@@ -755,7 +755,11 @@ export function getPythonEnvDir(): string {
 	return dirs.rootSubdir("python-env", "data");
 }
 
-/** Get the shared Python gateway state directory (~/.omp/agent/python-gateway; XDG default: $XDG_STATE_HOME/omp/python-gateway). */
+/**
+ * Get the shared Python gateway state directory (~/.omp/agent/python-gateway; XDG default: $XDG_STATE_HOME/omp/python-gateway).
+ *
+ * @deprecated No in-repo consumers. Will be removed in the next major.
+ */
 export function getPythonGatewayDir(): string {
 	return dirs.agentSubdir(undefined, "python-gateway", "state");
 }
@@ -888,7 +892,11 @@ export function getAutoresearchDbPath(encodedProject: string): string {
 	return path.join(getAutoresearchDir(), `${encodedProject}.db`);
 }
 
-/** Get the per-run artifact directory (~/.omp/autoresearch/<encoded-project>/runs/<runId>). */
+/**
+ * Get the per-run artifact directory (~/.omp/autoresearch/<encoded-project>/runs/<runId>).
+ *
+ * @deprecated No in-repo consumers; use `path.join(getAutoresearchProjectDir(encodedProject), "runs", ...)`. Will be removed in the next major.
+ */
 export function getAutoresearchRunDir(encodedProject: string, runId: number): string {
 	return path.join(getAutoresearchProjectDir(encodedProject), "runs", String(runId).padStart(4, "0"));
 }
@@ -972,7 +980,11 @@ export function getToolsDir(agentDir?: string): string {
 	return dirs.agentSubdir(agentDir, "tools");
 }
 
-/** Get the slash commands directory (~/.omp/agent/commands). */
+/**
+ * Get the slash commands directory (~/.omp/agent/commands).
+ *
+ * @deprecated No in-repo consumers; use `path.join(getAgentDir(), "commands")`. Will be removed in the next major.
+ */
 export function getCommandsDir(agentDir?: string): string {
 	return dirs.agentSubdir(agentDir, "commands");
 }
@@ -982,7 +994,11 @@ export function getPromptsDir(agentDir?: string): string {
 	return dirs.agentSubdir(agentDir, "prompts");
 }
 
-/** Get the user-level Python modules directory (~/.omp/agent/modules). */
+/**
+ * Get the user-level Python modules directory (~/.omp/agent/modules).
+ *
+ * @deprecated No in-repo consumers; use `path.join(getAgentDir(), "modules")`. Will be removed in the next major.
+ */
 export function getAgentModulesDir(agentDir?: string): string {
 	return dirs.agentSubdir(agentDir, "modules");
 }
@@ -1007,7 +1023,11 @@ export function getCustomSessionFilesDir(agentDir?: string): string {
 	return dirs.agentSubdir(agentDir, "custom-session-files", "state");
 }
 
-/** Get the crash log path (~/.omp/agent/omp-crash.log). */
+/**
+ * Get the crash log path (~/.omp/agent/omp-crash.log).
+ *
+ * @deprecated No in-repo consumers. Will be removed in the next major.
+ */
 export function getCrashLogPath(agentDir?: string): string {
 	return dirs.agentSubdir(agentDir, "omp-crash.log", "state");
 }
@@ -1120,7 +1140,11 @@ export function getMarketplacesRegistryPath(): string {
 // Project subdirectories (.omp/*)
 // =============================================================================
 
-/** Get the project-level Python modules directory (.omp/modules). */
+/**
+ * Get the project-level Python modules directory (.omp/modules).
+ *
+ * @deprecated No in-repo consumers; use `path.join(getProjectAgentDir(cwd), "modules")`. Will be removed in the next major.
+ */
 export function getProjectModulesDir(cwd: string = getProjectDir()): string {
 	return path.join(getProjectAgentDir(cwd), "modules");
 }

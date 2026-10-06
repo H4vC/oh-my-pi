@@ -588,7 +588,11 @@ export function sniffZip(bytes: Uint8Array): boolean {
 	);
 }
 
-/** Materialize every regular ZIP member into a path-to-bytes map for document converters. */
+/**
+ * Materialize every regular ZIP member into a path-to-bytes map for document converters.
+ *
+ * @deprecated No in-repo consumers; use `readZip(memoryByteSource(bytes), { limits })` and read each member's storage. Will be removed in the next major.
+ */
 export async function readZipEager(
 	bytes: Uint8Array,
 	limits: ArchiveLimits = DEFAULT_ARCHIVE_LIMITS,

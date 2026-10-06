@@ -73,6 +73,8 @@ export async function peekFile<T>(filePath: string, maxBytes: number, op: (heade
  * returned. A multi-byte codepoint straddling the leading cut decodes to a
  * replacement char — callers that parse line-oriented tails drop the partial
  * leading line anyway.
+ *
+ * @deprecated No in-repo consumers; use `peekFileEnds`. Will be removed in the next major.
  */
 export async function peekFileTail<T>(filePath: string, maxBytes: number, op: (tail: Uint8Array) => T): Promise<T> {
 	if (maxBytes <= 0) {

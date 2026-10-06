@@ -143,6 +143,7 @@ export function parseImageMetadata(header: Uint8Array): ImageMetadata | null {
 	);
 }
 
+/** @deprecated No in-repo consumers; use `readImageMetadata`. Will be removed in the next major. */
 export function readImageMetadataSync(filePath: string, maxBytes = IMAGE_METADATA_HEADER_BYTES): ImageMetadata | null {
 	return peekFileSync(filePath, maxBytes, parseImageMetadata);
 }

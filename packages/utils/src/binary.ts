@@ -48,7 +48,11 @@ export function isProbablyBinary(filePath: string, maxBytes = BINARY_SNIFF_BYTES
 	return peekFile(filePath, maxBytes, isProbablyBinaryHeader);
 }
 
-/** Synchronous {@link isProbablyBinary}. */
+/**
+ * Synchronous {@link isProbablyBinary}.
+ *
+ * @deprecated No in-repo consumers; use `isProbablyBinary`. Will be removed in the next major.
+ */
 export function isProbablyBinarySync(filePath: string, maxBytes = BINARY_SNIFF_BYTES): boolean {
 	return peekFileSync(filePath, maxBytes, isProbablyBinaryHeader);
 }

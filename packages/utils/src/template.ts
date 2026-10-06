@@ -75,8 +75,6 @@ type Evaluation = {
 	runtime: RuntimeOptions;
 };
 
-const helpers = new Map<string, HelperDelegate>();
-const partials = new Map<string, Template>();
 const BLOCK_TAG = /^\s*\{\{(?:#|\/|\^|else\b|!)/;
 
 function stripStandalone(source: string): string {
@@ -534,24 +532,31 @@ export function escapeExpression(value: unknown): string {
 	);
 }
 
-/** Register a helper for subsequently compiled templates. */
+/**
+ * Register a helper for subsequently compiled templates.
+ *
+ * @deprecated Process-global registry with no in-repo consumers; use `create().registerHelper`. Will be removed in the next major.
+ */
 export function registerHelper(name: string, helper: HelperDelegate): void {
-	helpers.set(name, helper);
+	defaultEngine.registerHelper(name, helper);
 }
 
-/** Register a partial for subsequently rendered templates. */
+/**
+ * Register a partial for subsequently rendered templates.
+ *
+ * @deprecated Process-global registry with no in-repo consumers; use `create().registerPartial`. Will be removed in the next major.
+ */
 export function registerPartial(name: string, partial: Template): void {
-	partials.set(name, partial);
+	defaultEngine.registerPartial(name, partial);
 }
 
-/** Compile a template into a reusable rendering function. */
+/**
+ * Compile a template into a reusable rendering function.
+ *
+ * @deprecated Process-global registry with no in-repo consumers; use `create().compile`. Will be removed in the next major.
+ */
 export function compile<T = unknown>(source: string, options: CompileOptions = {}): TemplateDelegate<T> {
-	const nodes = parseTemplate(stripStandalone(source));
-	return (context, runtime = {}) => {
-		const root = context ?? {};
-		const frame: Frame = { context: root, parents: [], root, data: { root, ...runtime.data } };
-		return renderNodes(nodes, frame, { helpers, partials, options, runtime });
-	};
+	return defaultEngine.compile(source, options);
 }
 
 /** Create an isolated template engine with its own helper and partial registries. */
@@ -584,3 +589,6 @@ export class TemplateEngine {
 		};
 	}
 }
+
+/** Backing engine for the module-level registry functions. */
+const defaultEngine = new TemplateEngine();

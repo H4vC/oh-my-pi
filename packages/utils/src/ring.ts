@@ -3,6 +3,7 @@
  * When the buffer is full, adding new items overwrites the oldest items (FIFO behavior).
  *
  * @template T The type of elements stored in the buffer.
+ * @deprecated No in-repo consumers; use a plain array or a package-local queue. Will be removed in the next major.
  */
 export class RingBuffer<T> {
 	#buf: (T | undefined)[];

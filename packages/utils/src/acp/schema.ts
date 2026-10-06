@@ -6,21 +6,37 @@ import type {
 	SessionNotification,
 } from "./protocol";
 
-/** Validation failure compatible with the used Zod error surface. */
+/**
+ * Validation failure compatible with the used Zod error surface.
+ *
+ * @deprecated Test-only ACP response validation; validate in consumer test code. Will be removed in the next major.
+ */
 export interface ValidationError {
 	issues: Array<{ path: Array<string | number>; message: string }>;
 }
-/** Successful validation result. */
+/**
+ * Successful validation result.
+ *
+ * @deprecated Test-only ACP response validation; validate in consumer test code. Will be removed in the next major.
+ */
 export interface ValidationSuccess<T> {
 	success: true;
 	data: T;
 }
-/** Failed validation result. */
+/**
+ * Failed validation result.
+ *
+ * @deprecated Test-only ACP response validation; validate in consumer test code. Will be removed in the next major.
+ */
 export interface ValidationFailure {
 	success: false;
 	error: ValidationError;
 }
-/** Runtime validator compatible with the used schema call shape. */
+/**
+ * Runtime validator compatible with the used schema call shape.
+ *
+ * @deprecated Test-only ACP response validation; validate in consumer test code. Will be removed in the next major.
+ */
 export interface Validator<T> {
 	safeParse(value: unknown): ValidationSuccess<T> | ValidationFailure;
 	parse(value: unknown): T;
@@ -120,22 +136,38 @@ function sessionNotification(value: unknown): boolean {
 	}
 }
 
-/** Validator for new-session responses. */
+/**
+ * Validator for new-session responses.
+ *
+ * @deprecated Test-only ACP response validation; validate in consumer test code. Will be removed in the next major.
+ */
 export const zNewSessionResponse = validator<NewSessionResponse>(
 	value => sessionResponse(value, true),
 	"new session response",
 );
-/** Validator for load-session responses. */
+/**
+ * Validator for load-session responses.
+ *
+ * @deprecated Test-only ACP response validation; validate in consumer test code. Will be removed in the next major.
+ */
 export const zLoadSessionResponse = validator<LoadSessionResponse>(
 	value => sessionResponse(value, false),
 	"load session response",
 );
-/** Validator for fork-session responses. */
+/**
+ * Validator for fork-session responses.
+ *
+ * @deprecated Test-only ACP response validation; validate in consumer test code. Will be removed in the next major.
+ */
 export const zForkSessionResponse = validator<ForkSessionResponse>(
 	value => sessionResponse(value, true),
 	"fork session response",
 );
-/** Validator for prompt responses. */
+/**
+ * Validator for prompt responses.
+ *
+ * @deprecated Test-only ACP response validation; validate in consumer test code. Will be removed in the next major.
+ */
 export const zPromptResponse = validator<PromptResponse>(value => {
 	if (typeof value !== "object" || value === null) return false;
 	const stopReason = (value as Record<string, unknown>).stopReason;
@@ -147,10 +179,18 @@ export const zPromptResponse = validator<PromptResponse>(value => {
 		stopReason === "cancelled"
 	);
 }, "prompt response");
-/** Validator for session notifications. */
+/**
+ * Validator for session notifications.
+ *
+ * @deprecated Test-only ACP response validation; validate in consumer test code. Will be removed in the next major.
+ */
 export const zSessionNotification = validator<SessionNotification>(sessionNotification, "session notification");
 
-/** ACP runtime validators. */
+/**
+ * ACP runtime validators.
+ *
+ * @deprecated Test-only ACP response validation; validate in consumer test code. Will be removed in the next major.
+ */
 export const schema = {
 	zNewSessionResponse,
 	zLoadSessionResponse,

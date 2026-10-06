@@ -1136,7 +1136,11 @@ export function compileAllows(ir: IR): (value: unknown) => value is unknown {
 	return validator;
 }
 
-/** Generated source for inspection/debugging. */
+/**
+ * Generated source for inspection/debugging.
+ *
+ * @deprecated No in-repo consumers and the returned text elides the generated body; use `compileAllows` for validation. Will be removed in the next major.
+ */
 export function compileToSource(ir: IR): string {
 	const root = resolvedRoot(ir);
 	const builder = new Builder();

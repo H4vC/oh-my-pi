@@ -28,7 +28,11 @@ export function readUInt32BE(bytes: Uint8Array, offset: number): number {
 	return ((bytes[offset]! << 24) | (bytes[offset + 1]! << 16) | (bytes[offset + 2]! << 8) | bytes[offset + 3]!) >>> 0;
 }
 
-/** Read a big-endian u64 as a JS number, rejecting unsafe values. */
+/**
+ * Read a big-endian u64 as a JS number, rejecting unsafe values.
+ *
+ * @deprecated No in-repo consumers; use `DataView.getBigUint64`. Will be removed in the next major.
+ */
 export function readUInt64BE(bytes: Uint8Array, offset: number): number {
 	const value = readUInt32BE(bytes, offset) * 0x100000000 + readUInt32BE(bytes, offset + 4);
 	if (!Number.isSafeInteger(value)) {

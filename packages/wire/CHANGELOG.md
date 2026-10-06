@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `@oh-my-pi/pi-wire/collab`: browser-safe collab transport helpers (encryption, envelopes, collab links, room id/key/token generators) ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+
 ## [18.5.1] - 2026-10-03
 
 ### Added

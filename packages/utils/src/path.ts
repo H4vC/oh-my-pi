@@ -12,6 +12,11 @@ export function windowsPathToWslMount(filePath: string): string | undefined {
 	return path.posix.join("/mnt", drive!.toLowerCase(), ...segments);
 }
 
+/** POSIX absolute, Windows drive, or UNC (`\\server\share` / `//server/share`), regardless of host platform. */
+export function isFilesystemSourcePath(value: string): boolean {
+	return path.posix.isAbsolute(value) || path.win32.isAbsolute(value);
+}
+
 const WINDOWS_DRIVE_EXTENDED_PREFIX = /^\\\\[?]\\([A-Za-z]:[\\/].*)$/;
 const WINDOWS_UNC_EXTENDED_PREFIX = /^\\\\[?]\\UNC[\\/]([^\\/]+)[\\/](.+)$/i;
 const WINDOWS_DRIVE_EXTENDED_FORWARD_PREFIX = /^\/\/[?]\/([A-Za-z]:\/.*)$/;

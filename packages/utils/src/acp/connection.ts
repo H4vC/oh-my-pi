@@ -163,7 +163,11 @@ export class TerminalHandle {
 	}
 }
 
-/** Client-side ACP connection used to call an agent. */
+/**
+ * Client-side ACP connection used to call an agent.
+ *
+ * @deprecated Only used by tests; drive an agent with `RpcConnection` directly. Will be removed in the next major.
+ */
 export class ClientSideConnection {
 	#connection: RpcConnection;
 

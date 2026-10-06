@@ -157,6 +157,8 @@ export function hsvToHex(hsv: HSV): string {
 
 /**
  * Shift the hue of a hex color by a given number of degrees.
+ *
+ * @deprecated No in-repo consumers; use `hexToHsv`/`hsvToHex`. Will be removed in the next major.
  */
 export function shiftHue(hex: string, degrees: number): string {
 	const hsv = hexToHsv(hex);

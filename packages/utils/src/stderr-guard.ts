@@ -181,7 +181,11 @@ export function restoreTerminalStderr(): void {
 	}
 }
 
-/** Whether fd 2 is currently redirected away from the terminal. */
+/**
+ * Whether fd 2 is currently redirected away from the terminal.
+ *
+ * @deprecated No in-repo consumers. Will be removed in the next major.
+ */
 export function isTerminalStderrSuppressed(): boolean {
 	return savedStderrFd !== null;
 }

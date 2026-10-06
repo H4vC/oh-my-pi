@@ -501,6 +501,8 @@ function charName(c: number): string {
  * Push side of an {@link IncomingDoc} channel. Call {@link finish} to mark
  * the document complete or {@link abort} to abandon it; both are idempotent
  * and every pending pull settles on the first one.
+ *
+ * @deprecated Never adopted by any consumer; use `parseStreamingJson`/`parseJsonWithRepair` from `@oh-my-pi/pi-utils/json-parse`. Will be removed in the next major.
  */
 export class IncomingFeed {
 	readonly #shared: Shared;
@@ -533,7 +535,11 @@ export class IncomingFeed {
 	}
 }
 
-/** Read side of one growing JSON document. */
+/**
+ * Read side of one growing JSON document.
+ *
+ * @deprecated Never adopted by any consumer; use `parseStreamingJson`/`parseJsonWithRepair` from `@oh-my-pi/pi-utils/json-parse`. Will be removed in the next major.
+ */
 export class IncomingDoc {
 	readonly #shared: Shared;
 

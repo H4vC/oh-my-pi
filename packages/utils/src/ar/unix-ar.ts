@@ -191,7 +191,11 @@ function readSignatureFromBuffer(bytes: Uint8Array): void {
 	if (!sniffUnixAr(bytes)) throw new ArchiveError("Invalid ar archive signature");
 }
 
-/** Parse a fully materialized Unix ar archive for composition by formats such as deb. */
+/**
+ * Parse a fully materialized Unix ar archive for composition by formats such as deb.
+ *
+ * @deprecated No in-repo consumers; use `readUnixAr(memoryByteSource(bytes), options)`. Will be removed in the next major.
+ */
 export function readUnixArEntriesFromBuffer(bytes: Uint8Array, options: FormatReadOptions): ArchiveIndexEntry[] {
 	readSignatureFromBuffer(bytes);
 	const records: RawArMember[] = [];

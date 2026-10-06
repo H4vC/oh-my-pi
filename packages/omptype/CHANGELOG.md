@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Deprecated
+
+- Deprecated unused `compileToSource` (`@oh-my-pi/omptype/compile`); its output omits the generated body ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+
 ## [18.2.1] - 2026-09-15
 
 ### Added

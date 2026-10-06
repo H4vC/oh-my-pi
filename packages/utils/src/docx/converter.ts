@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { archiveEntryText, readArchiveEntries } from "../ar";
+import { type ArchiveReader, openArchive, UTF8_DECODER } from "../ar";
 import { attribute, childElements, descendants, firstChild, localName, parseXml, type XmlElement } from "./xml";
 
 /** A mammoth-compatible diagnostic emitted while converting a document. */
@@ -26,6 +26,8 @@ export interface DocxImage {
 	readonly altText: string;
 	/** Read the image payload using mammoth's used encoding surface. */
 	read(encoding: "base64"): Promise<string>;
+	/** Read the raw image bytes without a base64 round trip. */
+	readBytes(): Promise<Uint8Array>;
 }
 
 /** HTML attributes returned by a custom image converter. */
@@ -118,8 +120,15 @@ interface NumberingLevel {
 	readonly ordered: boolean;
 }
 
+/** Lazily read DOCX package: members are inflated only when looked up. */
+interface DocxPackage {
+	readonly archive: ArchiveReader;
+	/** Exact paths of every file member, so lookups match a materialized `path → bytes` map. */
+	readonly members: ReadonlySet<string>;
+}
+
 interface ConversionContext {
-	readonly entries: ReadonlyMap<string, Uint8Array>;
+	readonly package: DocxPackage;
 	readonly relationships: ReadonlyMap<string, Relationship>;
 	readonly contentTypes: ReadonlyMap<string, string>;
 	readonly styles: ReadonlyMap<string, Style>;
@@ -357,6 +366,24 @@ function relationshipPath(target: string): string {
 	return path.posix.normalize(path.posix.join("word", target));
 }
 
+async function openDocxPackage(bytes: Uint8Array): Promise<DocxPackage> {
+	const archive = await openArchive({ bytes, format: "zip" });
+	const members = new Set<string>();
+	for (const entry of archive.indexEntries()) {
+		if (!entry.isDirectory) members.add(entry.path);
+	}
+	return { archive, members };
+}
+
+async function readMember(docx: DocxPackage, memberPath: string): Promise<Uint8Array> {
+	return (await docx.archive.readFile(memberPath)).bytes;
+}
+
+async function readMemberText(docx: DocxPackage, memberPath: string): Promise<string | undefined> {
+	if (!docx.members.has(memberPath)) return undefined;
+	return UTF8_DECODER.decode(await readMember(docx, memberPath));
+}
+
 function renderFormatting(value: string, formatting: Formatting): string {
 	let html = value;
 	if (formatting.strike) html = `<s>${html}</s>`;
@@ -373,8 +400,8 @@ async function renderImage(element: XmlElement, context: ConversionContext): Pro
 	const relationship = relationshipId ? context.relationships.get(relationshipId) : undefined;
 	if (!relationship || relationship.external) return "";
 	const memberPath = relationshipPath(relationship.target);
-	const bytes = context.entries.get(memberPath);
-	if (!bytes) {
+	const docx = context.package;
+	if (!docx.members.has(memberPath)) {
 		context.messages.push({ type: "warning", message: `Could not find image ${memberPath}` });
 		return "";
 	}
@@ -391,7 +418,11 @@ async function renderImage(element: XmlElement, context: ConversionContext): Pro
 		altText,
 		async read(encoding: "base64"): Promise<string> {
 			if (encoding !== "base64") throw new Error(`Unsupported image encoding: ${encoding}`);
+			const bytes = await readMember(docx, memberPath);
 			return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("base64");
+		},
+		readBytes(): Promise<Uint8Array> {
+			return readMember(docx, memberPath);
 		},
 	};
 	const converted = await context.convertImage.convert(image);
@@ -655,21 +686,21 @@ function defaultImageConverter(): ImageConverter {
 /** Convert a DOCX buffer or path to mammoth-compatible HTML. */
 export async function convertToHtml(input: DocxInput, options: ConvertToHtmlOptions = {}): Promise<DocxResult> {
 	const bytes = "buffer" in input && input.buffer ? input.buffer : await fs.readFile(input.path);
-	const entries = await readArchiveEntries({ bytes, format: "zip" });
-	const documentXml = archiveEntryText(entries, "word/document.xml");
+	const docx = await openDocxPackage(bytes);
+	const documentXml = await readMemberText(docx, "word/document.xml");
 	if (!documentXml) throw new Error("Invalid DOCX: missing word/document.xml");
 	const context: ConversionContext = {
-		entries,
-		relationships: parseRelationships(archiveEntryText(entries, "word/_rels/document.xml.rels")),
-		contentTypes: parseContentTypes(archiveEntryText(entries, "[Content_Types].xml")),
-		styles: parseStyles(archiveEntryText(entries, "word/styles.xml")),
-		numbering: parseNumbering(archiveEntryText(entries, "word/numbering.xml")),
+		package: docx,
+		relationships: parseRelationships(await readMemberText(docx, "word/_rels/document.xml.rels")),
+		contentTypes: parseContentTypes(await readMemberText(docx, "[Content_Types].xml")),
+		styles: parseStyles(await readMemberText(docx, "word/styles.xml")),
+		numbering: parseNumbering(await readMemberText(docx, "word/numbering.xml")),
 		messages: [],
 		warnedStyles: new Set(),
 		customStyles: parseCustomStyles(options.styleMap),
 		includeDefaultStyleMap: options.includeDefaultStyleMap !== false,
 		convertImage: options.convertImage ?? defaultImageConverter(),
-		footnotes: parseFootnotes(archiveEntryText(entries, "word/footnotes.xml")),
+		footnotes: parseFootnotes(await readMemberText(docx, "word/footnotes.xml")),
 		usedFootnotes: [],
 		footnoteOrdinals: new Map(),
 	};

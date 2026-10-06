@@ -260,6 +260,8 @@ function resolveDefaultShell(): string {
 
 /**
  * Check if a process is running.
+ *
+ * @deprecated No in-repo consumers; use `Process.fromPid(pid)?.status() === ProcessStatus.Running` from `@oh-my-pi/pi-natives` (or `subprocess.exitCode === null`). Will be removed in the next major.
  */
 export function isPidRunning(pid: number | Subprocess): boolean {
 	if (typeof pid !== "number") {
@@ -271,6 +273,9 @@ export function isPidRunning(pid: number | Subprocess): boolean {
 	return Process.fromPid(pid)?.status() === ProcessStatus.Running;
 }
 
+/**
+ * @deprecated No in-repo consumers; await `subprocess.exited` or `Process.fromPid(pid)?.waitForExit()` from `@oh-my-pi/pi-natives`. Will be removed in the next major.
+ */
 export async function onProcessExit(proc: Subprocess | number, abortSignal?: AbortSignal): Promise<boolean> {
 	if (typeof proc !== "number") {
 		return proc.exited.then(

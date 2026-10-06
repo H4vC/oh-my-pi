@@ -2,6 +2,48 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `ptree` retaining all drained stderr for a child's lifetime, so long-lived children (LSP, DAP, daemons) no longer grow the heap ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+- Fixed `ConcatSink` readers (`readLines`/`readJsonl`/SSE) holding peak-size buffers for the stream's life ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+- Fixed unbounded growth of the `prompt.compile` template cache ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+- Fixed `fetchWithRetry` leaking the discarded response body when retrying a 429/5xx ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+- Fixed Turndown `linkStyle: "referenced"` emitting duplicate or orphan link definitions for links in GFM tables and highlighted code blocks ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+
+### Changed
+
+- Reduced memory use of `structuredCloneJSON` on JSON-shaped trees (~30× less retained, ~8× faster) ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+- Sped up `chalk` styling (~25× faster per `chalk.bold` call), `parseStreamingJson` (~40%) and logger record writes (~2×); output unchanged ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+- Reduced vterm memory use ~5× and sped up parsing ~4× and resize reflow ~7×; `Terminal` cells are now frozen and may be shared, so replace `line.cells[i]` instead of mutating a cell or its `attrs` ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+- Sped up markdown lexing (`@oh-my-pi/pi-utils/marked`) from quadratic to linear in document size (199 KB: 1.6 s → 35 ms) ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+- Sped up Turndown HTML-to-Markdown on nested tables, long ordered lists and large pages ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+- Sped up Readability extraction ~5–10× on large pages and reduced parsed-DOM heap ~30%; output unchanged ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+- Changed marked block extension tokenizers to receive `this.source` and `this.end`, so they can keep per-source state like inline tokenizers ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+
+### Added
+
+- Added `DEFAULT_CELL_ATTRIBUTES` and `sharedBlankCell()` to `vterm/buffer` ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+- Added an optional `skipContent` flag to Turndown rules and an optional `elementIndex` to `TurndownNode` ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+- Added `Node.hasChildNodes()`, `Element.hasAttributes()`, `parseInto`, `VOID_ELEMENTS`, `querySelectorFrom`, `closestMatching` and `hasClassToken` to the lightweight DOM, and an optional `replaceChildren()` to `ReadabilityNode` ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+- Added dependency-free `@oh-my-pi/pi-utils/dom/entities` exporting `decodeEntities` ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+- Added `DocxImage.readBytes()` to read an embedded image's raw bytes ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+- Added `@oh-my-pi/pi-utils/png-encode` (`encodeRawPng`, `PNG_SIGNATURE`) for 8-bit RGB/RGBA PNG encoding ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+- Added `decodeJwtPayload` to `@oh-my-pi/pi-utils/jwt` for unverified JWT payload decoding ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+- Added `mathBlockInContext(context, src)` to `@oh-my-pi/pi-utils/math-delimiters` for display-math block tokenizers ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+- Added `@oh-my-pi/pi-utils/shell-quote` exporting `quotePosixPath` ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+- Added `finiteOrZero` and `isFilesystemSourcePath` helpers and `@oh-my-pi/pi-utils/task-result` exporting `stripTaskResultEnvelope` ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+
+### Deprecated
+
+- Deprecated `TerminalOptions.allowProposedApi`, `TerminalOptions.disableStdin` and the `@oh-my-pi/pi-utils/vterm` default export; use `import { Terminal }` ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+- Deprecated `supportsColorStderr`; use `detectColorLevel(process.env, Boolean(process.stderr.isTTY))` ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+- Deprecated `Lexer.rules` (`@oh-my-pi/pi-utils/marked`), `isProbablyReaderable`/`ReaderableOptions` (`readability`), `IncomingDoc`/`IncomingFeed` (`incoming-json`), `Serial` (`async`) and `RingBuffer` (`ring`) with no replacement; removal in the next major ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+- Deprecated ACP client-side test helpers (`ClientSideConnection`, `schema`, `z*Response`/`zSessionNotification` schemas, `Validator` and its result types); removal in the next major ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+- Deprecated unused path getters `getPythonGatewayDir`, `getAutoresearchRunDir`, `getCommandsDir`, `getAgentModulesDir`, `getCrashLogPath` and `getProjectModulesDir` ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+- Deprecated `readUnixArEntriesFromBuffer`, `readZipEager` and `readUInt64BE`; use `readUnixAr`/`readZip` with `memoryByteSource` ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+- Deprecated unused helpers `isPidRunning`, `onProcessExit`, `extractMermaidBlocks`, `readImageMetadataSync`, `shiftHue`, `isProbablyBinarySync`, `peekFileTail` and `isTerminalStderrSuppressed` ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+- Deprecated module-level `registerHelper`/`registerPartial`/`compile` in `@oh-my-pi/pi-utils/template`; use `create()` engines ([#14638](https://github.com/can1357/oh-my-pi/pull/14638) by [@H4vC](https://github.com/H4vC))
+
 ## [18.6.3] - 2026-10-06
 
 ### Breaking Changes

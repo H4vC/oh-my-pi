@@ -55,6 +55,11 @@ export function structuredCloneJSON<T>(value: T): T {
 
 	// deep clone
 	if (isPlainObject(value)) {
+		// JSON-shaped trees share their immutable strings instead of copying every
+		// byte. Anything else (cycles, functions, Date/Map/...) keeps the
+		// structuredClone semantics.
+		const tree = clonePlainJsonTree(value, 0);
+		if (tree !== NOT_PLAIN_JSON) return tree as T;
 		try {
 			return structuredClone(value);
 		} catch {
@@ -62,6 +67,54 @@ export function structuredCloneJSON<T>(value: T): T {
 		}
 	}
 	return JSON.parse(JSON.stringify(value)) as T;
+}
+
+const NOT_PLAIN_JSON: unique symbol = Symbol("NOT_PLAIN_JSON");
+// Deeper trees are treated as possibly cyclic and left to structuredClone.
+const MAX_PLAIN_JSON_DEPTH = 512;
+
+/**
+ * Copies arrays and plain/null-prototype objects whose leaves are primitives,
+ * producing exactly what `structuredClone` would for that input. Returns
+ * {@link NOT_PLAIN_JSON} for anything structuredClone treats specially.
+ */
+function clonePlainJsonTree(value: object, depth: number): unknown {
+	if (depth > MAX_PLAIN_JSON_DEPTH) return NOT_PLAIN_JSON;
+	if (Array.isArray(value)) {
+		const out: unknown[] = new Array(value.length);
+		for (let i = 0; i < value.length; i++) {
+			if (!(i in value)) continue;
+			const child = clonePlainJsonChild(value[i], depth);
+			if (child === NOT_PLAIN_JSON) return NOT_PLAIN_JSON;
+			out[i] = child;
+		}
+		return out;
+	}
+	if (!isJsonRecord(value)) return NOT_PLAIN_JSON;
+	const out: Record<string, unknown> = {};
+	for (const key in value) {
+		if (!Object.hasOwn(value, key)) continue;
+		const child = clonePlainJsonChild(value[key], depth);
+		if (child === NOT_PLAIN_JSON) return NOT_PLAIN_JSON;
+		if (key === "__proto__") {
+			Object.defineProperty(out, key, { value: child, enumerable: true, writable: true, configurable: true });
+		} else {
+			out[key] = child;
+		}
+	}
+	return out;
+}
+
+function clonePlainJsonChild(value: unknown, depth: number): unknown {
+	switch (typeof value) {
+		case "object":
+			return value === null ? null : clonePlainJsonTree(value, depth + 1);
+		case "function":
+		case "symbol":
+			return NOT_PLAIN_JSON;
+		default:
+			return value;
+	}
 }
 
 /**

@@ -6,14 +6,20 @@ const UNLIKELY =
 	/-ad-|ai2html|banner|breadcrumbs|combx|comment|community|cover-wrap|disqus|extra|footer|gdpr|header|legends|menu|related|remark|replies|rss|shoutbox|sidebar|skyscraper|social|sponsor|supplemental|ad-break|agegate|pagination|pager|popup|yom-remote/i;
 const POSSIBLE = /and|article|body|column|content|main|shadow/i;
 
-/** Options for the inexpensive readerability estimate. */
+/**
+ * Options for the inexpensive readerability estimate.
+ * @deprecated Unused by oh-my-pi; no in-repo replacement. Will be removed in the next major.
+ */
 export interface ReaderableOptions {
 	minContentLength?: number;
 	minScore?: number;
 	visibilityChecker?: (node: ReadabilityNode) => boolean;
 }
 
-/** Estimates whether a document contains enough prose for article extraction. */
+/**
+ * Estimates whether a document contains enough prose for article extraction.
+ * @deprecated Unused by oh-my-pi; no in-repo replacement. Will be removed in the next major.
+ */
 export function isProbablyReaderable(
 	document: ReadabilityDocument,
 	options: ReaderableOptions | ((node: ReadabilityNode) => boolean) = {},

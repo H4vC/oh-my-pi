@@ -155,6 +155,8 @@ export class AsyncDrain<T> {
  * the previous operation settles (success or failure) and returns that
  * operation's own promise, so a rejected step never poisons the queue. Used by
  * stateful cursors whose concurrent pulls must not interleave.
+ *
+ * @deprecated Only used by the deprecated `IncomingDoc` cursors; chain promises directly (`tail = tail.then(op, op)`). Will be removed in the next major.
  */
 export class Serial {
 	#tail: Promise<unknown> = Promise.resolve();

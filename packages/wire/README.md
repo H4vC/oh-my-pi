@@ -2,13 +2,14 @@
 
 Shared TypeScript wire contracts for omp collab live sessions.
 
-The package contains only JSON-safe protocol shapes and constants. It has no runtime dependencies and is consumed by both the host CLI (`@oh-my-pi/pi-coding-agent`) and browser guest (`@oh-my-pi/collab-web`).
+The root entry contains only JSON-safe protocol shapes and constants. It has no runtime dependencies and is consumed by both the host CLI (`@oh-my-pi/pi-coding-agent`) and browser guest (`@oh-my-pi/collab-web`).
 
 ## Exports
 
 ```ts
 import type { GuestFrame, HostFrame, SessionEntry } from "@oh-my-pi/pi-wire";
 import { COLLAB_PROTO, DEFAULT_RELAY_URL, ENVELOPE_HEADER_LENGTH } from "@oh-my-pi/pi-wire";
+import { importRoomKey, open, parseCollabLink, sealEnvelope } from "@oh-my-pi/pi-wire/collab";
 ```
 
 Key groups:
@@ -17,11 +18,12 @@ Key groups:
 - live agent event and task-subagent bus payload shapes,
 - `GuestFrame`, `HostFrame`, and `WireFrame` unions for AES-GCM sealed payloads,
 - relay control TEXT messages,
-- link/envelope constants shared by host, guest, and local relay code.
+- link/envelope constants shared by host, guest, and local relay code,
+- `@oh-my-pi/pi-wire/collab`: the browser-safe transport helpers (Web Crypto only, no `Buffer`) — AES-256-GCM `seal`/`sealSerialized`/`sealEnvelope`/`open`, `packEnvelope`/`unpackEnvelope`/`rewriteEnvelopePeer`, and the link grammar (`formatCollabLink`, `formatCollabWebLink`, `parseCollabLink`, room id/key/write-token generators).
 
 ## Protocol boundary
 
-`pi-wire` does not encode, decode, validate, encrypt, or route frames. It defines the shared contract used at those boundaries:
+The root entry does not encode, decode, validate, encrypt, or route frames; `@oh-my-pi/pi-wire/collab` seals and opens them and handles the envelope, but never validates or routes. Together they define the shared contract used at those boundaries:
 
 1. callers build a `GuestFrame` or `HostFrame`,
 2. transport code serializes it as JSON inside an encrypted payload,
