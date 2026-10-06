@@ -13,8 +13,6 @@ import {
 	type AgentRunSummary,
 	aggregateAgentRunCoverage,
 	aggregateAgentRunSummaries,
-	emptyAgentRunCoverage,
-	emptyAgentRunSummary,
 } from "@oh-my-pi/pi-agent-core/run-collector";
 import { EXECUTE_TOOL_STATUS_ATTR, GenAIAttr, OmpGenAIAggregateAttr } from "@oh-my-pi/pi-agent-core/telemetry";
 import type { AgentEvent, AgentLoopConfig, AgentMessage, AgentTool } from "@oh-my-pi/pi-agent-core/types";
@@ -472,9 +470,10 @@ describe("aggregateAgentRunSummaries / aggregateAgentRunCoverage", () => {
 		expect(merged.providersUsed).toEqual(["p1"]);
 	});
 
-	it("returns empty constants when given no summaries", () => {
-		expect(aggregateAgentRunSummaries([])).toBe(emptyAgentRunSummary());
-		expect(aggregateAgentRunCoverage([])).toBe(emptyAgentRunCoverage());
+	it("returns shared empty constants when given no summaries", () => {
+		expect(aggregateAgentRunSummaries([])).toBe(aggregateAgentRunSummaries([]));
+		expect(aggregateAgentRunCoverage([])).toBe(aggregateAgentRunCoverage([]));
+		expect(Object.isFrozen(aggregateAgentRunCoverage([]))).toBe(true);
 	});
 });
 

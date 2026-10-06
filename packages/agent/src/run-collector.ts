@@ -600,12 +600,20 @@ const EMPTY_COVERAGE: AgentRunCoverage = Object.freeze({
 	providersUsed: Object.freeze([]) as readonly string[],
 }) as AgentRunCoverage;
 
-/** Empty `AgentRunSummary` constant. Exported for tests and default-initializers. */
+/**
+ * Empty `AgentRunSummary` constant.
+ *
+ * @deprecated Use `aggregateAgentRunSummaries([])`. Will be removed in the next major.
+ */
 export function emptyAgentRunSummary(): AgentRunSummary {
 	return EMPTY_SUMMARY;
 }
 
-/** Empty `AgentRunCoverage` constant. Exported for tests and default-initializers. */
+/**
+ * Empty `AgentRunCoverage` constant.
+ *
+ * @deprecated Use the `coverage` of `aggregateAgentRunSummaries([])`. Will be removed in the next major.
+ */
 export function emptyAgentRunCoverage(): AgentRunCoverage {
 	return EMPTY_COVERAGE;
 }

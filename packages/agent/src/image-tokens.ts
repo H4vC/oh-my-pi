@@ -24,6 +24,7 @@ import { parseImageMetadata } from "@oh-my-pi/pi-utils";
 /** OpenAI image `detail` values; `undefined` means the provider default (`auto`). */
 export type ImageDetail = ImageContent["detail"];
 
+/** @deprecated Import `ImageSize` from `@oh-my-pi/pi-catalog/compat/image-tokenization`. Will be removed in the next major. */
 export type { ImageSize };
 
 // Larger than every detail level's pixel limit, so an unknown size charges

@@ -141,6 +141,7 @@ export function canonicalJson(value: unknown, ancestors = new Set<object>()): st
 	}
 }
 
+/** @deprecated Internal to speculative execution; will be unexported in the next major. */
 export function createExecutionFingerprint(
 	toolCall: AgentToolCall,
 	executionArgs: Readonly<Record<string, unknown>>,
@@ -169,7 +170,11 @@ async function candidateMatchesFingerprint(
 	}
 }
 
-/** Rejects malformed or ambiguous effects and returns a frozen logical identity. */
+/**
+ * Rejects malformed or ambiguous effects and returns a frozen logical identity.
+ *
+ * @deprecated Internal to speculative execution; will be unexported in the next major.
+ */
 export function normalizeSpeculationEffect(effect: unknown): ToolSpeculationEffect | undefined {
 	if (!isPlainRecord(effect) || typeof effect.kind !== "string") return undefined;
 	if (effect.kind === "pure" && hasExactKeys(effect, ["kind"])) return Object.freeze({ kind: "pure" });
