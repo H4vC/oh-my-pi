@@ -4,7 +4,43 @@ import { theme } from "@oh-my-pi/pi-tui/theme";
 import { extractUriScheme } from "../internal-urls/parse";
 import { InternalUrlRouter } from "../internal-urls/router";
 import { expandPath } from "../tools/path-utils";
+import type * as PiCodingAgent from "../index";
 import type { HookUIContext } from "./hooks/types";
+
+let piCodingAgentModule: typeof PiCodingAgent | undefined;
+let piCodingAgentModulePromise: Promise<typeof PiCodingAgent> | undefined;
+
+/**
+ * Load the package barrel handed to extensions, hooks, custom tools and custom
+ * commands as `pi`. Latency boundary: the barrel re-exports main.ts and the
+ * interactive TUI graph, so loaders import it only once they have user modules
+ * to bind, instead of statically (which put it on every sdk.ts load). It cannot
+ * be `require()`d lazily: its graph uses `with { type: "file" }` imports.
+ */
+export function loadPiCodingAgentModule(): Promise<typeof PiCodingAgent> {
+	piCodingAgentModulePromise ??= import("../index").then(module => {
+		piCodingAgentModule = module;
+		return module;
+	});
+	return piCodingAgentModulePromise;
+}
+
+/** Synchronous `pi` accessor; loaders await {@link loadPiCodingAgentModule} before binding user modules. */
+export function getPiCodingAgentModule(): typeof PiCodingAgent {
+	if (!piCodingAgentModule) {
+		throw new Error("The pi-coding-agent module was accessed before loadPiCodingAgentModule() settled");
+	}
+	return piCodingAgentModule;
+}
+
+const MODULE_FILE_EXTENSIONS = [".ts", ".js", ".mjs", ".cjs"];
+/** `.d.ts` / `.d.mts` / `.d.cts` TypeScript declaration files — never loadable as modules. */
+const DECLARATION_FILE_RE = /\.d\.[mc]?ts$/;
+
+/** A loadable module file: a .ts/.js/.mjs/.cjs that is not a declaration file. */
+export function isModuleFile(name: string): boolean {
+	return MODULE_FILE_EXTENSIONS.includes(path.extname(name)) && !DECLARATION_FILE_RE.test(name);
+}
 
 /**
  * Resolve a file path:

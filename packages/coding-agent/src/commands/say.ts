@@ -15,13 +15,13 @@ import { Args, Command, Flags } from "@oh-my-pi/pi-utils/cli";
 import { sayHelp as commandHelp } from "../cli/command-help";
 import { ModelRegistry } from "../config/model-registry";
 import { Settings } from "../config/settings";
-import { discoverAuthStorage } from "../sdk";
+import { discoverAuthStorage } from "../session/auth-discovery";
 import { TTS_LOCAL_VOICE_VALUES } from "../tts/models";
 import { SpeakableStream } from "../tts/speakable";
 import { StreamingAudioPlayer } from "../tts/streaming-player";
 import { shutdownTtsClient, ttsClient } from "../tts/tts-client";
 import { resolveLocalSpeechModelId } from "../tts/vocalizer";
-import { encodeWav } from "../tts/wav";
+import { encodePcm16Wav } from "../stt/wav";
 
 import { cfgTtsLocalVoice } from "../tts/settings";
 
@@ -95,13 +95,7 @@ export default class Say extends Command {
 					exitCode = 1;
 					return;
 				}
-				const pcm = new Float32Array(total);
-				let offset = 0;
-				for (const part of pcms) {
-					pcm.set(part, offset);
-					offset += part.length;
-				}
-				const wav = encodeWav(pcm, sampleRate);
+				const wav = encodePcm16Wav(pcms, sampleRate);
 				await Bun.write(flags.out, wav);
 				const durationSec = total / sampleRate;
 				process.stdout.write(

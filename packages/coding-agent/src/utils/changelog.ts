@@ -350,6 +350,7 @@ export function parseChangelogVersion(version: string | undefined): ChangelogEnt
 
 /**
  * Get entries newer than lastVersion.
+ * @deprecated Test-only; no replacement. Will be removed in the next major.
  */
 export function getNewEntries(entries: ChangelogEntry[], lastVersion: string): ChangelogEntry[] {
 	const parsedLastVersion = parseChangelogVersion(lastVersion);
@@ -416,6 +417,7 @@ function selectStartupChangelogEntries(
 
 /**
  * Select bounded release notes for interactive startup.
+ * @deprecated Test-only; no replacement (startup uses `resolveStartupChangelogForDisplay`). Will be removed in the next major.
  */
 export function selectStartupChangelog(
 	entries: ChangelogEntry[],

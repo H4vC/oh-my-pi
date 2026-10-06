@@ -68,6 +68,7 @@ const VALID_ACTIONS: ConfigAction[] = ["list", "get", "set", "reset", "path", "i
 /**
  * Parse config subcommand arguments.
  * Returns undefined if not a config command.
+ * @deprecated Pre-Command-class argv parser; use the `commands/config.ts` Command class (static flags/args). Will be removed in the next major.
  */
 export function parseConfigArgs(args: string[]): ConfigCommandArgs | undefined {
 	if (args.length === 0 || args[0] !== "config") {
@@ -402,6 +403,7 @@ function handlePath(): void {
 // Help
 // =============================================================================
 
+/** @deprecated Pre-Command-class help printer; use `cli/command-help.ts` with the `commands/config.ts` Command class. Will be removed in the next major. */
 export function printConfigHelp(): void {
 	console.log(`${chalk.bold(`${APP_NAME} config`)} - Manage settings
 

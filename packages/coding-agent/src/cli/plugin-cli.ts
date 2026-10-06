@@ -76,6 +76,7 @@ const VALID_ACTIONS: PluginAction[] = [
 /**
  * Parse plugin subcommand arguments.
  * Returns undefined if not a plugin command.
+ * @deprecated Pre-Command-class argv parser; use the `commands/plugin.ts` Command class (static flags/args). Will be removed in the next major.
  */
 export function parsePluginArgs(args: string[]): PluginCommandArgs | undefined {
 	if (args.length === 0 || args[0] !== "plugin") {
@@ -1114,6 +1115,7 @@ async function handleSetEnabled(
 // Help
 // =============================================================================
 
+/** @deprecated Pre-Command-class help printer; use `cli/command-help.ts` with the `commands/plugin.ts` Command class. Will be removed in the next major. */
 export function printPluginHelp(): void {
 	console.log(`${chalk.bold(`${APP_NAME} plugin`)} - Plugin lifecycle management
 

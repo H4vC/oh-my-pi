@@ -13,7 +13,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import {
 	getAgentDbPath,
@@ -28,9 +27,10 @@ import {
 	procmgr,
 } from "@oh-my-pi/pi-utils";
 import { withFileLock } from "@oh-my-pi/pi-utils/file-lock";
-import { isLightTheme } from "@oh-my-pi/pi-tui/theme/theme";
+import type * as TuiTheme from "@oh-my-pi/pi-tui/theme/theme";
 import { JSONC, YAML } from "bun";
 import { invalidate as invalidateCapabilityFsCache } from "../capability/fs";
+import { expandTilde } from "../tools/path-utils";
 import { type Settings as SettingsCapabilityItem, settingsCapability } from "../capability/settings";
 import type { ModelRole } from "../config/model-roles";
 import { loadCapability } from "../discovery";
@@ -349,10 +349,6 @@ export function dropSettingsGroupShadows(data: RawSettings, sourcePath: string, 
 		result[key] = dropSettingsGroupShadows(value as RawSettings, sourcePath, path);
 	}
 	return result;
-}
-
-function expandTilde(p: string): string {
-	return p === "~" ? os.homedir() : p.startsWith("~/") ? path.join(os.homedir(), p.slice(2)) : p;
 }
 
 function normalizePathPrefix(prefix: string): string {
@@ -2611,7 +2607,10 @@ export class Settings {
 				// Built-in defaults — just remove, let new defaults apply
 				delete raw.theme;
 			} else {
-				// Custom theme — detect luminance to place in correct slot
+				// Custom theme — detect luminance to place in correct slot. Latency boundary:
+				// the theme module loads every bundled theme JSON, needed only by this one-time migration.
+				// The .js subpath is the package's unconditional export for synchronous loading.
+				const { isLightTheme }: typeof TuiTheme = require("@oh-my-pi/pi-tui/theme/theme.js");
 				const slot = isLightTheme(oldTheme) ? "light" : "dark";
 				raw.theme = { [slot]: oldTheme };
 			}

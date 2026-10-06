@@ -202,7 +202,10 @@ export function createConfigHeaderResolver(
 	};
 }
 
-/** Clear all command state. Exported for focused resolver tests. */
+/**
+ * Clear all command state. Exported for focused resolver tests.
+ * @deprecated Unused. Will be removed in the next major.
+ */
 export function clearConfigValueCache(): void {
 	invalidateAllCommandConfigs();
 	commandInFlight.clear();

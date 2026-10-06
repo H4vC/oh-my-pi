@@ -10,8 +10,8 @@ import { tokenHelp as commandHelp } from "../cli/command-help";
 import { isAuthenticated, ModelRegistry } from "../config/model-registry";
 import { refreshStoredManagedMcpOAuthCredential } from "../mcp/oauth-credentials";
 import { isManagedMCPOAuthCredentialId, mcpOAuthCredentialProfile } from "../mcp/oauth-flow";
-import { discoverAuthStorage } from "../sdk";
-import type { AuthStorage } from "../session/auth-storage";
+import { discoverAuthStorage } from "../session/auth-discovery";
+import type { AuthStorage } from "@oh-my-pi/pi-ai";
 import { getAvailableAuthMethods } from "../web/search/providers/perplexity-auth";
 
 async function resolveManagedMcpOAuthToken(

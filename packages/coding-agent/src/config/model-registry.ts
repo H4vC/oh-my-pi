@@ -28,11 +28,12 @@ import { applyCatalogMetrics, CatalogMetricsIndex } from "@oh-my-pi/pi-catalog/i
 import { getModelCacheWriteStats, readModelCache } from "@oh-my-pi/pi-catalog/model-cache";
 import {
 	createModelManager,
+	fingerprintBundledModels,
 	fingerprintStaticModels,
 	type ModelManagerOptions,
 	type ModelRefreshStrategy,
 } from "@oh-my-pi/pi-catalog/model-manager";
-import { getBundledModels, getBundledProviders } from "@oh-my-pi/pi-catalog/models";
+import { getBundledModelList, getBundledModels, getBundledProviders } from "@oh-my-pi/pi-catalog/models";
 import {
 	googleAntigravityModelManagerOptions,
 	googleGeminiCliModelManagerOptions,
@@ -49,7 +50,7 @@ import { apiServesKind, modelKind, type ModelKind } from "@oh-my-pi/pi-catalog/t
 import { getAgentDir, isBunTestRuntime, logger, wrapFetchForExtraCa } from "@oh-my-pi/pi-utils";
 import { resolveProviderModelReference } from "../config/model-resolver";
 import { generateCodexAttestation } from "../live/attestation";
-import type { AuthStorage } from "../session/auth-storage";
+import type { AuthStorage } from "@oh-my-pi/pi-ai";
 import { type ApiKeyResolverModel, type ApiKeyResolverOptions, createApiKeyResolver } from "./api-key-resolver";
 import type { ConfigError, ConfigFile } from "./config-file";
 import {
@@ -1261,10 +1262,13 @@ export class ModelRegistry {
 			const unrestorableHeaderIds = new Set(cache.unrestorableHeaderModelIds);
 			const bundledModels =
 				omittedHeaderIds.size > 0 || sharedCatalogProvider
-					? (getBundledModels(providerId as Parameters<typeof getBundledModels>[0]) as Model<Api>[])
+					? getBundledModelList(providerId as Parameters<typeof getBundledModelList>[0])
 					: undefined;
 			const bundledFingerprint = bundledModels
-				? fingerprintStaticModels(bundledModels, sharedCatalogProvider && !additiveSharedCatalogProvider)
+				? fingerprintBundledModels(
+						providerId as Parameters<typeof fingerprintBundledModels>[0],
+						sharedCatalogProvider && !additiveSharedCatalogProvider,
+					)
 				: undefined;
 			// A matching cache may contain provider-endpoint overrides. Strip
 			// same-id rows only across a bundled-catalog upgrade, where the
@@ -1324,13 +1328,14 @@ export class ModelRegistry {
 					bundledFingerprint !== undefined &&
 					(cache.staticFingerprint === bundledFingerprint ||
 						cache.staticFingerprint.startsWith(`${bundledFingerprint}:drop:`));
-				const cachedSnapshotMatchesBundled =
-					bundledModels !== undefined &&
-					fingerprintStaticModels(cache.models, !additiveSharedCatalogProvider) ===
-						fingerprintStaticModels(bundledModels, !additiveSharedCatalogProvider);
+				// The snapshot comparison stringifies every cached row, so it runs
+				// only for non-additive providers whose stored fingerprint matched.
 				const cacheContributed = additiveSharedCatalogProvider
 					? cachedModels.some(model => bundledById?.has(model.id) !== true)
-					: !(cacheMatchesBundledFingerprint && cachedSnapshotMatchesBundled);
+					: !(
+							cacheMatchesBundledFingerprint &&
+							fingerprintStaticModels(cache.models, true) === bundledFingerprint
+						);
 				const stale = !cache.fresh || !cache.authoritative;
 				this.#providerDiscoveryStates.set(providerId, {
 					provider: providerId,

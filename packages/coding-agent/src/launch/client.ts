@@ -1,9 +1,10 @@
 import * as fs from "node:fs/promises";
-import * as net from "node:net";
+import type * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { getGlobalDaemonRuntimeDir, isEexist, isEnoent, logger, postmortem } from "@oh-my-pi/pi-utils";
 import { resolveWorkerSpawnCmd, workerEnvFromParent } from "../subprocess/worker-client";
+import { dialSocket } from "../tiny/jsonl-socket";
 import { canonicalProjectDir, daemonBrokerEndpoint, daemonRuntimeDir } from "./paths";
 import {
 	DAEMON_BROKER_WORKER_ARG,
@@ -109,32 +110,6 @@ function requestTimeoutMs(operation: DaemonOperation): number {
 		default:
 			return 30_000;
 	}
-}
-
-function openSocket(endpoint: string, timeoutMs: number): Promise<net.Socket> {
-	const { promise, resolve, reject } = Promise.withResolvers<net.Socket>();
-	const socket = net.createConnection({ path: endpoint });
-	const timer = setTimeout(() => {
-		socket.destroy();
-		reject(new Error(`Timed out connecting to daemon broker at ${endpoint}`));
-	}, timeoutMs);
-	const cleanup = (): void => {
-		clearTimeout(timer);
-		socket.off("connect", onConnect);
-		socket.off("error", onError);
-	};
-	const onConnect = (): void => {
-		cleanup();
-		resolve(socket);
-	};
-	const onError = (error: Error): void => {
-		cleanup();
-		socket.destroy();
-		reject(error);
-	};
-	socket.once("connect", onConnect);
-	socket.once("error", onError);
-	return promise;
 }
 
 class SocketDaemonClient implements DaemonBrokerClient {
@@ -289,7 +264,9 @@ class SocketDaemonClient implements DaemonBrokerClient {
 
 	async #connectOnce(): Promise<void> {
 		try {
-			this.#bindSocket(await openSocket(this.#endpoint, 250));
+			this.#bindSocket(
+				await dialSocket(this.#endpoint, 250, `Timed out connecting to daemon broker at ${this.#endpoint}`),
+			);
 			return;
 		} catch {
 			// No live broker. Multiple clients may race to spawn; the broker's
@@ -301,7 +278,9 @@ class SocketDaemonClient implements DaemonBrokerClient {
 		let lastError: Error | undefined;
 		while (Date.now() < deadline) {
 			try {
-				this.#bindSocket(await openSocket(this.#endpoint, 250));
+				this.#bindSocket(
+					await dialSocket(this.#endpoint, 250, `Timed out connecting to daemon broker at ${this.#endpoint}`),
+				);
 				return;
 			} catch (error) {
 				lastError = error instanceof Error ? error : new Error(String(error));

@@ -40,11 +40,12 @@ import type {
  */
 export type HookErrorListener = (error: HookError) => void;
 
-// Re-export execCommand for backward compatibility
+/** @deprecated Compat re-export; import `execCommand` from `exec/exec`. Will be removed in the next major. */
 export { execCommand } from "../../exec/exec";
 
 /**
  * HookRunner executes hooks and manages event emission.
+ * @deprecated Legacy hooks runtime superseded by ExtensionRunner (JS/TS hooks bind via `extensibility/extensions/loader.ts`); use ExtensionRunner. Will be removed in the next major.
  */
 export class HookRunner {
 	#uiContext: HookUIContext;

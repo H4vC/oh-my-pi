@@ -91,13 +91,17 @@ export async function cachePlugin(
 /**
  * Synchronous check — true when the cache directory exists on disk.
  * Uses `existsSync` because callers may need to run this check inline without async.
+ * @deprecated Test-only helper with no production callers. Will be removed in the next major.
  */
 export function isCached(cacheDir: string, marketplace: string, pluginName: string, version: string): boolean {
 	const targetPath = getCachedPluginPath(cacheDir, marketplace, pluginName, version);
 	return nodeFs.existsSync(targetPath);
 }
 
-/** Remove a single cached plugin directory. No-op if it does not exist. */
+/**
+ * Remove a single cached plugin directory. No-op if it does not exist.
+ * @deprecated Test-only helper with no production callers. Will be removed in the next major.
+ */
 export async function removeCachedPlugin(
 	cacheDir: string,
 	marketplace: string,
@@ -113,6 +117,7 @@ export async function removeCachedPlugin(
  *
  * Returns the count of removed directories. If `cacheDir` does not exist,
  * returns `{ removed: 0 }` rather than throwing.
+ * @deprecated Test-only helper with no production callers. Will be removed in the next major.
  */
 export async function cleanOrphanedCache(cacheDir: string, installedPaths: Set<string>): Promise<{ removed: number }> {
 	let entries: string[];

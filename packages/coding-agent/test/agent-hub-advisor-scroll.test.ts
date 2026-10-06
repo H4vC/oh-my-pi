@@ -250,6 +250,8 @@ describe("AgentTranscriptViewer", () => {
 	});
 
 	afterEach(() => {
+		// A leaked fs spy would make the next test's sync first load recurse and fail.
+		vi.restoreAllMocks();
 		vi.useRealTimers();
 		if (rowsDesc) {
 			Object.defineProperty(process.stdout, "rows", rowsDesc);

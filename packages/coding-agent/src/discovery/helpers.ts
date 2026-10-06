@@ -31,7 +31,7 @@ import type { MCPRequestIdFormat } from "../mcp/types";
 import { type ConfiguredThinkingLevel, parseConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
 import { normalizeToolNames } from "../tools/builtin-names";
 
-import { realpathIfExists, resolveContainedPath } from "./contained-path";
+import { isLexicallyWithin, realpathIfExists, resolveContainedPath } from "./contained-path";
 import { buildPluginDirRoot } from "./plugin-dir-roots";
 
 /**
@@ -502,20 +502,17 @@ export async function scanSkillsFromDir(
 		}
 	};
 
+	// No existence pre-check: `readFile` stats once, returns null for missing
+	// files and caches that answer, so a sync `existsSync` per skill only
+	// blocked the event loop and doubled the syscalls.
 	const work: Promise<void>[] = [];
 	if (options.includeSelf) {
-		const selfSkillPath = path.join(dir, "SKILL.md");
-		if (fs.existsSync(selfSkillPath)) {
-			work.push(loadSkill(selfSkillPath));
-		}
+		work.push(loadSkill(path.join(dir, "SKILL.md")));
 	}
 	for (const entry of entries) {
 		if (entry.name.startsWith(".")) continue;
 		if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
-		const skillPath = path.join(dir, entry.name, "SKILL.md");
-		if (fs.existsSync(skillPath)) {
-			work.push(loadSkill(skillPath));
-		}
+		work.push(loadSkill(path.join(dir, entry.name, "SKILL.md")));
 	}
 	await Promise.all(work);
 
@@ -687,19 +684,6 @@ function samePath(left: string, right: string): boolean {
 }
 
 /**
- * Return whether `child` is at or below `parent`.
- */
-function isWithin(parent: string, child: string): boolean {
-	const normalizedParent = path.resolve(parent);
-	const normalizedChild = path.resolve(child);
-	const relative = path.relative(
-		process.platform === "win32" ? normalizedParent.toLowerCase() : normalizedParent,
-		process.platform === "win32" ? normalizedChild.toLowerCase() : normalizedChild,
-	);
-	return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
-}
-
-/**
  * Load standalone context files (e.g. AGENTS.md, CLAUDE.md) by walking up from
  * cwd. Shared across providers whose files live in project root rather than
  * config directories (which their own providers handle).
@@ -721,9 +705,9 @@ export async function loadStandaloneContextFiles(
 	const cwd = path.resolve(ctx.cwd);
 	const repoRoot = ctx.repoRoot ? path.resolve(ctx.repoRoot) : null;
 	const filesystemRoot = path.parse(cwd).root;
-	const cwdIsUnderHome = isWithin(home, cwd);
+	const cwdIsUnderHome = isLexicallyWithin(home, cwd);
 	const repoIsHome = repoRoot !== null && samePath(home, repoRoot);
-	const repoIsUnderHome = repoRoot !== null && isWithin(home, repoRoot) && !repoIsHome;
+	const repoIsUnderHome = repoRoot !== null && isLexicallyWithin(home, repoRoot) && !repoIsHome;
 	const scanToHome = repoRoot !== null && cwdIsUnderHome && repoIsUnderHome;
 	const boundary = scanToHome ? home : (repoRoot ?? (cwdIsUnderHome ? home : filesystemRoot));
 	const includeBoundary = repoRoot === null ? cwdIsUnderHome : !samePath(boundary, home) || repoIsHome;

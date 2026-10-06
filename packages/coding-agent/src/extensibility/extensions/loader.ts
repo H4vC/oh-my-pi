@@ -25,8 +25,7 @@ import { loadCapability } from "../../discovery";
 import { getExtensionNameFromPath } from "../../discovery/helpers";
 import type { ExecOptions } from "../../exec/exec";
 import { execCommand } from "../../exec/exec";
-// Runtime self-reference: dereference this namespace only inside loader functions to keep the index.ts cycle safe.
-import * as PiCodingAgent from "../../index";
+import type * as PiCodingAgent from "../../index";
 import type { SendUserMessageOptions } from "../../session/agent-session";
 import type { CustomMessagePayload } from "../../session/messages";
 import type { FileDeleteFallbackHandler, FileWriteFallbackHandler } from "../../tools/file-write-fallback";
@@ -34,10 +33,10 @@ import { isFilesystemSourcePath } from "../../tools/path-utils";
 import { EventBus } from "../../utils/event-bus";
 import * as TypeBox from "../legacy-typebox";
 import { resolveExtensionDirectory } from "./directory-resolution";
-import { installLegacyPiSpecifierShim, loadLegacyPiModule } from "../plugins/legacy-pi-compat";
+import { loadLegacyPiModule } from "../plugins/legacy-pi-compat";
 import { getAllPluginExtensionPaths } from "../plugins/loader";
 
-import { resolvePath, withHostGuard } from "../utils";
+import { getPiCodingAgentModule, isModuleFile, loadPiCodingAgentModule, resolvePath, withHostGuard } from "../utils";
 import type { ComposerShapeDefinition } from "@oh-my-pi/pi-tui/overlays/composer-shape-registry";
 import type {
 	AssistantThinkingRenderer,
@@ -55,8 +54,6 @@ import type {
 	ToolDefinition,
 	ToolInfo,
 } from "./types";
-
-installLegacyPiSpecifierShim();
 
 type HandlerFn = (...args: unknown[]) => Promise<unknown>;
 type LoadedExtensionModule = ExtensionFactory | { default?: ExtensionFactory };
@@ -188,13 +185,16 @@ class ConcreteExtensionAPI implements ExtensionAPI, IExtensionRuntime {
 		sourceId: string;
 	}> = [];
 
+	/** The package barrel, required on first access (see {@link getPiCodingAgentModule}). */
+	declare readonly pi: typeof PiCodingAgent;
+
 	constructor(
-		public readonly pi: typeof PiCodingAgent,
 		private readonly extension: Extension,
 		private readonly runtime: IExtensionRuntime,
 		private readonly cwd: string,
 		public readonly events: EventBus,
 	) {
+		Object.defineProperty(this, "pi", { get: getPiCodingAgentModule, enumerable: true, configurable: true });
 		// Extensions destructure `pi.on` or forward API methods as callbacks, so every
 		// prototype method must keep its receiver when detached. Walk the prototype
 		// rather than listing methods: a new method is bound without touching this.
@@ -448,7 +448,7 @@ async function bindExtension(
 	}
 	try {
 		const extension = createExtension(extensionPath, imported.resolvedPath);
-		const api = new ConcreteExtensionAPI(PiCodingAgent, extension, runtime, cwd, eventBus);
+		const api = new ConcreteExtensionAPI(extension, runtime, cwd, eventBus);
 		await withHostGuard(() => runExtensionFactory(factory, api, runtime));
 
 		return { extension, error: null };
@@ -469,7 +469,8 @@ export async function loadExtensionFromFactory(
 	name = "<inline>",
 ): Promise<Extension> {
 	const extension = createExtension(name, name);
-	const api = new ConcreteExtensionAPI(PiCodingAgent, extension, runtime, cwd, eventBus);
+	await loadPiCodingAgentModule();
+	const api = new ConcreteExtensionAPI(extension, runtime, cwd, eventBus);
 	await runExtensionFactory(factory, api, runtime);
 	return extension;
 }
@@ -483,7 +484,10 @@ export async function loadExtensionFromFactory(
  * (last-wins collisions, shared runtime flag defaults) stay deterministic.
  */
 export async function loadExtensions(paths: string[], cwd: string, eventBus?: EventBus): Promise<LoadExtensionsResult> {
+	// Start the `pi` barrel first so its graph loads before the legacy shim plugin registers.
+	const piModule = paths.length > 0 ? loadPiCodingAgentModule() : undefined;
 	const preparedExtensions = await Promise.all(paths.map(extPath => importExtensionModule(extPath, cwd)));
+	await piModule;
 	return bindPreparedExtensions(preparedExtensions, cwd, eventBus);
 }
 
@@ -494,6 +498,7 @@ export async function bindPreparedExtensions(
 	eventBus?: EventBus,
 ): Promise<LoadExtensionsResult> {
 	const extensions: Extension[] = [];
+	if (preparedExtensions.length > 0) await loadPiCodingAgentModule();
 	const errors: Array<{ path: string; error: string }> = [];
 	const resolvedEventBus = eventBus ?? new EventBus();
 	const runtime = new ExtensionRuntime();
@@ -519,13 +524,9 @@ export async function bindPreparedExtensions(
 	};
 }
 
-function isExtensionFile(name: string): boolean {
-	return name.endsWith(".ts") || name.endsWith(".js");
-}
-
 const CONFIGURED_EXTENSION_DIRECTORY_OPTIONS = {
 	indexNames: ["index.ts", "index.js"],
-	isScanFile: isExtensionFile,
+	isScanFile: isModuleFile,
 	throwUnexpectedStatErrors: true,
 	onReadError: (filePath: string, error: unknown) => {
 		logger.warn("Failed to resolve extension directory", { path: filePath, error: String(error) });
@@ -544,7 +545,7 @@ async function discoverHooksInPackageRoot(root: string): Promise<string[]> {
 			throw err;
 		}
 		for (const entry of entries) {
-			if ((entry.isFile() || entry.isSymbolicLink()) && isExtensionFile(entry.name)) {
+			if ((entry.isFile() || entry.isSymbolicLink()) && isModuleFile(entry.name)) {
 				hooks.push(path.join(hookDir, entry.name));
 			}
 		}
@@ -598,57 +599,58 @@ export async function discoverExtensionPaths(
 	};
 
 	const ambient = options.ambient !== false;
-	if (ambient) {
+	// The scans below are independent: run them together, then append their
+	// results in the fixed precedence order so first-seen dedupe is unchanged.
+	const [discoveredModules, hookPaths, packageRootHooks, pluginPaths, configuredStats] = await Promise.all([
 		// 1. Discover extension modules via capability API (native .omp/.pi only).
 		// Scope the load to the native provider — the extension-module capability
 		// also has claude/codex/gemini/opencode providers, and their items were
 		// discarded here anyway (see #4198). The provider filter skips the walk
 		// entirely instead of running four foreign directory scans and dropping
 		// the results.
-		const discovered = await loadCapability<ExtensionModule>(extensionModuleCapability.id, {
-			...loadOptions,
-			providers: ["native"],
-		});
-		for (const ext of discovered.items) {
-			addPath(ext.path);
-		}
+		ambient
+			? loadCapability<ExtensionModule>(extensionModuleCapability.id, { ...loadOptions, providers: ["native"] })
+			: undefined,
+		// 2. Discover JS/TS hook factories and bind them through the extension
+		// runner, which owns the current runtime event bus. Non-ambient discovery
+		// scans only this invocation's configured package roots; it must not consult
+		// settings, installed packages, or process-global CLI injection state.
+		ambient && options.includeAmbientHooks !== false
+			? loadCapability<Hook>(hookCapability.id, loadOptions)
+			: undefined,
+		ambient
+			? undefined
+			: Promise.all(
+					configuredPaths.map(configuredPath => discoverHooksInPackageRoot(resolvePath(configuredPath, cwd))),
+				),
+		// 3. Discover extension entry points from installed plugins.
+		ambient ? getAllPluginExtensionPaths(cwd) : undefined,
+		// 4. Explicitly configured paths
+		Promise.all(
+			configuredPaths.map(async configuredPath => {
+				const resolved = resolvePath(configuredPath, cwd);
+				try {
+					return { resolved, stat: await fs.stat(resolved) };
+				} catch (err) {
+					if (!isEnoent(err)) throw err;
+					return { resolved, stat: null };
+				}
+			}),
+		),
+	]);
+
+	for (const ext of discoveredModules?.items ?? []) {
+		addPath(ext.path);
 	}
-
-	// 2. Discover JS/TS hook factories and bind them through the extension
-	// runner, which owns the current runtime event bus. Non-ambient discovery
-	// scans only this invocation's configured package roots; it must not consult
-	// settings, installed packages, or process-global CLI injection state.
-	if (ambient) {
-		if (options.includeAmbientHooks !== false) {
-			const hooks = await loadCapability<Hook>(hookCapability.id, loadOptions);
-			for (const hookPath of hooks.items
-				.map(hook => hook.path)
-				.filter(hookPath => isExtensionFile(path.basename(hookPath)))) {
-				addPath(hookPath);
-			}
-		}
-	} else {
-		for (const configuredPath of configuredPaths) {
-			addPaths(await discoverHooksInPackageRoot(resolvePath(configuredPath, cwd)));
-		}
+	for (const hook of hookPaths?.items ?? []) {
+		if (isModuleFile(path.basename(hook.path))) addPath(hook.path);
 	}
-
-	// 3. Discover extension entry points from installed plugins.
-	if (ambient) {
-		addPaths(await getAllPluginExtensionPaths(cwd));
+	for (const rootHooks of packageRootHooks ?? []) {
+		addPaths(rootHooks);
 	}
+	if (pluginPaths) addPaths(pluginPaths);
 
-	// 4. Explicitly configured paths
-	for (const configuredPath of configuredPaths) {
-		const resolved = resolvePath(configuredPath, cwd);
-
-		let stat: fs1.Stats | null = null;
-		try {
-			stat = await fs.stat(resolved);
-		} catch (err) {
-			if (!isEnoent(err)) throw err;
-		}
-
+	for (const { resolved, stat } of configuredStats) {
 		if (stat?.isDirectory()) {
 			addPaths(resolveExtensionDirectory(resolved, CONFIGURED_EXTENSION_DIRECTORY_OPTIONS).files);
 			continue;

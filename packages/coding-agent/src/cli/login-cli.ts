@@ -12,7 +12,8 @@ import { APP_NAME, getAgentDbPath, getProjectDir } from "@oh-my-pi/pi-utils";
 import chalk from "@oh-my-pi/pi-utils/chalk";
 import { ModelRegistry } from "../config/model-registry";
 import { Settings } from "../config/settings";
-import { discoverAuthStorage, loadCliExtensionProviders } from "../sdk";
+import { loadCliExtensionProviders } from "../extensibility/extensions/session-loader";
+import { discoverAuthStorage } from "../session/auth-discovery";
 import { resolveAuthBrokerConfig } from "../session/auth-broker-config";
 import { formatLoginIdentity, pickOAuthProvider, runTerminalOAuthLogin } from "./oauth-terminal";
 

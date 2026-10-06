@@ -1,5 +1,5 @@
 import { logger } from "@oh-my-pi/pi-utils";
-import xterm, { type Terminal as XtermTerminal } from "@oh-my-pi/pi-utils/vterm";
+import { Terminal } from "@oh-my-pi/pi-utils/vterm";
 import { readTerminalRows } from "@oh-my-pi/pi-tui/tools/terminal-output";
 import { DAEMON_PTY_COLUMNS, DAEMON_PTY_ROWS } from "./protocol";
 
@@ -11,7 +11,7 @@ export interface TerminalOutputOptions {
 	maxRows: number;
 }
 
-function writeTerminal(terminal: XtermTerminal, output: string): Promise<void> {
+function writeTerminal(terminal: Terminal, output: string): Promise<void> {
 	const { promise, resolve } = Promise.withResolvers<void>();
 	terminal.write(output, resolve);
 	return promise;
@@ -24,11 +24,10 @@ export async function renderTerminalOutput(
 ): Promise<string[] | undefined> {
 	if (!output) return [];
 	const maxRows = Math.max(1, Math.floor(options.maxRows));
-	const terminal = new xterm.Terminal({
+	const terminal = new Terminal({
 		cols: DAEMON_PTY_COLUMNS,
 		rows: DAEMON_PTY_ROWS,
 		scrollback: Math.max(VIRTUAL_SCROLLBACK_ROWS, maxRows),
-		allowProposedApi: true,
 	});
 	try {
 		await writeTerminal(terminal, output);

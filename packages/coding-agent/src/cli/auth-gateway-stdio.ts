@@ -17,7 +17,8 @@ import { ModelRegistry } from "../config/model-registry";
 import { formatModelStringWithRouting, normalizeModelPatternList, resolveCliModel } from "../config/model-resolver";
 import { Settings } from "../config/settings";
 import { claimRpcInput } from "../modes/rpc/rpc-input";
-import { discoverAuthStorage, loadCliExtensionProviders } from "../sdk";
+import { loadCliExtensionProviders } from "../extensibility/extensions/session-loader";
+import { discoverAuthStorage } from "../session/auth-discovery";
 import { collectOnlineTinyCandidates, expandOnlineTinyModelFallbacks } from "../tiny/online-candidates";
 
 /** Names the caller in the gateway's logs. */

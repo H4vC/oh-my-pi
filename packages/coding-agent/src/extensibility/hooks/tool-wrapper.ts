@@ -20,6 +20,7 @@ import type { ToolCallEventResult, ToolResultEventResult } from "./types";
  * - Emits tool_call event before execution (can block)
  * - Emits tool_result event after execution (can modify result)
  * - Forwards onUpdate callback to wrapped tool for progress streaming
+ * @deprecated Legacy hooks runtime superseded by ExtensionRunner (JS/TS hooks bind via `extensibility/extensions/loader.ts`); use ExtensionRunner tool wrapping. Will be removed in the next major.
  */
 export class HookToolWrapper<TParameters extends TSchema = TSchema, TDetails = unknown> implements AgentTool<
 	TParameters,

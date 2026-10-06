@@ -22,6 +22,7 @@ export interface GrepCommandArgs {
 /**
  * Parse grep subcommand arguments.
  * Returns undefined if not a grep command.
+ * @deprecated Pre-Command-class argv parser; use the `commands/grep.ts` Command class (static flags/args). Will be removed in the next major.
  */
 export function parseGrepArgs(args: string[]): GrepCommandArgs | undefined {
 	if (args.length === 0 || args[0] !== "grep") {
@@ -131,6 +132,7 @@ export async function runGrepCommand(cmd: GrepCommandArgs): Promise<void> {
 	}
 }
 
+/** @deprecated Pre-Command-class help printer; use `cli/command-help.ts` with the `commands/grep.ts` Command class. Will be removed in the next major. */
 export function printGrepHelp(): void {
 	console.log(`${chalk.bold(`${APP_NAME} grep`)} - Test grep tool
 

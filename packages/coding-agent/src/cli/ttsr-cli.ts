@@ -30,6 +30,7 @@ import { bucketRules } from "../capability/rule-buckets";
 import { Settings } from "../config/settings";
 import { cfgTtsr, type TtsrSettings } from "../export/ttsr-settings";
 import { initializeWithSettings, loadCapability } from "../discovery";
+import { isLexicallyWithin } from "../discovery/contained-path";
 import { buildRuleFromMarkdown, createSourceMeta } from "../discovery/helpers";
 import type { TtsrManager } from "../export/ttsr";
 
@@ -547,11 +548,6 @@ function normalizeScanPath(pathValue: string): string {
 	return pathValue.replaceAll("\\", "/");
 }
 
-function isWithinDirectory(child: string, parent: string): boolean {
-	const rel = path.relative(parent, child);
-	return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
-}
-
 function matchesScanGlob(glob: Bun.Glob, filePaths: string[] | undefined): boolean {
 	if (!filePaths || filePaths.length === 0) {
 		return false;
@@ -785,7 +781,7 @@ async function scanAnyAstConditionMatches(
 }
 
 async function discoverScanFiles(scanDir: string, cwd: string, gitignore: boolean): Promise<ScanFileCandidate[]> {
-	const globRoot = isWithinDirectory(scanDir, cwd) ? cwd : scanDir;
+	const globRoot = isLexicallyWithin(cwd, scanDir) ? cwd : scanDir;
 	const relativeScanDir = normalizeScanPath(path.relative(globRoot, scanDir));
 	const pattern = relativeScanDir === "" ? "**/*" : `${relativeScanDir}/**/*`;
 	try {

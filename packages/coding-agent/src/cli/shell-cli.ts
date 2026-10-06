@@ -19,6 +19,7 @@ export interface ShellCommandArgs {
 	noSnapshot?: boolean;
 }
 
+/** @deprecated Pre-Command-class argv parser; use the `commands/shell.ts` Command class (static flags/args). Will be removed in the next major. */
 export function parseShellArgs(args: string[]): ShellCommandArgs | undefined {
 	if (args.length === 0 || args[0] !== "shell") {
 		return undefined;
@@ -157,6 +158,7 @@ export async function runShellCommand(cmd: ShellCommandArgs): Promise<void> {
 	}
 }
 
+/** @deprecated Pre-Command-class help printer; use `cli/command-help.ts` with the `commands/shell.ts` Command class. Will be removed in the next major. */
 export function printShellHelp(): void {
 	process.stdout.write(`${chalk.bold(`${APP_NAME} shell`)} - Interactive shell console for testing
 

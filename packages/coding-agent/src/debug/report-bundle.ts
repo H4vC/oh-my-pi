@@ -203,7 +203,10 @@ async function addDirectoryToArchive(
 	}
 }
 
-/** Get recent log entries for display (tail-limited to avoid OOM on large files). */
+/**
+ * Get recent log entries for display (tail-limited to avoid OOM on large files).
+ * @deprecated Unused; no replacement. Will be removed in the next major.
+ */
 export async function getLogText(): Promise<string> {
 	// The file transport batches writes; include this process's latest records.
 	logger.flush();

@@ -147,7 +147,10 @@ export function clearOmpExtensionCliRoots(): void {
 	injectedCliRootMode = "merge";
 }
 
-/** Inspect currently-injected CLI roots (read-only). Exposed for diagnostics + tests. */
+/**
+ * Inspect currently-injected CLI roots (read-only). Exposed for diagnostics + tests.
+ * @deprecated Unused. Will be removed in the next major.
+ */
 export function getInjectedOmpExtensionCliRoots(): readonly OmpExtensionRoot[] {
 	return injectedCliRoots.map(({ path: p, level }) => ({ path: p, level, name: path.basename(p) }));
 }

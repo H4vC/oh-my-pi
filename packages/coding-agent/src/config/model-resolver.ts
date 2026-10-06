@@ -1600,6 +1600,7 @@ export function resolveModelFromString(
 
 /**
  * Resolve a model from configured roles, honoring order and overrides.
+ * @deprecated Superseded by createAgentSession's model selection in `sdk.ts`; no direct replacement export. Will be removed in the next major.
  */
 export function resolveModelFromSettings(options: {
 	settings: Settings;
@@ -2401,6 +2402,7 @@ export interface InitialModelResult {
  * 3. Restored from session (if continuing/resuming)
  * 4. Saved default from settings
  * 5. First available model with valid API key
+ * @deprecated Superseded by createAgentSession's model selection in `sdk.ts`; no direct replacement export. Will be removed in the next major.
  */
 export async function findInitialModel(options: {
 	cliProvider?: string;
@@ -2477,6 +2479,7 @@ export async function findInitialModel(options: {
 
 /**
  * Restore model from session, with fallback to available models
+ * @deprecated Superseded by createAgentSession's model selection in `sdk.ts`; no direct replacement export. Will be removed in the next major.
  */
 export async function restoreModelFromSession(
 	savedProvider: string,

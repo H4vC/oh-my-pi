@@ -42,6 +42,7 @@ export class CustomToolAdapter<
 	/**
 	 * Backward-compatible export of factory function for existing callers.
 	 * Prefer CustomToolAdapter constructor directly.
+	 * @deprecated Compat factory; use `new CustomToolAdapter(...)`. Will be removed in the next major.
 	 */
 	static wrap<TParams extends TSchema = TSchema, TDetails = any, TTheme extends Theme = Theme>(
 		tool: CustomTool<TParams, TDetails>,

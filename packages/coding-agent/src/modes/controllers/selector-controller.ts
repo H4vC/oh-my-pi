@@ -27,7 +27,6 @@ import {
 } from "../../advisor";
 import { reset as resetCapabilities } from "../../capability";
 import type { AdvisorConfigScope } from "@oh-my-pi/pi-tui/overlays/advisor-config";
-import { showGitOverlay } from "../../cli/git-tui";
 import { formatLoginIdentity } from "../../cli/oauth-terminal";
 import {
 	acquireModelRoleMutation,
@@ -54,7 +53,7 @@ import {
 import { getAvailableThemes, getSymbolTheme, previewTheme, theme } from "@oh-my-pi/pi-tui/theme";
 import type { AgentHubOpenOptions, InteractiveModeContext } from "../../modes/types";
 import type { SessionOAuthAccountList } from "../../session/agent-session-types";
-import type { ResetCreditAccountStatus, ResetCreditRedeemOutcome } from "../../session/auth-storage";
+import type { ResetCreditAccountStatus, ResetCreditRedeemOutcome } from "@oh-my-pi/pi-ai";
 import {
 	createForeignSessionStore,
 	foreignSessionInfoToSessionInfo,
@@ -552,6 +551,7 @@ export class SelectorController {
 					this.ctx.ui.requestRender();
 				},
 			);
+			component.setOnRequestRender(() => this.ctx.ui.requestRender());
 			return { component, focus: component };
 		});
 	}
@@ -605,6 +605,8 @@ export class SelectorController {
 	 */
 	async showGitTui(revision?: string): Promise<void> {
 		try {
+			// Latency boundary: the git overlay graph (commit pipeline, git app) is only needed on /git.
+			const { showGitOverlay } = await import("../../cli/git-tui");
 			await showGitOverlay(this.ctx.ui, { cwd: getProjectDir(), revision });
 		} catch (error) {
 			this.ctx.showStatus(error instanceof Error ? error.message : String(error));

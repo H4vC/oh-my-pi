@@ -12,37 +12,33 @@ import { openPath } from "../utils/open";
 
 /**
  * Single-line TTY progress bar. On a non-TTY stream we just stay quiet -
- * the final "Synced ..." summary still prints either way.
+ * the final "Synced ..." summary still prints either way. The line clears
+ * itself once the last file is reported.
  */
-function createSyncProgressReporter(): {
-	onProgress: (event: { current: number; total: number; sessionFile: string }) => void;
-	finish: () => void;
-} {
+function createSyncProgressReporter(): (event: { current: number; total: number; sessionFile: string }) => void {
 	const stream = process.stderr;
 	const isTty = stream.isTTY === true;
 	let lastWidth = 0;
 	let lastRender = 0;
-	return {
-		onProgress(event) {
-			if (!isTty) return;
-			const now = Date.now();
-			// Throttle to ~30 fps and always force a render for the last file.
-			if (event.current < event.total && now - lastRender < 33) return;
-			lastRender = now;
-			const label = chalk.dim(shortenSessionFile(event.sessionFile));
-			const pct = ((event.current / event.total) * 100).toFixed(0).padStart(3, " ");
-			const counter = chalk.cyan(`[${event.current}/${event.total}]`);
-			const line = `${counter} ${pct}%  ${label}`;
-			const columns = stream.columns ?? 120;
-			const trimmed = truncateToWidth(line, columns - 1);
-			stream.write(`\r${trimmed.padEnd(lastWidth)}`);
-			lastWidth = trimmed.length;
-		},
-		finish() {
-			if (!isTty || lastWidth === 0) return;
-			stream.write(`\r${" ".repeat(lastWidth)}\r`);
+	return event => {
+		if (!isTty) return;
+		if (event.current >= event.total) {
+			if (lastWidth > 0) stream.write(`\r${" ".repeat(lastWidth)}\r`);
 			lastWidth = 0;
-		},
+			return;
+		}
+		const now = Date.now();
+		// Throttle to ~30 fps.
+		if (now - lastRender < 33) return;
+		lastRender = now;
+		const label = chalk.dim(shortenSessionFile(event.sessionFile));
+		const pct = ((event.current / event.total) * 100).toFixed(0).padStart(3, " ");
+		const counter = chalk.cyan(`[${event.current}/${event.total}]`);
+		const line = `${counter} ${pct}%  ${label}`;
+		const columns = stream.columns ?? 120;
+		const trimmed = truncateToWidth(line, columns - 1);
+		stream.write(`\r${trimmed.padEnd(lastWidth)}`);
+		lastWidth = trimmed.length;
 	};
 }
 
@@ -69,31 +65,11 @@ export interface StatsCommandArgs {
 
 export async function runStatsCommand(cmd: StatsCommandArgs): Promise<void> {
 	// Lazy import to avoid loading stats module when not needed
-	const {
-		closeDb,
-		formatStatsDashboardUrl,
-		getDashboardStats,
-		getTotalMessageCount,
-		printStatsSummary,
-		refreshRollups,
-		startServer,
-		syncAllSessions,
-	} = await import("@oh-my-pi/omp-stats");
+	const { closeDb, formatStatsDashboardUrl, runStatsReport, startServer } = await import("@oh-my-pi/omp-stats");
 
 	// One-shot reports need fully ingested, fully rolled-up data before printing.
 	if (cmd.json || cmd.summary) {
-		const progress = createSyncProgressReporter();
-		process.stderr.write("Syncing session files...\n");
-		const { processed, files } = await syncAllSessions({ onProgress: progress.onProgress });
-		progress.finish();
-		await refreshRollups();
-		const total = await getTotalMessageCount();
-		process.stderr.write(`Synced ${processed} new entries from ${files} files (${total} total)\n\n`);
-		if (cmd.json) {
-			console.log(JSON.stringify(await getDashboardStats(), null, 2));
-		} else {
-			await printStatsSummary();
-		}
+		await runStatsReport({ json: cmd.json, onProgress: createSyncProgressReporter() });
 		return;
 	}
 

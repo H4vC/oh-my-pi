@@ -16,6 +16,7 @@ import {
 	logger,
 	stripWindowsExtendedLengthPathPrefix,
 } from "@oh-my-pi/pi-utils";
+import { isLexicallyWithin } from "../../discovery/contained-path";
 import { registerPluginCacheInvalidator } from "../../discovery/helpers";
 
 const USE_BUNDLED_PI_MODULES = isCompiledBinary() || Boolean(process.env.PI_BUNDLED);
@@ -1284,14 +1285,9 @@ async function resolveRelativeCommonJsRequire(specifier: string, importerPath: s
 	return resolveSourceModuleFile(candidate);
 }
 
-function isPathInsideRoot(rootPath: string, candidatePath: string): boolean {
-	const relative = path.relative(rootPath, candidatePath);
-	return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
-}
-
 async function resolvePackageSourceTarget(packageRoot: string, targetPath: string): Promise<string | null> {
 	const candidate = path.resolve(targetPath);
-	if (!isPathInsideRoot(path.resolve(packageRoot), candidate)) {
+	if (!isLexicallyWithin(path.resolve(packageRoot), candidate)) {
 		return null;
 	}
 	const resolved = await resolveSourceModuleFile(candidate);
@@ -1299,16 +1295,16 @@ async function resolvePackageSourceTarget(packageRoot: string, targetPath: strin
 		return null;
 	}
 	const realPackageRoot = await realpathOrSelf(packageRoot);
-	return isPathInsideRoot(realPackageRoot, resolved) ? resolved : null;
+	return isLexicallyWithin(realPackageRoot, resolved) ? resolved : null;
 }
 
 async function resolvePackageFileTarget(packageRoot: string, targetPath: string): Promise<string | null> {
 	const candidate = path.resolve(targetPath);
-	if (!isPathInsideRoot(path.resolve(packageRoot), candidate) || !(await pathExists(candidate))) {
+	if (!isLexicallyWithin(path.resolve(packageRoot), candidate) || !(await pathExists(candidate))) {
 		return null;
 	}
 	const [realPackageRoot, resolved] = await Promise.all([realpathOrSelf(packageRoot), realpathOrSelf(candidate)]);
-	return isPathInsideRoot(realPackageRoot, resolved) ? resolved : null;
+	return isLexicallyWithin(realPackageRoot, resolved) ? resolved : null;
 }
 
 async function findPackageRoot(importerPath: string): Promise<string | null> {
@@ -2700,6 +2696,9 @@ async function ensureExtensionGraphHook(entryRealPath: string): Promise<{ clear(
  * rewrite ESM/TS sources and expose evaluated CommonJS namespaces directly.
  */
 export async function loadLegacyPiModule(resolvedPath: string): Promise<unknown> {
+	// Registering a Bun runtime plugin slows every later module load, so the
+	// shim is installed on the first user-module load instead of at import time.
+	installLegacyPiSpecifierShim();
 	// Bun reports the realpath of a loaded module to `onLoad` and exposes it as
 	// `import.meta.url`. Resolve symlinks here too (macOS `/var`→`/private/var`,
 	// `bun link`/pnpm installs) so the rewrite filter matches the path Bun

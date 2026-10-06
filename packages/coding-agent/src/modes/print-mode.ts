@@ -63,12 +63,14 @@ function stripProviderPayload<T extends AgentMessage>(message: T): T {
 /**
  * Shape an event for `--mode json` output.
  *
- * Removes two classes of bloat so transcripts grow linearly with conversation
+ * Removes three classes of bloat so transcripts grow linearly with conversation
  * size instead of quadratically (a single long turn used to re-serialize its
  * whole in-progress message on every streamed delta, producing multi-GB logs):
  * - `message_update` snapshots (`message`, `assistantMessageEvent.partial`,
  *   and the `done`/`error` payloads) are dropped; only the incremental delta
  *   is printed. The authoritative message follows in `message_end`.
+ * - `tool_execution_update` omits the call `args`, already printed once by
+ *   its `tool_execution_start`.
  * - `providerPayload` is transport-native replay state, opaque and useless
  *   outside this process.
  */
@@ -76,6 +78,10 @@ export function printableEvent(event: AgentSessionEvent): unknown {
 	switch (event.type) {
 		case "tool_stream_update":
 			return { type: event.type, toolCallId: event.toolCallId, toolName: event.toolName };
+		case "tool_execution_update": {
+			const { args: _args, ...rest } = event;
+			return rest;
+		}
 		case "message_update": {
 			const streamEvent = event.assistantMessageEvent;
 			if (streamEvent.type === "done" || streamEvent.type === "error") {

@@ -8,12 +8,11 @@ import { logger } from "@oh-my-pi/pi-utils";
 import { hookCapability } from "../../capability/hook";
 import type { Hook } from "../../discovery";
 import { loadCapability } from "../../discovery";
-// Runtime self-reference: dereference this namespace only inside loader functions to keep the index.ts cycle safe.
-import * as PiCodingAgent from "../../index";
+import { execCommand } from "../../exec/exec";
 import type { CustomMessagePayload } from "../../session/messages";
 import * as typebox from "../legacy-typebox";
-import { resolvePath, withHostGuard } from "../utils";
-import { execCommand } from "./runner";
+import { installLegacyPiSpecifierShim } from "../plugins/legacy-pi-compat";
+import { getPiCodingAgentModule, loadPiCodingAgentModule, resolvePath, withHostGuard } from "../utils";
 import type { ExecOptions, HookAPI, HookFactory, HookMessageRenderer, RegisteredCommand } from "./types";
 
 /**
@@ -124,7 +123,9 @@ async function createHookAPI(
 		typebox,
 		arktype: type,
 		zod,
-		pi: PiCodingAgent,
+		get pi() {
+			return getPiCodingAgentModule();
+		},
 	} as HookAPI;
 
 	return {
@@ -140,16 +141,37 @@ async function createHookAPI(
 	};
 }
 
+type ImportedHookModule =
+	| { resolvedPath: string; module: { default?: unknown }; error?: undefined }
+	| { resolvedPath: string; module?: undefined; error: string };
+
 /**
- * Load a single hook module using native Bun import.
+ * Import a single hook module using native Bun import.
  */
-async function loadHook(hookPath: string, cwd: string): Promise<{ hook: LoadedHook | null; error: string | null }> {
+async function importHookModule(hookPath: string, cwd: string): Promise<ImportedHookModule> {
 	const resolvedPath = resolvePath(hookPath, cwd);
+	try {
+		const module: { default?: unknown } = await withHostGuard(() => import(resolvedPath));
+		return { resolvedPath, module };
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		return { resolvedPath, error: `Failed to load hook: ${message}` };
+	}
+}
+
+/**
+ * Run an imported hook module's factory against a fresh HookAPI.
+ */
+async function bindHookModule(
+	hookPath: string,
+	imported: ImportedHookModule,
+	cwd: string,
+): Promise<{ hook: LoadedHook | null; error: string | null }> {
+	if (imported.error !== undefined) return { hook: null, error: imported.error };
+	const { resolvedPath } = imported;
 
 	try {
-		// Import the module using native Bun import
-		const module = await withHostGuard(() => import(resolvedPath));
-		const factory = module.default as HookFactory;
+		const factory = imported.module.default as HookFactory;
 
 		if (typeof factory !== "function") {
 			return { hook: null, error: "Hook must export a default function" };
@@ -187,13 +209,20 @@ async function loadHook(hookPath: string, cwd: string): Promise<{ hook: LoadedHo
  * Load all hooks from configuration.
  * @param paths - Array of hook file paths
  * @param cwd - Current working directory for resolving relative paths
+ * @deprecated Legacy hooks runtime with no production caller; JS/TS hooks are bound through `ExtensionRunner` (`discoverExtensionPaths` + `loadExtensions`). Will be removed in the next major.
  */
 export async function loadHooks(paths: string[], cwd: string): Promise<LoadHooksResult> {
 	const hooks: LoadedHook[] = [];
 	const errors: Array<{ path: string; error: string }> = [];
 
-	for (const hookPath of paths) {
-		const { hook, error } = await loadHook(hookPath, cwd);
+	if (paths.length > 0) {
+		await loadPiCodingAgentModule();
+		installLegacyPiSpecifierShim();
+	}
+	// Imports run concurrently; factories then bind in path order.
+	const imported = await Promise.all(paths.map(hookPath => importHookModule(hookPath, cwd)));
+	for (const [index, hookPath] of paths.entries()) {
+		const { hook, error } = await bindHookModule(hookPath, imported[index], cwd);
 
 		if (error) {
 			errors.push({ path: hookPath, error });
@@ -216,6 +245,7 @@ export async function loadHooks(paths: string[], cwd: string): Promise<LoadHooks
  * 3. Other editor/IDE configurations
  *
  * Plus any explicitly configured paths from settings.
+ * @deprecated Legacy hooks runtime with no production caller; JS/TS hooks are bound through `ExtensionRunner` (`discoverExtensionPaths` + `loadExtensions`). Will be removed in the next major.
  */
 export async function discoverAndLoadHooks(configuredPaths: string[], cwd: string): Promise<LoadHooksResult> {
 	const allPaths: string[] = [];

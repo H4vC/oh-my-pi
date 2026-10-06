@@ -3,8 +3,17 @@ import * as path from "node:path";
 import * as url from "node:url";
 import { getMarkdownLinkUrls, TERMINAL } from "@oh-my-pi/pi-tui";
 import { fileUriForTerminal } from "@oh-my-pi/pi-tui/render/hyperlink";
+import { LRUCache } from "@oh-my-pi/pi-utils/lru";
 import { extractUriScheme, InternalUrlRouter, parseInternalUrl, type ResolveContext } from "./index";
 import { expandPath } from "../tools/path-utils";
+
+/**
+ * Absolute paths recently confirmed to be a file or directory. Transcript
+ * rebuilds (resume, `/tree`, focus switches) re-resolve every link in the
+ * session; only positive verdicts are cached, so a link to a file created
+ * after its first lookup still resolves on the next refresh.
+ */
+const existingPaths = new LRUCache<string, true>({ max: 4096, ttl: 30_000 });
 
 /**
  * Resolve Markdown hyperlinks to existing local resources or absolute file URLs.
@@ -14,18 +23,31 @@ export async function resolveMarkdownLinkTargets(
 	texts: readonly string[],
 	context?: ResolveContext,
 ): Promise<ReadonlyMap<string, string>> {
+	const hrefs = new Set<string>();
+	for (const text of texts) {
+		for (const href of getMarkdownLinkUrls(text)) hrefs.add(href);
+	}
+	return resolveMarkdownLinkHrefs(hrefs, context);
+}
+
+/**
+ * Resolve already-extracted Markdown link destinations (see
+ * {@link resolveMarkdownLinkTargets}) without re-lexing the source text.
+ */
+export async function resolveMarkdownLinkHrefs(
+	hrefs: Iterable<string>,
+	context?: ResolveContext,
+): Promise<ReadonlyMap<string, string>> {
 	const targets = new Map<string, string>();
 	const urls = new Set<string>();
 	const router = InternalUrlRouter.instance();
-	for (const text of texts) {
-		for (const href of getMarkdownLinkUrls(text)) {
-			if (!href || /[\x00-\x1f\x7f]/.test(href) || /^(?:#|\?|\/\/)/.test(href)) continue;
-			const scheme = extractUriScheme(href);
-			// Rendering must not fetch remote resources or materialize secrets:
-			// only linkable schemes locate locally and cheaply.
-			if (!scheme || scheme === "file" || (router.spec(scheme)?.linkable && router.canHandle(href))) {
-				urls.add(href);
-			}
+	for (const href of hrefs) {
+		if (!href || /[\x00-\x1f\x7f]/.test(href) || /^(?:#|\?|\/\/)/.test(href)) continue;
+		const scheme = extractUriScheme(href);
+		// Rendering must not fetch remote resources or materialize secrets:
+		// only linkable schemes locate locally and cheaply.
+		if (!scheme || scheme === "file" || (router.spec(scheme)?.linkable && router.canHandle(href))) {
+			urls.add(href);
 		}
 	}
 	await Promise.all(
@@ -46,8 +68,11 @@ export async function resolveMarkdownLinkTargets(
 						extractUriScheme(href) === "file" ? url.fileURLToPath(href) : decodeURIComponent(filePath);
 					sourcePath = path.resolve(context?.cwd ?? process.cwd(), expandPath(decoded));
 				}
-				const stat = await fs.stat(sourcePath);
-				if (!stat.isFile() && !stat.isDirectory()) return;
+				if (!existingPaths.get(sourcePath)) {
+					const stat = await fs.stat(sourcePath);
+					if (!stat.isFile() && !stat.isDirectory()) return;
+					existingPaths.set(sourcePath, true);
+				}
 				targets.set(href, fileUriForTerminal(sourcePath, undefined, TERMINAL.id) + suffix);
 			} catch {
 				// A model-authored link may be incomplete, stale, or outside the resource root.

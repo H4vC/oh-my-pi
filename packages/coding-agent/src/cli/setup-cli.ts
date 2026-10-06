@@ -12,11 +12,12 @@ import { ModelRegistry } from "../config/model-registry";
 import { resolveRoleChain } from "../config/model-resolver";
 import { roleCandidatePool } from "../config/model-roles";
 import { checkPythonKernelAvailability } from "../eval/py/kernel";
-import { discoverAuthStorage } from "../sdk";
+import { discoverAuthStorage } from "../session/auth-discovery";
 import { theme } from "@oh-my-pi/pi-tui/theme";
 import { downloadSttModel, isSttModelCached } from "../stt/downloader";
 import { isSttModelKey, STT_MODEL_OPTIONS } from "../stt/models";
-import { downloadTtsModel, isTtsLocalModelKey, isTtsModelCached, TTS_LOCAL_MODELS } from "../tts";
+import { downloadTtsModel, isTtsModelCached } from "../tts/downloader";
+import { isTtsLocalModelKey, TTS_LOCAL_MODELS } from "../tts/models";
 import { selectSetupModel } from "@oh-my-pi/pi-tui/apps/setup-model-picker";
 
 import { cfgPythonInterpreter } from "../eval/settings";
@@ -38,6 +39,7 @@ const MANAGED_PYTHON_ENV = getPythonEnvDir();
 /**
  * Parse setup subcommand arguments.
  * Returns undefined if not a setup command.
+ * @deprecated Pre-Command-class argv parser; use the `commands/setup.ts` Command class (static flags/args). Will be removed in the next major.
  */
 export function parseSetupArgs(args: string[]): SetupCommandArgs | undefined {
 	if (args.length === 0 || args[0] !== "setup") {
@@ -308,6 +310,7 @@ async function handleSpeechSetup(flags: { json?: boolean; check?: boolean }): Pr
 
 /**
  * Print setup command help.
+ * @deprecated Pre-Command-class help printer; use `cli/command-help.ts` with the `commands/setup.ts` Command class. Will be removed in the next major.
  */
 export function printSetupHelp(): void {
 	console.log(`${chalk.bold(`${APP_NAME} setup`)} - Run onboarding or install dependencies for optional features

@@ -113,6 +113,7 @@ function materializeTuiBuiltinSlashCommand(
 /**
  * Materialized builtin slash commands with completion functions derived from
  * declarative subcommand/hint definitions.
+ * @deprecated Test-only eager materialization; use buildTuiBuiltinSlashCommands(runtime) or BUILTIN_SLASH_COMMAND_DEFS. Will be removed in the next major.
  */
 export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<TuiBuiltinSlashCommand> = BUILTIN_SLASH_COMMAND_DEFS.map(cmd =>
 	materializeTuiBuiltinSlashCommand(cmd),

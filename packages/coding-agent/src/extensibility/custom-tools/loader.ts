@@ -15,10 +15,17 @@ import type { ExecOptions } from "../../exec/exec";
 import { execCommand } from "../../exec/exec";
 import type { HookUIContext } from "../../extensibility/hooks/types";
 import { getAllPluginToolPaths } from "../../extensibility/plugins/loader";
-// Runtime self-reference: dereference this namespace only inside loader functions to keep the index.ts cycle safe.
-import * as PiCodingAgent from "../../index";
+import type * as PiCodingAgent from "../../index";
 import * as typebox from "../legacy-typebox";
-import { createNoOpUIContext, resolvePath, withHostGuard } from "../utils";
+import { installLegacyPiSpecifierShim } from "../plugins/legacy-pi-compat";
+import {
+	createNoOpUIContext,
+	getPiCodingAgentModule,
+	isModuleFile,
+	loadPiCodingAgentModule,
+	resolvePath,
+	withHostGuard,
+} from "../utils";
 import type { CustomToolAPI, CustomToolFactory, LoadedCustomTool, ToolLoadError } from "./types";
 
 interface LoadToolResult {
@@ -49,34 +56,48 @@ function invalidToolError(path: string, index: number, source: ToolLoadError["so
 	};
 }
 
+type ToolSource = { provider: string; providerName: string; level: "user" | "project" };
+
+type ImportedToolModule =
+	| { toolPath: string; resolvedPath: string; source?: ToolSource; module: { default?: unknown }; error?: undefined }
+	| { toolPath: string; resolvedPath: string; source?: ToolSource; module?: undefined; error: string };
+
 /**
- * Load a single tool module using native Bun import.
+ * Import a single tool module using native Bun import.
  */
-async function loadTool(
-	toolPath: string,
-	cwd: string,
-	sharedApi: CustomToolAPI,
-	source?: { provider: string; providerName: string; level: "user" | "project" },
-): Promise<LoadToolResult> {
+async function importToolModule(toolPath: string, cwd: string, source?: ToolSource): Promise<ImportedToolModule> {
 	const resolvedPath = resolvePath(toolPath, cwd);
 
 	// Skip declarative tool files (.md, .json) - these are metadata only, not executable modules
 	if (resolvedPath.endsWith(".md") || resolvedPath.endsWith(".json")) {
 		return {
-			tools: [],
-			errors: [
-				{
-					path: toolPath,
-					error: "Declarative tool files (.md, .json) cannot be loaded as executable modules",
-					source,
-				},
-			],
+			toolPath,
+			resolvedPath,
+			source,
+			error: "Declarative tool files (.md, .json) cannot be loaded as executable modules",
 		};
 	}
 
 	try {
-		const module = await withHostGuard(() => import(resolvedPath));
-		const factory = (module.default ?? module) as CustomToolFactory;
+		const module: { default?: unknown } = await withHostGuard(() => import(resolvedPath));
+		return { toolPath, resolvedPath, source, module };
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		return { toolPath, resolvedPath, source, error: `Failed to load tool: ${message}` };
+	}
+}
+
+/**
+ * Run an imported tool module's factory against the shared API.
+ */
+async function bindToolModule(imported: ImportedToolModule, sharedApi: CustomToolAPI): Promise<LoadToolResult> {
+	const { toolPath, resolvedPath, source } = imported;
+	if (imported.error !== undefined) {
+		return { tools: [], errors: [{ path: toolPath, error: imported.error, source }] };
+	}
+
+	try {
+		const factory = (imported.module.default ?? imported.module) as CustomToolFactory;
 
 		if (typeof factory !== "function") {
 			return { tools: [], errors: [{ path: toolPath, error: "Tool must export a default function", source }] };
@@ -113,7 +134,7 @@ async function loadTool(
  * `CustomToolAPI` without redoing the filesystem scan. */
 export interface ToolPathWithSource {
 	path: string;
-	source?: { provider: string; providerName: string; level: "user" | "project" };
+	source?: ToolSource;
 }
 
 /**
@@ -129,8 +150,12 @@ export class CustomToolLoader {
 	#sharedApi: CustomToolAPI;
 	#seenNames: Set<string>;
 
+	/**
+	 * @param pi Package barrel exposed to tool factories as `api.pi`. Pass `undefined`
+	 * to load it lazily before the first factory runs.
+	 */
 	constructor(
-		pi: typeof PiCodingAgent,
+		pi: typeof PiCodingAgent | undefined,
 		cwd: string,
 		builtInToolNames: string[],
 		pushPendingAction?: (action: {
@@ -150,7 +175,9 @@ export class CustomToolLoader {
 			typebox,
 			arktype: type,
 			zod,
-			pi,
+			get pi() {
+				return pi ?? getPiCodingAgentModule();
+			},
 			pushPendingAction: action => {
 				if (!pushPendingAction) {
 					throw new Error("Pending action store unavailable for custom tools in this runtime.");
@@ -167,8 +194,17 @@ export class CustomToolLoader {
 	}
 
 	async load(pathsWithSources: ToolPathWithSource[]): Promise<void> {
-		for (const { path: toolPath, source } of pathsWithSources) {
-			const { tools: loadedTools, errors } = await loadTool(toolPath, this.#sharedApi.cwd, this.#sharedApi, source);
+		if (pathsWithSources.length === 0) return;
+		await loadPiCodingAgentModule();
+		installLegacyPiSpecifierShim();
+		// Module import dominates cold-start cost, so imports run concurrently;
+		// factories and name-conflict checks then run in path order.
+		const imported = await Promise.all(
+			pathsWithSources.map(({ path: toolPath, source }) => importToolModule(toolPath, this.#sharedApi.cwd, source)),
+		);
+		for (const entry of imported) {
+			const { toolPath, source } = entry;
+			const { tools: loadedTools, errors } = await bindToolModule(entry, this.#sharedApi);
 			this.errors.push(...errors);
 
 			for (const loadedTool of loadedTools) {
@@ -211,7 +247,7 @@ export async function loadCustomTools(
 		reject?(reason: string): Promise<AgentToolResult<unknown> | undefined>;
 	}) => void,
 ) {
-	const loader = new CustomToolLoader(PiCodingAgent, cwd, builtInToolNames, pushPendingAction);
+	const loader = new CustomToolLoader(undefined, cwd, builtInToolNames, pushPendingAction);
 	await loader.load(pathsWithSources);
 	return {
 		tools: loader.tools,
@@ -245,7 +281,7 @@ export async function discoverCustomToolPaths(
 	const seen = new Set<string>();
 
 	// Helper to add paths without duplicates
-	const addPath = (p: string, source?: { provider: string; providerName: string; level: "user" | "project" }) => {
+	const addPath = (p: string, source?: ToolSource) => {
 		const resolved = path.resolve(p);
 		if (!seen.has(resolved)) {
 			seen.add(resolved);
@@ -258,7 +294,7 @@ export async function discoverCustomToolPaths(
 	const discoveredTools = await loadCapability<CustomTool>(toolCapability.id, {
 		cwd,
 		agentDir,
-		filter: tool => /\.(ts|js|mjs|cjs)$/.test(tool.path) && !tool.path.endsWith(".d.ts"),
+		filter: tool => isModuleFile(tool.path),
 	});
 	for (const tool of discoveredTools.items) {
 		addPath(tool.path, {

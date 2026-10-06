@@ -7,6 +7,7 @@ import * as vcs from "@oh-my-pi/pi-natives/vcs";
 import { formatBytes, isEnoent, VERSION } from "@oh-my-pi/pi-utils";
 import chalk from "@oh-my-pi/pi-utils/chalk";
 import { CliUsageError } from "@oh-my-pi/pi-utils/cli";
+import { decodeJwtPayload } from "@oh-my-pi/pi-utils/jwt";
 import {
 	SKILL_LIMITS,
 	SKILL_SCOPE_RE,
@@ -151,18 +152,7 @@ async function resolvePublishScope(client: SkillshareClient, flagScope: string |
 	}
 	const token = await client.authToken();
 	if (!token) throw new Error(StencilCredential.missingMessage);
-	const parts = token.split(".");
-	let username: unknown;
-	if (parts.length === 3) {
-		try {
-			const payload: unknown = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
-			if (payload && typeof payload === "object" && "preferred_username" in payload) {
-				username = payload.preferred_username;
-			}
-		} catch {
-			username = undefined;
-		}
-	}
+	const username: unknown = decodeJwtPayload(token)?.preferred_username;
 	if (typeof username !== "string" || !SKILL_SCOPE_RE.test(username)) {
 		throw new CliUsageError("cannot determine your Stencil username from the credential; pass --scope");
 	}

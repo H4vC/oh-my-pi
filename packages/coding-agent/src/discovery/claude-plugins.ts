@@ -27,6 +27,7 @@ import {
 	scanSkillsFromDir,
 } from "./helpers";
 
+import { isLexicallyWithin } from "./contained-path";
 import { resolvePluginStdioPaths, substitutePluginRoot } from "./substitute-plugin-root";
 
 const PROVIDER_ID = "claude-plugins";
@@ -132,11 +133,6 @@ async function readMarketplaceRootManifest(root: ClaudePluginRoot): Promise<Clau
 	return null;
 }
 
-function isWithinPluginRoot(rootPath: string, targetPath: string): boolean {
-	const relative = path.relative(rootPath, targetPath);
-	return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-}
-
 /**
  * Resolve manifest-declared component paths within a plugin root.
  *
@@ -194,7 +190,7 @@ async function resolvePluginDir(root: ClaudePluginRoot, options: ResolvePluginDi
 	}
 	for (const { entryPath, key } of configured) {
 		const resolved = path.resolve(root.path, entryPath);
-		if (!isWithinPluginRoot(root.path, resolved)) {
+		if (!isLexicallyWithin(root.path, resolved)) {
 			warnings.push(
 				`[claude-plugins] Ignoring ${String(key)} path outside plugin root for ${root.id}: ${entryPath}`,
 			);
@@ -502,7 +498,7 @@ async function resolvePluginMCPConfig(root: ClaudePluginRoot): Promise<ResolvedM
 			const configured = pointer.trim();
 			if (configured.length === 0) continue;
 			const resolved = path.resolve(root.path, configured);
-			if (!isWithinPluginRoot(root.path, resolved)) {
+			if (!isLexicallyWithin(root.path, resolved)) {
 				return {
 					path: null,
 					inlineServers: null,

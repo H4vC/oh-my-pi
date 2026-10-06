@@ -6,7 +6,7 @@ import { ExtensionRuntime, loadExtensionFromFactory } from "../src/extensibility
 import { ExtensionRunner } from "../src/extensibility/extensions/runner";
 import { RpcSubagentRegistry } from "../src/modes/rpc/rpc-subagents";
 import { AgentSession } from "../src/session/agent-session";
-import { AuthStorage } from "../src/session/auth-storage";
+import { AuthStorage } from "@oh-my-pi/pi-ai";
 import { SessionManager } from "../src/session/session-manager";
 import { TASK_SUBAGENT_EVENT_CHANNEL } from "../src/task/types";
 import { EventBus } from "../src/utils/event-bus";

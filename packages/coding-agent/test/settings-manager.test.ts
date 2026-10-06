@@ -2164,6 +2164,16 @@ describe("Settings", () => {
 			expect((await readSettings()).inspect_image).toBeUndefined();
 		});
 
+		it("moves a legacy flat custom theme into its luminance slot", async () => {
+			await writeSettings({ theme: "dark-nord" });
+
+			const settings = await Settings.init({ cwd: projectDir, agentDir });
+
+			cfgDisplayShowTokenUsage.set(settings, true);
+			await settings.flush();
+			expect((await readSettings()).theme).toEqual({ dark: "dark-nord" });
+		});
+
 		it("migrates nested task isolation mode none to disabled", async () => {
 			await writeSettings({ task: { isolation: { mode: "none" } } });
 

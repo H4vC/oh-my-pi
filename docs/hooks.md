@@ -21,6 +21,9 @@ use `ctx.hasPendingMessages()` in extensions rather than the legacy
 integrations. The runner/wrapper behavior below is specifically the legacy
 library path unless stated otherwise.
 
+> **Deprecated:** `HookRunner`, `HookToolWrapper`, `loadHooks`, and `discoverAndLoadHooks` are deprecated, superseded by `ExtensionRunner`,
+> and will be removed in the next major.
+
 ## Key files
 
 - `packages/coding-agent/src/extensibility/hooks/types.ts` — hook context, event types, and result contracts

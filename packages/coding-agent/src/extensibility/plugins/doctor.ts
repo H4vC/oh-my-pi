@@ -2,6 +2,7 @@ import { $which } from "@oh-my-pi/pi-utils";
 import { theme } from "@oh-my-pi/pi-tui/theme";
 import type { DoctorCheck } from "./types";
 
+/** @deprecated Duplicates plugin manager diagnostics; use PluginManager.doctor. Will be removed in the next major. */
 export async function runDoctorChecks(): Promise<DoctorCheck[]> {
 	const checks: DoctorCheck[] = [];
 
@@ -40,6 +41,7 @@ export async function runDoctorChecks(): Promise<DoctorCheck[]> {
 	return checks;
 }
 
+/** @deprecated Duplicates plugin manager diagnostics; use PluginManager.doctor. Will be removed in the next major. */
 export function formatDoctorResults(checks: DoctorCheck[]): string {
 	// Note: This function returns plain text without theming as it may be called outside TUI context.
 	// For TUI usage, the plugin CLI handler applies theme colors.

@@ -492,6 +492,7 @@ export interface BinaryReplacementOptions {
 /**
  * Parse update subcommand arguments.
  * Returns undefined if not an update command.
+ * @deprecated Pre-Command-class argv parser; use the `commands/update.ts` Command class (static flags/args). Will be removed in the next major.
  */
 export function parseUpdateArgs(
 	args: string[],
@@ -2334,6 +2335,7 @@ export async function runUpdateCommand(opts: {
 
 /**
  * Print update command help.
+ * @deprecated Pre-Command-class help printer; use `cli/command-help.ts` with the `commands/update.ts` Command class. Will be removed in the next major.
  */
 export function printUpdateHelp(): void {
 	console.log(`${chalk.bold(`${APP_NAME} update`)} - Check for and install updates

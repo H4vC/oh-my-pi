@@ -262,7 +262,7 @@ async function runLogout(flags: AuthBrokerCommandArgs["flags"]): Promise<void> {
 	const store = await SqliteAuthCredentialStore.open(getAgentDbPath());
 	try {
 		if (!providerArg) {
-			const stored = store.listProviders();
+			const stored = [...new Set(store.listAuthCredentials().map(entry => entry.provider))];
 			if (stored.length === 0) {
 				process.stdout.write("No credentials stored.\n");
 				return;

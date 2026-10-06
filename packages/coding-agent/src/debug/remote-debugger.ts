@@ -144,6 +144,7 @@ async function launch({ port, start = startRemoteDebugger }: StartRemoteDebugger
  * Test-only: forget the tracked endpoint so a fresh start can be exercised.
  * Does not (and cannot) stop a real JSC inspector — callers in tests own the
  * disposable listener they injected.
+ * @deprecated Unused test hook; no replacement. Will be removed in the next major.
  */
 export function __resetRemoteDebuggerForTests(): void {
 	active = null;

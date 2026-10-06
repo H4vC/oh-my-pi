@@ -24,6 +24,7 @@ const RECENCY_OPTIONS: SearchCommandArgs["recency"][] = ["day", "week", "month",
 /**
  * Parse web search subcommand arguments.
  * Returns undefined if not a web search command.
+ * @deprecated Pre-Command-class argv parser; use the `commands/web-search.ts` Command class (static flags/args). Will be removed in the next major.
  */
 export function parseSearchArgs(args: string[]): SearchCommandArgs | undefined {
 	if (args.length === 0 || (args[0] !== "q" && args[0] !== "web-search")) {
@@ -103,6 +104,7 @@ export async function runSearchCommand(cmd: SearchCommandArgs): Promise<void> {
 	}
 }
 
+/** @deprecated Pre-Command-class help printer; use `cli/command-help.ts` with the `commands/web-search.ts` Command class. Will be removed in the next major. */
 export function printSearchHelp(): void {
 	process.stdout.write(`${chalk.bold(`${APP_NAME} q`)} - Test web search models
 

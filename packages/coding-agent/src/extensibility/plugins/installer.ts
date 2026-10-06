@@ -1,3 +1,6 @@
+/**
+ * @deprecated Module duplicates PluginManager install/uninstall/list/link (`extensibility/plugins/manager.ts`); use PluginManager. Will be removed in the next major.
+ */
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { getAgentDir, getProjectDir } from "@oh-my-pi/pi-utils";
@@ -30,6 +33,7 @@ async function ensurePluginsDir(): Promise<void> {
 	await fs.mkdir(path.join(PLUGINS_DIR, "node_modules"), { recursive: true });
 }
 
+/** @deprecated Duplicates PluginManager install; use PluginManager. Will be removed in the next major. */
 export async function installPlugin(packageName: string): Promise<InstalledPlugin> {
 	// Validate package name to prevent command injection
 	validatePackageName(packageName);
@@ -86,6 +90,7 @@ export async function installPlugin(packageName: string): Promise<InstalledPlugi
 	};
 }
 
+/** @deprecated Duplicates PluginManager uninstall; use PluginManager. Will be removed in the next major. */
 export async function uninstallPlugin(name: string): Promise<void> {
 	// Validate package name
 	validatePackageName(name);
@@ -110,6 +115,7 @@ export async function uninstallPlugin(name: string): Promise<void> {
 	}
 }
 
+/** @deprecated Duplicates PluginManager list; use PluginManager. Will be removed in the next major. */
 export async function listPlugins(): Promise<InstalledPlugin[]> {
 	const pkgJsonPath = Bun.file(path.join(PLUGINS_DIR, "package.json"));
 	if (!(await pkgJsonPath.exists())) {
@@ -139,6 +145,7 @@ export async function listPlugins(): Promise<InstalledPlugin[]> {
 	return plugins;
 }
 
+/** @deprecated Duplicates PluginManager link; use PluginManager. Will be removed in the next major. */
 export async function linkPlugin(localPath: string): Promise<void> {
 	const cwd = getProjectDir();
 	const absolutePath = path.resolve(cwd, localPath);

@@ -4,13 +4,15 @@
  * Starts a local CONNECT proxy, MITMs TLS using a local self-signed debug
  * certificate, drives Claude Code through a headless PTY/xterm, and returns the
  * first completed /v1/messages request/response exchange.
+ *
+ * @deprecated Module is unregistered internal CLI plumbing (no command registration, no importers). Will be removed in the next major.
  */
 import * as net from "node:net";
 import * as path from "node:path";
 import * as tls from "node:tls";
 import * as zlib from "node:zlib";
 import { PtySession } from "@oh-my-pi/pi-natives";
-import xterm from "@oh-my-pi/pi-utils/vterm";
+import { Terminal } from "@oh-my-pi/pi-utils/vterm";
 
 const DEFAULT_PROXY_HOST = "127.0.0.1";
 const DEFAULT_PROXY_PORT = 8080;
@@ -27,6 +29,7 @@ const TEXT_DECODER = new TextDecoder();
 // Debug-only local MITM certificate. Claude is launched with
 // NODE_TLS_REJECT_UNAUTHORIZED=0, so the certificate has no trust value; it only
 // lets Node's TLS stack complete the CONNECT tunnel handshake.
+/** @deprecated Unregistered internal CLI plumbing. Will be removed in the next major. */
 export const CLAUDE_TRACE_DEBUG_CERT = `-----BEGIN CERTIFICATE-----
 MIIDFzCCAf+gAwIBAgIUAe9omAqLbydZc5ZYZGhwbbpMSF0wDQYJKoZIhvcNAQEL
 BQAwGzEZMBcGA1UEAwwQb21wLWNsYXVkZS10cmFjZTAeFw0yNjA2MDIwODA2MjFa
@@ -47,6 +50,7 @@ AQQJETQjPkKeTDX4jdSAlOeKwfyjfdfgeQuMkzX8xafisJa66MLPzOVbIuGbvbWD
 QVCd76iYPcfNK+JZUhmAUvTHSuwgJMZ6+NgI
 -----END CERTIFICATE-----`;
 
+/** @deprecated Unregistered internal CLI plumbing. Will be removed in the next major. */
 export const CLAUDE_TRACE_DEBUG_KEY = `-----BEGIN PRIVATE KEY-----
 MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCmpGe5T8B0oA2L
 82Rn5JJdXOBSZX0DyBjiIK+Tqe8T3oAr41XDLnweqtrMDSBDYbVqAoKjNbaTUSYY
@@ -76,11 +80,13 @@ FbkpRZC0Kfi9PLzDV4IawoIINYthOJxIKJg+yrmrUWCggXxwdzYIYKLRIskMXoYs
 mNMXfUstElEcKO7+DKiPi6U=
 -----END PRIVATE KEY-----`;
 
+/** @deprecated Unregistered internal CLI plumbing. Will be removed in the next major. */
 export interface HeaderEntry {
 	name: string;
 	value: string;
 }
 
+/** @deprecated Unregistered internal CLI plumbing. Will be removed in the next major. */
 export interface CapturedRequest {
 	method: string;
 	path: string;
@@ -89,6 +95,7 @@ export interface CapturedRequest {
 	body: string;
 }
 
+/** @deprecated Unregistered internal CLI plumbing. Will be removed in the next major. */
 export interface CapturedResponse {
 	statusCode: number | undefined;
 	statusMessage: string;
@@ -97,12 +104,14 @@ export interface CapturedResponse {
 	body: string;
 }
 
+/** @deprecated Unregistered internal CLI plumbing. Will be removed in the next major. */
 export interface CapturedMessagesExchange {
 	target: string;
 	request: CapturedRequest;
 	response: CapturedResponse;
 }
 
+/** @deprecated Unregistered internal CLI plumbing. Will be removed in the next major. */
 export interface ClaudeMessagesProxyOptions {
 	host?: string;
 	port?: number;
@@ -145,6 +154,7 @@ interface CaptureWaiter {
 	timer: NodeJS.Timeout;
 }
 
+/** @deprecated Unregistered internal CLI plumbing. Will be removed in the next major. */
 export interface ClaudeTraceCommandArgs {
 	command?: string;
 	message?: string;
@@ -156,8 +166,6 @@ export interface ClaudeTraceCommandArgs {
 	json?: boolean;
 	upstreamTlsRejectUnauthorized?: boolean;
 }
-
-const XtermTerminal = xterm.Terminal;
 
 function headerValue(headers: readonly HeaderEntry[], name: string): string | undefined {
 	for (const header of headers) {
@@ -428,6 +436,7 @@ function formatHeaders(headers: readonly HeaderEntry[]): string {
 	return headers.map(header => `${header.name}: ${header.value}`).join("\n");
 }
 
+/** @deprecated Unregistered internal CLI plumbing. Will be removed in the next major. */
 export function formatCapturedMessagesExchange(exchange: CapturedMessagesExchange): string {
 	const requestHeaders = formatHeaders(exchange.request.headers);
 	const responseHeaders = formatHeaders(exchange.response.headers);
@@ -457,6 +466,7 @@ export function formatCapturedMessagesExchange(exchange: CapturedMessagesExchang
 	].join("\n");
 }
 
+/** @deprecated Unregistered internal CLI plumbing. Will be removed in the next major. */
 export class ClaudeMessagesProxy {
 	readonly #host: string;
 	readonly #requestedPort: number;
@@ -709,6 +719,7 @@ async function shutdownPty(session: PtySession, runPromise: Promise<unknown>): P
 	} catch {}
 }
 
+/** @deprecated Unregistered internal CLI plumbing. Will be removed in the next major. */
 export async function runClaudeMessagesCapture(args: ClaudeTraceCommandArgs = {}): Promise<CapturedMessagesExchange> {
 	const proxy = new ClaudeMessagesProxy({
 		host: args.host ?? DEFAULT_PROXY_HOST,
@@ -717,11 +728,9 @@ export async function runClaudeMessagesCapture(args: ClaudeTraceCommandArgs = {}
 	});
 	await proxy.start();
 	const session = new PtySession();
-	const terminal = new XtermTerminal({
+	const terminal = new Terminal({
 		cols: DEFAULT_COLS,
 		rows: DEFAULT_ROWS,
-		disableStdin: true,
-		allowProposedApi: true,
 		scrollback: 10_000,
 	});
 	terminal.onData(data => {
@@ -799,6 +808,7 @@ export async function runClaudeMessagesCapture(args: ClaudeTraceCommandArgs = {}
 	}
 }
 
+/** @deprecated Unregistered internal CLI plumbing. Will be removed in the next major. */
 export async function runClaudeTraceCommand(args: ClaudeTraceCommandArgs = {}): Promise<void> {
 	process.stderr.write(
 		`Starting Claude trace proxy on ${args.host ?? DEFAULT_PROXY_HOST}:${args.port ?? DEFAULT_PROXY_PORT}\n`,

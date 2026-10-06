@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { FileLock, Process, type PtyRunResult, PtySession } from "@oh-my-pi/pi-natives";
 import { isEnoent, isRecord, logger, postmortem, procmgr, sanitizeText, setProcessName } from "@oh-my-pi/pi-utils";
+import { quotePosixPath } from "@oh-my-pi/pi-utils/shell-quote";
 import { TerminalQueryResponder } from "@oh-my-pi/pi-utils/vterm";
 import { hostHasInheritableConsole } from "../eval/py/spawn-options";
 import {
@@ -121,10 +122,6 @@ interface DaemonLogRead {
 	text: string;
 	terminalOutput: string;
 	cursor: number;
-}
-
-function quoteShellArg(value: string): string {
-	return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 function terminalState(state: DaemonSnapshot["state"]): boolean {
@@ -870,7 +867,7 @@ class DaemonBroker {
 			);
 		} else {
 			const argv = [record.spec.application, ...record.spec.args];
-			const command = `exec ${argv.map(quoteShellArg).join(" ")}`;
+			const command = `exec ${argv.map(quotePosixPath).join(" ")}`;
 			const shell = procmgr.getShellConfig().shell;
 			run = session.start({ command, shell, ...options }, onChunk, onStart);
 		}
