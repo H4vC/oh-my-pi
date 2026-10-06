@@ -17,7 +17,7 @@
  * stick or re-rank.
  */
 
-import type { AuthStorage } from "./auth-storage";
+import type { AuthStorage } from "@oh-my-pi/pi-ai";
 import type { SessionManager } from "./session-manager";
 
 /** Account fields shared by `OAuthAccountIdentity` and `OAuthAccountSummary`. */

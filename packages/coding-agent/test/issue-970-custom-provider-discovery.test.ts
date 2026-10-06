@@ -11,7 +11,7 @@ import { ModelRegistry as ModelRegistryImpl } from "@oh-my-pi/pi-coding-agent/co
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { ModelHubComponent } from "@oh-my-pi/pi-tui/overlays/model-hub";
 import { getThemeByName, setThemeInstance } from "@oh-my-pi/pi-tui/theme";
-import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
+import { AuthStorage } from "@oh-my-pi/pi-ai";
 import type { TUI } from "@oh-my-pi/pi-tui";
 import { removeSyncWithRetries, Snowflake } from "@oh-my-pi/pi-utils";
 

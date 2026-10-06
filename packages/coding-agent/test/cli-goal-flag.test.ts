@@ -5,7 +5,7 @@ import { parseArgs, validateGoalLaunch, validateGoalStartup } from "@oh-my-pi/pi
 import { CliUsageError } from "@oh-my-pi/pi-coding-agent/cli/usage-error";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { createSessionManager, runRootCommand } from "@oh-my-pi/pi-coding-agent/main";
-import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
+import { AuthStorage } from "@oh-my-pi/pi-ai";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { setInteractiveHost, TempDir } from "@oh-my-pi/pi-utils";
 

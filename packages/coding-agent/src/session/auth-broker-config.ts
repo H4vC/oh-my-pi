@@ -38,7 +38,7 @@ import { getAgentDir, logger } from "@oh-my-pi/pi-utils";
 import { combine, type ScopeLike } from "../config/registry";
 import { resolveConfigValue } from "../config/resolve-config-value";
 import { Settings } from "../config/settings";
-import type { AuthStorage } from "./auth-storage";
+import type { AuthStorage } from "@oh-my-pi/pi-ai";
 
 import { cfgAuthAccountPolicies, cfgAuthBrokerToken, cfgAuthBrokerUrl } from "../config/model-settings";
 import { cfgRetryUsageReservePct } from "./settings";

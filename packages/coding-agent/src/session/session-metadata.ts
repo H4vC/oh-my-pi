@@ -1,6 +1,6 @@
 import { deriveClaudeDeviceId } from "@oh-my-pi/pi-ai";
 import { getInstallId } from "@oh-my-pi/pi-utils";
-import type { AuthStorage } from "./auth-storage";
+import type { AuthStorage } from "@oh-my-pi/pi-ai";
 
 /**
  * Build the per-request `metadata` payload for the Anthropic provider, shaped

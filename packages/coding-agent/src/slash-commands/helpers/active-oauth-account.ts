@@ -1,5 +1,5 @@
 import type { UsageLimit, UsageReport } from "@oh-my-pi/pi-ai";
-import type { OAuthAccountIdentity } from "../../session/auth-storage";
+import type { OAuthAccountIdentity } from "@oh-my-pi/pi-ai";
 import { sanitizeText } from "@oh-my-pi/pi-utils";
 
 /** Codex's orgName is the login-time plan, not a workspace name. */

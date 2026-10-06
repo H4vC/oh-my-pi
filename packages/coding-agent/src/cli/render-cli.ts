@@ -25,7 +25,7 @@ import { Composer } from "@oh-my-pi/pi-tui/prompt/composer";
 import { InteractiveMode } from "../modes/interactive-mode";
 import { initTheme } from "@oh-my-pi/pi-tui/theme";
 import { AgentSession } from "../session/agent-session";
-import { AuthStorage, SqliteAuthCredentialStore } from "../session/auth-storage";
+import { AuthStorage, SqliteAuthCredentialStore } from "@oh-my-pi/pi-ai";
 import { findMostRecentSession, resolveResumableSession } from "../session/session-listing";
 import { SessionManager } from "../session/session-manager";
 

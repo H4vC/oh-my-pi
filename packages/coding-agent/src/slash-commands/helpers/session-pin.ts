@@ -1,4 +1,4 @@
-import type { OAuthAccountSummary } from "../../session/auth-storage";
+import type { OAuthAccountSummary } from "@oh-my-pi/pi-ai";
 import { formatActiveAccountLabel } from "./active-oauth-account";
 
 import type { SessionPinAccount } from "@oh-my-pi/pi-tui/overlays/session-account-selector";

@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { clearCustomApis, type FetchImpl } from "@oh-my-pi/pi-ai";
 import { unregisterOAuthProviders } from "@oh-my-pi/pi-ai/oauth";
 import { ModelRegistry, type ProviderConfigInput } from "@oh-my-pi/pi-coding-agent/config/model-registry";
-import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
+import { AuthStorage } from "@oh-my-pi/pi-ai";
 import { removeSyncWithRetries, Snowflake } from "@oh-my-pi/pi-utils";
 
 // Extension providers (e.g. nexos-pi-provider) register `apiKey: "<ENV_NAME>"`

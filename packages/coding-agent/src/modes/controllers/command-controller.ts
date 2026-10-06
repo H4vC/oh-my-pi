@@ -55,7 +55,7 @@ import { buildHotkeysMarkdown, HotkeysSheetComponent } from "@oh-my-pi/pi-tui/ho
 import { isNativeRendering } from "@oh-my-pi/pi-tui/native/state";
 import { buildToolsMarkdown } from "@oh-my-pi/pi-tui/prompt/tools-markdown";
 import type { AsyncJobSnapshotItem } from "../../session/agent-session";
-import type { AuthStorage, OAuthAccountIdentity } from "../../session/auth-storage";
+import type { AuthStorage, OAuthAccountIdentity } from "@oh-my-pi/pi-ai";
 import type { CompactMode } from "../../session/compact-modes";
 import type { NewSessionOptions } from "../../session/session-entries";
 import {

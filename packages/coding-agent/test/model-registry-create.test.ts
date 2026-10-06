@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { ConfigFile } from "@oh-my-pi/pi-coding-agent/config/config-file";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { ModelsConfigSchema } from "@oh-my-pi/pi-coding-agent/config/models-config-schema";
-import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
+import { AuthStorage } from "@oh-my-pi/pi-ai";
 import { TempDir } from "@oh-my-pi/pi-utils";
 
 describe("ModelRegistry.create() factory (F6)", () => {

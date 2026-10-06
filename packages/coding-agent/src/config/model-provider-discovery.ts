@@ -5,7 +5,7 @@ import {
 	type OpenAICodexAccount,
 	PROVIDER_DESCRIPTORS,
 } from "@oh-my-pi/pi-catalog/provider-models";
-import type { AuthStorage, OAuthCredential } from "../session/auth-storage";
+import type { AuthStorage, OAuthCredential } from "@oh-my-pi/pi-ai";
 
 /**
  * Built-in providers whose discovery requires provider-specific credentials

@@ -10,7 +10,7 @@ import {
 	pullCodexSecurityCloudResults,
 	SecurityStore,
 } from "../../src/security";
-import type { AuthStorage } from "../../src/session/auth-storage";
+import type { AuthStorage } from "@oh-my-pi/pi-ai";
 
 const ACCOUNT = { provider: "openai-codex", credentialId: 42, accountId: "workspace-a" } as const;
 

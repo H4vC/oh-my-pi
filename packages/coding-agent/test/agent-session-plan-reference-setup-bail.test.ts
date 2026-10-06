@@ -30,7 +30,7 @@ import { ModelRegistry } from "../src/config/model-registry";
 import { Settings } from "../src/config/settings";
 import { resolveLocalUrlToPath } from "../src/internal-urls";
 import { AgentSession } from "../src/session/agent-session";
-import { AuthStorage } from "../src/session/auth-storage";
+import { AuthStorage } from "@oh-my-pi/pi-ai";
 import { convertToLlm, USER_INTERRUPT_LABEL } from "../src/session/messages";
 import { SessionManager } from "../src/session/session-manager";
 import * as fileMentions from "../src/utils/file-mentions";

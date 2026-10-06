@@ -2,7 +2,7 @@ import type { AgentOptions } from "@oh-my-pi/pi-agent-core";
 import type { OAuthAccessResolution } from "@oh-my-pi/pi-ai";
 import type { ApiKeyResolver } from "@oh-my-pi/pi-ai/auth-retry";
 import { getProviderDefinition } from "@oh-my-pi/pi-ai/registry";
-import type { AuthStorage } from "../session/auth-storage";
+import type { AuthStorage } from "@oh-my-pi/pi-ai";
 import type { SecurityAccountRef, SecurityAuthRef } from "./contracts";
 
 /** Inputs required to resolve one immutable OAuth account reference. */

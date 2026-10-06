@@ -1,6 +1,6 @@
 import { getOAuthCredentialProvider } from "@oh-my-pi/pi-ai/oauth";
 import type { ModelRegistry } from "../../config/model-registry";
-import type { AuthStorage, OAuthAccountIdentity, StoredAuthCredential } from "../../session/auth-storage";
+import type { AuthStorage, OAuthAccountIdentity, StoredAuthCredential } from "@oh-my-pi/pi-ai";
 
 import type { LogoutAccount } from "@oh-my-pi/pi-tui/overlays/logout-account-selector";
 

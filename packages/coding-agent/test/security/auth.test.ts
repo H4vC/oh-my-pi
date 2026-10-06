@@ -2,7 +2,7 @@ import { describe, expect, test, vi } from "bun:test";
 import type { ApiKeyResolver } from "@oh-my-pi/pi-ai/auth-retry";
 import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { createExactSecurityOAuthResolver, createSecurityAuthResolver, selectSecurityAuth } from "../../src/security";
-import type { AuthStorage } from "../../src/session/auth-storage";
+import type { AuthStorage } from "@oh-my-pi/pi-ai";
 
 function model() {
 	const value = getBundledModel("openai-codex", "gpt-5.6-sol");
