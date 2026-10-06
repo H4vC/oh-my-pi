@@ -5,6 +5,7 @@
 import * as path from "node:path";
 import { logger } from "@oh-my-pi/pi-utils";
 import type { Diagnostic, DiagnosticSeverity, LinterClient, ServerConfig } from "../../lsp/types";
+import { runLinterCli } from "./linter-cli";
 
 // =============================================================================
 // Biome JSON Output Types
@@ -54,37 +55,6 @@ function parseSeverity(severity: string): DiagnosticSeverity {
 	}
 }
 
-/**
- * Run a Biome CLI command.
- */
-async function runBiome(
-	args: string[],
-	cwd: string,
-	resolvedCommand?: string,
-	signal?: AbortSignal,
-): Promise<{ stdout: string; stderr: string; success: boolean }> {
-	const command = resolvedCommand ?? "biome";
-
-	try {
-		const proc = Bun.spawn([command, ...args], {
-			cwd,
-			stdout: "pipe",
-			stderr: "pipe",
-			windowsHide: true,
-			signal,
-		});
-
-		const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
-		const exitCode = await proc.exited;
-		signal?.throwIfAborted();
-
-		return { stdout, stderr, success: exitCode === 0 };
-	} catch (err) {
-		if (signal?.aborted) throw err;
-		return { stdout: "", stderr: String(err), success: false };
-	}
-}
-
 // Surface broken-binary / CLI failures once instead of silently reporting
 // "no diagnostics" forever (and instead of spamming every writethrough).
 const reportedBiomeFailures = new Set<string>();
@@ -115,32 +85,33 @@ export class BiomeClient implements LinterClient {
 	) {}
 
 	async format(filePath: string, content: string): Promise<string> {
-		// Keep the standalone LinterClient contract: callers supply the content to
-		// format, regardless of what is currently on disk.
-		await Bun.write(filePath, content);
-
-		const result = await runBiome(["format", "--write", filePath], this.cwd, this.config.resolvedCommand);
-
-		if (result.success) {
-			return await Bun.file(filePath).text();
-		}
-
-		// Format failed, return original
-		return content;
+		// Pipe the caller-supplied content through stdin: the file on disk may be
+		// stale, and formatting must not write it. An absolute `--stdin-file-path`
+		// lets Biome apply the project config and its ignore rules to that path.
+		const result = await runLinterCli(
+			this.config.resolvedCommand ?? "biome",
+			["format", `--stdin-file-path=${path.resolve(this.cwd, filePath)}`],
+			this.cwd,
+			{ stdin: content },
+		);
+		// Biome echoes ignored content unchanged; a failure (e.g. a parse error)
+		// exits non-zero, in which case the original content is kept.
+		return result.exitCode === 0 ? result.stdout : content;
 	}
 
 	async lint(filePath: string, signal?: AbortSignal): Promise<Diagnostic[]> {
-		// Run biome lint with JSON reporter
-		const result = await runBiome(
+		// Lint reads the file from disk: with `--stdin-file-path`, Biome's JSON
+		// reporter emits no diagnostics (it echoes the content instead).
+		const result = await runLinterCli(
+			this.config.resolvedCommand ?? "biome",
 			["lint", "--reporter=json", filePath],
 			this.cwd,
-			this.config.resolvedCommand,
-			signal,
+			{ signal },
 		);
 
 		// Biome exits non-zero when diagnostics are found, so only an empty
 		// stdout signals an actual run failure (missing binary, CLI error).
-		if (!result.success && result.stdout.trim().length === 0) {
+		if (result.exitCode !== 0 && result.stdout.trim().length === 0) {
 			warnBiomeOnce(`run:${this.cwd}`, "Biome lint failed; reporting no diagnostics", {
 				cwd: this.cwd,
 				stderr: result.stderr.slice(0, 500),

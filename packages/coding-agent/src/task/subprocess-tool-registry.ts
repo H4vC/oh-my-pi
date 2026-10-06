@@ -75,5 +75,9 @@ class SubprocessToolRegistryImpl {
 /** Singleton registry instance */
 export const subprocessToolRegistry = new SubprocessToolRegistryImpl();
 
-/** Type helper for extracted tool data in progress/result */
+/**
+ * Type helper for extracted tool data in progress/result
+ *
+ * @deprecated Unused; use `AgentProgress["extractedToolData"]`. Will be removed in the next major.
+ */
 export type ExtractedToolData = Record<string, unknown[]>;

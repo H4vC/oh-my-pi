@@ -148,6 +148,8 @@ export function getBundledAgent(name: string): AgentDefinition | undefined {
 
 /**
  * Get all bundled agents as a map keyed by name.
+ *
+ * @deprecated Unused; use `loadBundledAgents()` or `getBundledAgent(name)`. Will be removed in the next major.
  */
 export function getBundledAgentsMap(): Map<string, AgentDefinition> {
 	const map = new Map<string, AgentDefinition>();
@@ -159,10 +161,12 @@ export function getBundledAgentsMap(): Map<string, AgentDefinition> {
 
 /**
  * Clear the bundled agents cache (for testing).
+ *
+ * @deprecated Unused; no replacement. Will be removed in the next major.
  */
 export function clearBundledAgentsCache(): void {
 	bundledAgentsCache = null;
 }
 
-// Re-export for backward compatibility
+/** @deprecated Backward-compatibility alias; use `loadBundledAgents`. Will be removed in the next major. */
 export const BUNDLED_AGENTS = loadBundledAgents;

@@ -41,6 +41,7 @@ export function getLinterClient(serverName: string, config: ServerConfig, cwd: s
 
 /**
  * Clear all cached linter clients.
+ * @deprecated Unused test-reset helper; linter clients live for the process. Will be removed in the next major.
  */
 export function clearLinterClientCache(): void {
 	for (const client of clientCache.values()) {

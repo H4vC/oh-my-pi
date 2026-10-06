@@ -12,7 +12,7 @@ import type {
 	AgentToolUpdateCallback,
 } from "@oh-my-pi/pi-agent-core";
 import type { ImageContent, TextContent } from "@oh-my-pi/pi-ai";
-import { isRecord, logger } from "@oh-my-pi/pi-utils";
+import { countNewlines, isRecord, logger } from "@oh-my-pi/pi-utils";
 import type { Setting } from "../config/registry";
 import type { Settings } from "../config/settings";
 
@@ -263,7 +263,7 @@ export class OutputMetaBuilder {
 
 	/** Add truncation info from truncated output text. No-op if truncation not detected. */
 	truncationFromText(text: string, options: TruncationTextOptions): this {
-		const outputLines = text.length > 0 ? text.split("\n").length : 0;
+		const outputLines = text.length > 0 ? countNewlines(text) + 1 : 0;
 		const outputBytes = Buffer.byteLength(text, "utf-8");
 		const totalLines = options.totalLines ?? outputLines;
 		const totalBytes = options.totalBytes ?? outputBytes;

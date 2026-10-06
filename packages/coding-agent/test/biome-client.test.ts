@@ -52,12 +52,11 @@ async function createFakeBiomeCommand(
 		tempDir,
 		"biome",
 		`import * as fs from "node:fs";
-const [command, flag, target] = process.argv.slice(2);
+const [command, flag] = process.argv.slice(2);
 if (command !== "format") process.exit(7);
-if (flag !== "--write") process.exit(8);
-if (target !== ${JSON.stringify(path.join(tempDir, "example.ts"))}) process.exit(10);
-if (fs.readFileSync(target, "utf8") !== fs.readFileSync(${JSON.stringify(expectedInputPath)}, "utf8")) process.exit(9);
-fs.copyFileSync(${JSON.stringify(formattedOutputPath)}, target);
+if (flag !== ${JSON.stringify(`--stdin-file-path=${path.join(tempDir, "example.ts")}`)}) process.exit(8);
+if (fs.readFileSync(0, "utf8") !== fs.readFileSync(${JSON.stringify(expectedInputPath)}, "utf8")) process.exit(9);
+process.stdout.write(fs.readFileSync(${JSON.stringify(formattedOutputPath)}, "utf8"));
 `,
 	);
 }
@@ -72,7 +71,7 @@ function biomeConfig(command: string): ServerConfig {
 }
 
 describe("BiomeClient format", () => {
-	test("formats the supplied content instead of stale on-disk content", async () => {
+	test("formats the supplied content via stdin without touching the file on disk", async () => {
 		const tempDir = await makeTempDir();
 		const targetFile = path.join(tempDir, "example.ts");
 		const unformatted = "export const value:number=1\n";
@@ -82,7 +81,7 @@ describe("BiomeClient format", () => {
 		const result = await new BiomeClient(biomeConfig(command), tempDir).format(targetFile, unformatted);
 
 		expect(result).toBe(formatted);
-		expect(await Bun.file(targetFile).text()).toBe(formatted);
+		expect(await Bun.file(targetFile).text()).toBe("export const stale = true;\n");
 	});
 
 	test.skipIf(repoBiome === null)("formats config-included TypeScript with a real Biome", async () => {

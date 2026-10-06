@@ -107,6 +107,7 @@ const taskSchemaBatchNoIsolation = type({
 const ALL_TASK_SCHEMAS = [taskSchema, taskSchemaNoIsolation, taskSchemaBatch, taskSchemaBatchNoIsolation] as const;
 
 type DynamicTaskSchema = (typeof ALL_TASK_SCHEMAS)[number];
+/** @deprecated Static default-shape schema type; use `TaskToolSchemaInstance`. Will be removed in the next major. */
 export type TaskSchema = typeof taskSchema;
 /** Active task tool parameter schema for the current isolation / batch flags */
 export type TaskToolSchemaInstance = DynamicTaskSchema | BaseType;

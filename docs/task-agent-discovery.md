@@ -138,7 +138,7 @@ Loading path:
 
 1. `loadBundledAgents()` parses embedded markdown with `parseAgent(..., "bundled", "fatal")`
 2. results are cached in-memory (`bundledAgentsCache`)
-3. `clearBundledAgentsCache()` is test-only cache reset
+3. `clearBundledAgentsCache()` is a deprecated test-only cache reset (unused; removed in the next major). The `BUNDLED_AGENTS` alias is likewise deprecated in favor of `loadBundledAgents()`.
 
 Because bundled parsing uses `level: "fatal"`, unrecoverable YAML errors or invalid required fields throw and can fail discovery entirely.
 
@@ -279,6 +279,8 @@ The model-facing prompt (`src/prompts/tools/task.md`) tags read-only agents and 
 - exact-name lookup via `getCommand`
 
 In `src/task/index.ts`, command helpers are re-exported with agent discovery helpers. Agent discovery itself does not depend on command discovery at runtime.
+
+`discoverCommands`, `getCommand`, `expandCommand`, `loadBundledCommands` and `clearBundledCommandsCache` are deprecated (no runtime caller; removed in the next major). Use `loadSlashCommands` / `expandSlashCommand` from `src/extensibility/slash-commands.ts`; `EMBEDDED_COMMAND_TEMPLATES` stays.
 
 ## Availability constraints beyond discovery
 

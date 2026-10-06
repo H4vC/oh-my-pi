@@ -34,6 +34,7 @@ import type {
 	WorkerOutbound,
 } from "./worker-protocol";
 
+/** @deprecated Re-export kept for compatibility; import `rewriteImports`/`wrapCode` from `./shared/rewrite-imports`. Will be removed in the next major. */
 export { rewriteImports, wrapCode } from "./shared/rewrite-imports";
 export type { JsDisplayOutput } from "./worker-protocol";
 

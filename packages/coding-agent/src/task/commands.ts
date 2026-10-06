@@ -14,7 +14,11 @@ const EMBEDDED_COMMANDS: { name: string; content: string }[] = [{ name: "init.md
 
 export const EMBEDDED_COMMAND_TEMPLATES: ReadonlyArray<{ name: string; content: string }> = EMBEDDED_COMMANDS;
 
-/** Workflow command definition */
+/**
+ * Workflow command definition
+ *
+ * @deprecated Unused workflow-command loader; use `FileSlashCommand` from `extensibility/slash-commands`. Will be removed in the next major.
+ */
 export interface WorkflowCommand {
 	name: string;
 	description: string;
@@ -34,6 +38,8 @@ let bundledCommandsCache: WorkflowCommand[] | null = null;
 
 /**
  * Load all bundled commands from embedded content.
+ *
+ * @deprecated Unused; use `EMBEDDED_COMMAND_TEMPLATES` or `loadSlashCommands` from `extensibility/slash-commands`. Will be removed in the next major.
  */
 export function loadBundledCommands(): WorkflowCommand[] {
 	if (bundledCommandsCache !== null) {
@@ -66,6 +72,8 @@ export function loadBundledCommands(): WorkflowCommand[] {
  * Discover all available commands.
  *
  * Precedence (highest wins): .omp > .pi > .claude (project before user), then bundled
+ *
+ * @deprecated Unused; use `loadSlashCommands({ cwd })` from `extensibility/slash-commands`. Will be removed in the next major.
  */
 export async function discoverCommands(cwd: string): Promise<WorkflowCommand[]> {
 	const resolvedCwd = path.resolve(cwd);
@@ -110,6 +118,8 @@ export async function discoverCommands(cwd: string): Promise<WorkflowCommand[]> 
 
 /**
  * Get a command by name.
+ *
+ * @deprecated Unused; use `loadSlashCommands` and look the command up by name. Will be removed in the next major.
  */
 export function getCommand(commands: WorkflowCommand[], name: string): WorkflowCommand | undefined {
 	return commands.find(c => c.name === name);
@@ -118,6 +128,8 @@ export function getCommand(commands: WorkflowCommand[], name: string): WorkflowC
 /**
  * Expand command instructions with task input.
  * Replaces $@ with the provided input.
+ *
+ * @deprecated Unused; use `expandSlashCommand` from `extensibility/slash-commands`. Will be removed in the next major.
  */
 export function expandCommand(command: WorkflowCommand, input: string): string {
 	// Function replacement so `$`-patterns in user input ($$, $&, ...) stay literal.
@@ -126,6 +138,8 @@ export function expandCommand(command: WorkflowCommand, input: string): string {
 
 /**
  * Clear the bundled commands cache (for testing).
+ *
+ * @deprecated Unused; no replacement. Will be removed in the next major.
  */
 export function clearBundledCommandsCache(): void {
 	bundledCommandsCache = null;

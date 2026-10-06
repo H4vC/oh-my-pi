@@ -35,10 +35,11 @@ import type { PythonToolRequest } from "./executor";
 export type {
 	KernelExecuteOptions,
 	KernelExecuteResult,
-	KernelRuntimeEnv,
 	KernelShutdownOptions,
 	KernelShutdownResult,
 } from "../kernel-base";
+/** @deprecated Unused; use `Record<string, string | null>` (see `KernelExecuteOptions.env`). Will be removed in the next major. */
+export type { KernelRuntimeEnv } from "../kernel-base";
 
 export type { KernelDisplayOutput, PythonStatusEvent } from "./display";
 export { renderKernelDisplay } from "./display";

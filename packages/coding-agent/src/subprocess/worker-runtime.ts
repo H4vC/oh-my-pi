@@ -70,9 +70,9 @@ export function sendLog(
 // ── Progress reporting ──────────────────────────────────────────────
 
 /**
- * Generic worker progress event. Each worker's protocol declares an identical
- * shape with its own `modelKey` type; this is the parameterized version the
- * shared helpers emit, structurally assignable to each protocol's event.
+ * Generic worker progress event, parameterized by `modelKey` type. The asr,
+ * tts, and title worker protocols alias it with their own key type; the
+ * shared helpers emit it.
  */
 export interface WorkerProgressEvent<K> {
 	modelKey: K;

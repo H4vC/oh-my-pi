@@ -99,6 +99,7 @@ export interface TextDocumentIdentifier {
 	uri: string;
 }
 
+/** @deprecated Unused; use `OptionalVersionedTextDocumentIdentifier`. Will be removed in the next major. */
 export interface VersionedTextDocumentIdentifier extends TextDocumentIdentifier {
 	version: number | null;
 }
@@ -228,6 +229,7 @@ export type SymbolKind =
 	| 25 // Operator
 	| 26; // TypeParameter
 
+/** @deprecated Unused; map `SymbolKind` values to names locally. Will be removed in the next major. */
 export const SYMBOL_KIND_NAMES: Record<SymbolKind, string> = {
 	1: "File",
 	2: "Module",
@@ -438,6 +440,7 @@ export interface LspClient {
 	dynamicCapabilityRegistrations?: Map<string, string>;
 	openFiles: Map<string, OpenFile>;
 	pendingRequests: Map<number | string, PendingRequest>;
+	/** @deprecated Never read: the LSP reader is never restarted, so no unparsed remainder is persisted. Will be removed in the next major. */
 	messageBuffer: Uint8Array;
 	isReading: boolean;
 	/** Lifecycle state: "connecting" until initialize completes, then "ready"; "error" on init failure or reader death. */

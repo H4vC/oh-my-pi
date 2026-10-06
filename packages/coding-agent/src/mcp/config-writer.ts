@@ -204,6 +204,8 @@ export async function removeMCPServer(filePath: string, name: string): Promise<v
 /**
  * Get a specific server config from a file.
  * Returns undefined if server doesn't exist.
+ *
+ * @deprecated Unused; use `(await readMCPConfigFile(filePath)).mcpServers?.[name]`. Will be removed in the next major.
  */
 export async function getMCPServer(filePath: string, name: string): Promise<MCPServerConfig | undefined> {
 	const config = await readMCPConfigFile(filePath);
@@ -212,6 +214,8 @@ export async function getMCPServer(filePath: string, name: string): Promise<MCPS
 
 /**
  * List all server names in a config file.
+ *
+ * @deprecated Unused; use `Object.keys((await readMCPConfigFile(filePath)).mcpServers ?? {})`. Will be removed in the next major.
  */
 export async function listMCPServers(filePath: string): Promise<string[]> {
 	const config = await readMCPConfigFile(filePath);

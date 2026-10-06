@@ -84,6 +84,7 @@ async function unmountPath(path: string): Promise<boolean> {
 	return result.exitCode === 0;
 }
 
+/** @deprecated sshfs mounting is not wired into any tool; no replacement. Will be removed in the next major. */
 export function hasSshfs(): boolean {
 	return $which("sshfs") !== null;
 }
@@ -97,6 +98,7 @@ async function isMountedByDeviceBoundary(mountPath: string, stat = readMountPoin
 	}
 }
 
+/** @deprecated sshfs mounting is not wired into any tool; no replacement. Will be removed in the next major. */
 export async function isMounted(mountPath: string, options: MountCheckOptions = {}): Promise<boolean> {
 	const which = options.which ?? $which;
 	const mountpoint = which("mountpoint");
@@ -110,6 +112,7 @@ export async function isMounted(mountPath: string, options: MountCheckOptions = 
 
 let registered = false;
 
+/** @deprecated sshfs mounting is not wired into any tool; no replacement. Will be removed in the next major. */
 export async function mountRemote(host: SSHConnectionTarget, remotePath = "/"): Promise<string | undefined> {
 	if (!hasSshfs()) return undefined;
 
@@ -140,6 +143,7 @@ export async function mountRemote(host: SSHConnectionTarget, remotePath = "/"): 
 	return mountPath;
 }
 
+/** @deprecated sshfs mounting is not wired into any tool; no replacement. Will be removed in the next major. */
 export async function unmountRemote(host: SSHConnectionTarget): Promise<boolean> {
 	const mountPath = getMountPath(host);
 	if (!(await isMounted(mountPath))) {
@@ -155,6 +159,7 @@ export async function unmountRemote(host: SSHConnectionTarget): Promise<boolean>
 	return success;
 }
 
+/** @deprecated sshfs mounting is not wired into any tool; no replacement. Will be removed in the next major. */
 export async function unmountAll(): Promise<void> {
 	for (const mountPath of Array.from(mountedPaths)) {
 		await unmountPath(mountPath);

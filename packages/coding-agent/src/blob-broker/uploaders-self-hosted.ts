@@ -4,6 +4,7 @@ import { writeRemoteFile } from "../ssh/file-transfer";
 import type { BlobDestinationId } from "./destinations";
 import type { BlobUploader, BlobUploadRequest, RemoteDeleteAction } from "./publication";
 import {
+	basicAuthorization,
 	credentialString,
 	type DestinationRuntimeConfig,
 	DestinationUnavailableError,
@@ -145,10 +146,6 @@ function publicUrl(baseValue: string, directory: string | undefined, filename: s
 	url.pathname = `${url.pathname.replace(/\/+$/, "")}/${relative}`;
 	url.hash = "";
 	return url.toString();
-}
-
-function basicAuthorization(username: string, password: string): string {
-	return `Basic ${Buffer.from(`${username}:${password}`, "utf8").toString("base64")}`;
 }
 
 function expiry(days: number | undefined): { expiresAt?: number; expireDate?: string } {

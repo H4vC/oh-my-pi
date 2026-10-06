@@ -1,7 +1,7 @@
-import { Buffer } from "node:buffer";
 import type { BlobDestinationId } from "./destinations";
 import type { BlobUploader, BlobUploadRequest } from "./publication";
 import {
+	basicAuthorization,
 	credentialString,
 	type DestinationRuntimeConfig,
 	DestinationUnavailableError,
@@ -140,10 +140,6 @@ function directJsonUrl(destination: BlobDestinationId, record: Readonly<Record<s
 		firstString(nested, ["direct_url", "directUrl", "url", "URL"]);
 	if (!raw) throw new LegacyDestinationError(destination, "the upload response did not include a direct image URL");
 	return httpUrl(destination, raw, base);
-}
-
-function basicAuthorization(username: string, password: string): string {
-	return `Basic ${Buffer.from(`${username}:${password}`, "utf8").toString("base64")}`;
 }
 
 function optionalBasicHeaders(

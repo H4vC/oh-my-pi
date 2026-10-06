@@ -422,6 +422,7 @@ export async function collectModuleSourceSpecifiers(code: string): Promise<strin
 	return sources;
 }
 
+/** @deprecated Unused; `rewriteImports` rewrites module specifiers itself. Will be removed in the next major. */
 export async function rewriteModuleSourceSpecifiers(
 	code: string,
 	replacer: (source: string) => string,
@@ -456,6 +457,7 @@ export async function rewriteModuleSourceSpecifiers(
 	return result;
 }
 
+/** @deprecated Unused; `rewriteImports` rewrites dynamic `import()` calls itself. Will be removed in the next major. */
 export async function rewriteDynamicImports(code: string, callee = "__omp_import__"): Promise<string> {
 	if (!code.includes("import")) return code;
 	const ast = await parseProgram(code);

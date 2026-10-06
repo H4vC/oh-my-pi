@@ -1,5 +1,6 @@
 import type { ptree } from "@oh-my-pi/pi-utils";
 
+/** @deprecated Unused by the DAP client; use `DapRequestMessage | DapResponseMessage | DapEventMessage`. Will be removed in the next major. */
 export type DapMessage = DapRequestMessage | DapResponseMessage | DapEventMessage;
 export type DapSessionStatus = "launching" | "configuring" | "stopped" | "running" | "terminated";
 
@@ -29,6 +30,7 @@ export interface DapEventMessage extends DapProtocolMessage {
 	body?: unknown;
 }
 
+/** @deprecated Unused by the DAP client; define the error body shape locally. Will be removed in the next major. */
 export interface DapErrorBody {
 	id?: number;
 	format: string;
@@ -137,24 +139,29 @@ export interface DapAttachArguments {
 	[key: string]: unknown;
 }
 
+/** @deprecated Unused by the DAP client; define the argument shape locally. Will be removed in the next major. */
 export interface DapConfigurationDoneArguments {
 	threadId?: number;
 }
 
+/** @deprecated Unused by the DAP client; define the argument shape locally. Will be removed in the next major. */
 export interface DapSetBreakpointsArguments {
 	source: DapSource;
 	breakpoints: DapSourceBreakpoint[];
 	sourceModified?: boolean;
 }
 
+/** @deprecated Unused by the DAP client; use `{ breakpoints: DapBreakpoint[] }`. Will be removed in the next major. */
 export interface DapSetBreakpointsResponse {
 	breakpoints: DapBreakpoint[];
 }
 
+/** @deprecated Unused by the DAP client; use `{ breakpoints: DapFunctionBreakpoint[] }`. Will be removed in the next major. */
 export interface DapSetFunctionBreakpointsArguments {
 	breakpoints: DapFunctionBreakpoint[];
 }
 
+/** @deprecated Unused by the DAP client; use `{ breakpoints: DapBreakpoint[] }`. Will be removed in the next major. */
 export interface DapSetFunctionBreakpointsResponse {
 	breakpoints: DapBreakpoint[];
 }
@@ -213,10 +220,12 @@ export interface DapStepArguments {
 	granularity?: "statement" | "line" | "instruction";
 }
 
+/** @deprecated Unused by the DAP client; define the argument shape locally. Will be removed in the next major. */
 export interface DapTerminateArguments {
 	restart?: boolean;
 }
 
+/** @deprecated Unused by the DAP client; define the argument shape locally. Will be removed in the next major. */
 export interface DapDisconnectArguments {
 	restart?: boolean;
 	terminateDebuggee?: boolean;
@@ -424,6 +433,7 @@ export interface DapStoppedEventBody {
 	hitBreakpointIds?: number[];
 }
 
+/** @deprecated Unused by the DAP client; define the event body shape locally. Will be removed in the next major. */
 export interface DapContinuedEventBody {
 	threadId: number;
 	allThreadsContinued?: boolean;
@@ -433,10 +443,12 @@ export interface DapExitedEventBody {
 	exitCode?: number;
 }
 
+/** @deprecated Unused by the DAP client; define the event body shape locally. Will be removed in the next major. */
 export interface DapTerminatedEventBody {
 	restart?: boolean | Record<string, unknown>;
 }
 
+/** @deprecated Unused by the DAP client; the `initialized` event has no body. Will be removed in the next major. */
 export interface DapInitializedEventBody {}
 
 export interface DapRunInTerminalArguments {
@@ -469,6 +481,7 @@ export interface DapClientState {
 	proc: ptree.ChildProcess<"pipe">;
 	requestSeq: number;
 	pendingRequests: Map<number, DapPendingRequest>;
+	/** @deprecated Never read: the DAP reader is never restarted, so no unparsed remainder is persisted. Will be removed in the next major. */
 	messageBuffer: Uint8Array;
 	isReading: boolean;
 	lastActivity: number;

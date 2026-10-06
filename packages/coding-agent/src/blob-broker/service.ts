@@ -57,8 +57,41 @@ export interface SnapcompactFrameSink {
 	readonly generation?: number;
 }
 
-function contentHash(data: string, mimeType: string): string {
-	return new Bun.CryptoHasher("sha256").update(mimeType).update("\n").update(data).digest("hex");
+interface BlockContentHash {
+	data: string;
+	mimeType: string;
+	hash: string;
+}
+
+/**
+ * Content key per image block. Converted session history keeps block identity
+ * across requests, so each screenshot is hashed once instead of every turn;
+ * the stored `data`/`mimeType` guard against in-place block mutation.
+ */
+const contentHashByBlock = new WeakMap<ImageContent, BlockContentHash>();
+
+function blockContentHash(block: ImageContent): string {
+	const memo = contentHashByBlock.get(block);
+	if (memo?.data === block.data && memo.mimeType === block.mimeType) return memo.hash;
+	const hash = new Bun.CryptoHasher("sha256").update(block.mimeType).update("\n").update(block.data).digest("hex");
+	contentHashByBlock.set(block, { data: block.data, mimeType: block.mimeType, hash });
+	return hash;
+}
+
+/**
+ * Longest reuse of a cached publication before the backend is asked again.
+ * Re-asking re-arms the serving window and self-heals replaced or evicted
+ * registrations (daemon restart, session blob GC, RAM eviction), so the cache
+ * only absorbs the per-request probe of every image in an active turn loop.
+ */
+const PUBLICATION_REUSE_MS = 60_000;
+
+/** When a publication obtained at `now` must be re-confirmed with its backend. */
+function publicationRefreshAt(publication: BlobPublication, now: number): number {
+	const reuseUntil = now + PUBLICATION_REUSE_MS;
+	if (publication.expiresAt === undefined) return reuseUntil;
+	// Half the remaining lifetime: the URL is re-armed well before it can lapse.
+	return Math.min(reuseUntil, now + (publication.expiresAt - now) / 2);
 }
 
 /**
@@ -74,14 +107,24 @@ export class FallbackBlobBackend implements BlobBackend {
 		this.supportsLazy = backends.some(backend => backend.supportsLazy);
 	}
 
-	async ensureBlob(key: string, mimeType: string, getBytes: () => Uint8Array): Promise<BlobPublication | null> {
+	async ensureBlob(
+		key: string,
+		mimeType: string,
+		getBytes: () => Uint8Array,
+		getBase64?: () => string,
+	): Promise<BlobPublication | null> {
 		let bytes: Uint8Array | undefined;
 		for (const backend of this.backends) {
 			try {
-				const publication = await backend.ensureBlob(key, mimeType, () => {
-					bytes ??= getBytes();
-					return bytes;
-				});
+				const publication = await backend.ensureBlob(
+					key,
+					mimeType,
+					() => {
+						bytes ??= getBytes();
+						return bytes;
+					},
+					getBase64,
+				);
 				if (publication) return publication;
 			} catch (error) {
 				logger.warn("blob-broker: backend publication failed; trying next backend", {
@@ -126,6 +169,8 @@ export class ImageUrlService {
 	#publicationByUrl = new Map<string, BlobPublication>();
 	/** Backend range and content key retained by URL for ordered fallback. */
 	#publicationSourceByUrl = new Map<string, { rangeStart: number; rangeEnd: number; hash: string }>();
+	/** Recent publications by `backendKey\0contentHash`, reused until `refreshAt` without a backend probe. */
+	#recentPublications = new Map<string, { publication: BlobPublication; refreshAt: number }>();
 	#callback: { port: number; token: string; server: Bun.Server<undefined> } | null | undefined;
 	#daemonEnabled: boolean;
 	#providerFiles: ProviderFileManager | undefined;
@@ -361,7 +406,7 @@ export class ImageUrlService {
 			if (!Array.isArray(message.content)) continue;
 			for (const block of message.content) {
 				if (block.type !== "image" || block.url || block.providerFile || block.data.length === 0) continue;
-				const hash = contentHash(block.data, block.mimeType);
+				const hash = blockContentHash(block);
 				const group = byHash.get(hash);
 				if (group) group.push(block);
 				else byHash.set(hash, [block]);
@@ -370,22 +415,38 @@ export class ImageUrlService {
 		if (byHash.size === 0) return context;
 
 		const urlByBlock = new Map<ImageContent, string>();
+		const now = Date.now();
 		await Promise.all(
 			[...byHash].map(async ([hash, blocks]) => {
+				const cacheKey = `${backendKey}\0${hash}`;
+				const cached = this.#recentPublications.get(cacheKey);
 				let publication: BlobPublication | null;
-				try {
-					publication = await backend.ensureBlob(
-						hash,
-						blocks[0].mimeType,
-						() => new Uint8Array(Buffer.from(blocks[0].data, "base64")),
-					);
-				} catch (error) {
-					logger.warn("blob-broker: backend publication failed", {
-						error: error instanceof Error ? error.message : String(error),
+				if (cached && now < cached.refreshAt) {
+					publication = cached.publication;
+				} else {
+					const data = blocks[0].data;
+					try {
+						publication = await backend.ensureBlob(
+							hash,
+							blocks[0].mimeType,
+							() => Buffer.from(data, "base64"),
+							() => data,
+						);
+					} catch (error) {
+						logger.warn("blob-broker: backend publication failed", {
+							error: error instanceof Error ? error.message : String(error),
+						});
+						return;
+					}
+					if (!publication) {
+						this.#recentPublications.delete(cacheKey);
+						return;
+					}
+					this.#recentPublications.set(cacheKey, {
+						publication,
+						refreshAt: publicationRefreshAt(publication, Date.now()),
 					});
-					return;
 				}
-				if (!publication) return;
 				this.#publicationByUrl.set(publication.url, publication);
 				const rangeStart = this.#configs.indexOf(configs[0]);
 				this.#publicationSourceByUrl.set(publication.url, {
@@ -431,7 +492,7 @@ export class ImageUrlService {
 					const fetcher: LazyBlobFetcher = async () => {
 						const all = await renderAll();
 						const frame = all[index];
-						return frame ? new Uint8Array(Buffer.from(frame.data, "base64")) : null;
+						return frame ? Buffer.from(frame.data, "base64") : null;
 					};
 					const publication = await backend.ensureLazy(key, "image/png", fetcher);
 					if (!publication) return null;
@@ -465,7 +526,7 @@ export class ImageUrlService {
 			const key = block.url ? this.#lazyKeyByUrl.get(block.url) : undefined;
 			const fetcher = key ? this.#producers.get(key) : undefined;
 			const bytes = fetcher ? await fetcher() : null;
-			return bytes ? Buffer.from(bytes).toString("base64") : null;
+			return bytes ? bytes.toBase64() : null;
 		});
 	}
 
@@ -495,12 +556,17 @@ export class ImageUrlService {
 	}
 
 	#forgetUrls(urls: readonly string[]): void {
+		if (urls.length === 0) return;
 		for (const url of urls) {
 			const lazyKey = this.#lazyKeyByUrl.get(url);
 			this.#publicationByUrl.delete(url);
 			this.#publicationSourceByUrl.delete(url);
 			this.#lazyKeyByUrl.delete(url);
 			if (lazyKey) this.#producers.delete(lazyKey);
+		}
+		const forgotten = new Set(urls);
+		for (const [key, cached] of this.#recentPublications) {
+			if (forgotten.has(cached.publication.url)) this.#recentPublications.delete(key);
 		}
 	}
 
@@ -555,6 +621,7 @@ export class ImageUrlService {
 		this.#backendPromises.clear();
 		this.#publicationByUrl.clear();
 		this.#publicationSourceByUrl.clear();
+		this.#recentPublications.clear();
 		this.#lazyKeyByUrl.clear();
 		this.#producers.clear();
 	}

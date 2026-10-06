@@ -7,7 +7,7 @@
  * hosts other processes started, and forwards requests over each host's socket.
  */
 import * as fs from "node:fs/promises";
-import * as net from "node:net";
+import type * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { logger, postmortem, ptree, untilAborted } from "@oh-my-pi/pi-utils";
@@ -18,6 +18,7 @@ import { type DaemonBrokerClient, daemonClientForProject } from "../launch/clien
 import { describeQuietly, stopQuietly, waitReady } from "../launch/ensure";
 import { daemonRuntimeDir } from "../launch/paths";
 import { resolveWorkerSpawnCmd, SMOKE_TEST_TIMEOUT_MS, workerEnvFromParent } from "../subprocess/worker-client";
+import { dialSocket } from "../tiny/jsonl-socket";
 import type { ToolSession } from "../tools";
 import {
 	errorMessage,
@@ -60,27 +61,6 @@ const OPEN_WAIT_MS = 120_000;
 
 /** The host connection dropped (host exited or is exiting). */
 class IdaHostGoneError extends ToolError {}
-
-/** Connect to `endpoint`; undefined when nothing listens there. */
-function connectSocket(endpoint: string): Promise<net.Socket | undefined> {
-	const { promise, resolve } = Promise.withResolvers<net.Socket | undefined>();
-	const socket = net.createConnection(endpoint);
-	const timer = setTimeout(() => {
-		socket.destroy();
-		resolve(undefined);
-	}, CONNECT_TIMEOUT_MS);
-	socket.once("connect", () => {
-		clearTimeout(timer);
-		socket.removeAllListeners("error");
-		resolve(socket);
-	});
-	socket.once("error", () => {
-		clearTimeout(timer);
-		socket.destroy();
-		resolve(undefined);
-	});
-	return promise;
-}
 
 /** One socket to a host: numbered requests, responses matched by id. */
 class HostConnection {
@@ -171,7 +151,7 @@ export class IdaDatabase {
 	 * Undefined when no host listens; throws the host's open failure.
 	 */
 	static async attach(name: string, endpoint: string, op: "open" | "status"): Promise<IdaDatabase | undefined> {
-		const socket = await connectSocket(endpoint);
+		const socket = await dialSocket(endpoint, CONNECT_TIMEOUT_MS).catch(() => undefined);
 		if (!socket) return undefined;
 		let db: IdaDatabase | undefined;
 		const conn = new HostConnection(name, socket, () => {
@@ -532,7 +512,7 @@ export async function smokeTestIdaHost(): Promise<void> {
 		const deadline = Date.now() + SMOKE_TEST_TIMEOUT_MS;
 		let alive = false;
 		while (!alive && Date.now() < deadline && proc.exitCode === null) {
-			const socket = await connectSocket(endpoint);
+			const socket = await dialSocket(endpoint, CONNECT_TIMEOUT_MS).catch(() => undefined);
 			if (socket) {
 				const conn = new HostConnection("smoke", socket, () => {});
 				alive = (await conn.call({ id: conn.nextId(), op: "ping" }).catch(() => undefined)) === "pong";

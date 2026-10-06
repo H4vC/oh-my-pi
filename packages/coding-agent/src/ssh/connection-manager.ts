@@ -591,6 +591,7 @@ export async function getHostInfo(hostName: string): Promise<SSHHostInfo | undef
 	return loadHostInfoFromDiskByName(hostName);
 }
 
+/** @deprecated Unused; use `ensureHostInfo` (probes when needed). Will be removed in the next major. */
 export async function getHostInfoForHost(host: SSHConnectionTarget): Promise<SSHHostInfo | undefined> {
 	const cached = hostInfoCache.get(host.name);
 	if (cached) {
@@ -607,6 +608,8 @@ export async function getHostInfoForHost(host: SSHConnectionTarget): Promise<SSH
  * Checks the in-memory cache, then falls back to a synchronous read of the
  * persisted host-info cache file. Never opens a connection or probes the
  * remote host — callers get `undefined` when nothing is cached yet.
+ *
+ * @deprecated Unused; use `ensureHostInfo`. Will be removed in the next major.
  */
 export function getCachedHostInfoSync(host: SSHConnectionTarget): SSHHostInfo | undefined {
 	const cached = hostInfoCache.get(host.name);
@@ -654,8 +657,31 @@ export async function buildRemoteCommand(
 
 let registered = false;
 
+/**
+ * How long a successful {@link ensureConnection} stays trusted. Within this
+ * window repeated ssh:// operations skip the `ssh -O check` spawn, the key
+ * stat and the control-dir setup. A master that died in the meantime is
+ * harmless: every command runs with `ControlMaster=auto`, which opens a new
+ * connection on demand.
+ */
+const CONNECTION_VERIFY_TTL_MS = 30_000;
+
+/** Per host: when the connection was last verified, and the target it was verified for. */
+const verifiedConnections = new Map<string, { at: number; fingerprint: string }>();
+
 export async function ensureConnection(host: SSHConnectionTarget): Promise<void> {
 	const key = host.name;
+	const fingerprint = `${host.username ?? ""}@${host.host}:${host.port ?? ""}\0${host.keyPath ?? ""}`;
+	const verified = verifiedConnections.get(key);
+	if (
+		verified &&
+		Date.now() - verified.at < CONNECTION_VERIFY_TTL_MS &&
+		verified.fingerprint === fingerprint &&
+		activeHosts.has(key) &&
+		hostInfoCache.has(key)
+	) {
+		return;
+	}
 	const pending = pendingConnections.get(key);
 	if (pending) {
 		await pending;
@@ -707,6 +733,7 @@ export async function ensureConnection(host: SSHConnectionTarget): Promise<void>
 	pendingConnections.set(key, promise);
 	try {
 		await promise;
+		verifiedConnections.set(key, { at: Date.now(), fingerprint });
 	} finally {
 		pendingConnections.delete(key);
 	}
@@ -715,6 +742,7 @@ export async function ensureConnection(host: SSHConnectionTarget): Promise<void>
 export async function invalidateHostMetadata(hostNames: Iterable<string>): Promise<void> {
 	const names = [...hostNames];
 	for (const hostName of names) {
+		verifiedConnections.delete(hostName);
 		hostInfoCache.delete(hostName);
 		await deleteHostInfoFromDisk(hostName);
 	}
@@ -735,6 +763,7 @@ async function closeConnectionInternal(host: SSHConnectionTarget): Promise<void>
 	await runSshSync(["-O", "exit", ...buildCommonArgs(host), target]);
 }
 
+/** @deprecated Use `invalidateHostMetadata([hostName])`. Will be removed in the next major. */
 export async function closeConnection(hostName: string): Promise<void> {
 	await invalidateHostMetadata([hostName]);
 }
@@ -743,6 +772,7 @@ export async function closeAllConnections(): Promise<void> {
 	for (const [name, host] of Array.from(activeHosts.entries())) {
 		await closeConnectionInternal(host);
 		activeHosts.delete(name);
+		verifiedConnections.delete(name);
 	}
 }
 
@@ -750,6 +780,7 @@ export function getControlPathTemplate(): string {
 	return CONTROL_PATH;
 }
 
+/** @deprecated Unused; use `getControlPathTemplate()`. Will be removed in the next major. */
 export function getControlDir(): string {
 	return CONTROL_DIR;
 }

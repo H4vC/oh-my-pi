@@ -32,7 +32,10 @@ import type { Subprocess } from "bun";
  * teardown semantics.
  */
 
-/** Minimal inbound contract shared by every worker: a correlated `ping`. */
+/**
+ * Minimal inbound contract shared by every worker: a correlated `ping`.
+ * @deprecated Unused; declare the `ping` variant in each worker protocol directly. Will be removed in the next major.
+ */
 export type WorkerInboundBase = { type: "ping"; id: string };
 
 /** Structured log line forwarded from a worker to the parent logger. */
@@ -43,7 +46,10 @@ export type WorkerLogMessage = {
 	meta?: Record<string, unknown>;
 };
 
-/** Minimal outbound contract shared by every worker: `pong`, `error`, `log`. */
+/**
+ * Minimal outbound contract shared by every worker: `pong`, `error`, `log`.
+ * @deprecated Internal transport detail; will become module-private. Will be removed in the next major.
+ */
 export type WorkerOutboundBase =
 	| { type: "pong"; id: string }
 	| { type: "error"; id: string; error: string }
@@ -148,11 +154,8 @@ export function resolveExecutablePath(): string {
  * absolute path of `src/cli.ts` so the relaunch keeps the caller's cwd.
  */
 export function resolveCliEntryCmd(): string[] {
-	const executable = resolveExecutablePath();
-	if (isCompiledBinary()) return [executable];
-	const hostEntry = workerHostEntry();
-	if (hostEntry) return [executable, hostEntry];
-	return [executable, path.resolve(import.meta.dir, "..", "cli.ts")];
+	const { executable, entry } = resolveEntryPrefix();
+	return entry ?? [executable, path.resolve(import.meta.dir, "..", "cli.ts")];
 }
 
 /**
@@ -167,14 +170,22 @@ export function resolveCliEntryCmd(): string[] {
  * IPC handles more reliably under `bun test`.
  */
 export function resolveWorkerSpawnCmd(workerArg: string): WorkerSpawnCommand {
-	const executable = resolveExecutablePath();
-	if (isCompiledBinary()) return { cmd: [executable, workerArg] };
-	const hostEntry = workerHostEntry();
-	if (hostEntry) {
-		return { cmd: [executable, hostEntry, workerArg] };
-	}
+	const { executable, entry } = resolveEntryPrefix();
+	if (entry !== null) return { cmd: [...entry, workerArg] };
 	const packageRoot = path.resolve(import.meta.dir, "..", "..");
 	return { cmd: [executable, "src/cli.ts", workerArg], cwd: packageRoot };
+}
+
+/**
+ * Shared prefix for {@link resolveCliEntryCmd} and {@link resolveWorkerSpawnCmd}:
+ * the binary alone when compiled, runtime + declared host entry otherwise, or
+ * `entry: null` when there is no host entry (callers pick their own fallback).
+ */
+function resolveEntryPrefix(): { executable: string; entry: string[] | null } {
+	const executable = resolveExecutablePath();
+	if (isCompiledBinary()) return { executable, entry: [executable] };
+	const hostEntry = workerHostEntry();
+	return { executable, entry: hostEntry ? [executable, hostEntry] : null };
 }
 
 /**

@@ -11,6 +11,10 @@ interface OmpCommand {
 const DEFAULT_CMD = process.platform === "win32" ? "omp.cmd" : "omp";
 const DEFAULT_SHELL = process.platform === "win32";
 
+/**
+ * @deprecated Leftover from the subprocess subagent executor (subagents now run in-process); no replacement.
+ * Will be removed in the next major.
+ */
 export function resolveOmpCommand(): OmpCommand {
 	const envCmd = $env.PI_SUBPROCESS_CMD;
 	if (envCmd?.trim()) {

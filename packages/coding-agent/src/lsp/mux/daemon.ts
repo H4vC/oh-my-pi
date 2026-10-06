@@ -9,15 +9,16 @@
  * a locally spawned server. Every failure degrades to `null` so callers fall
  * back to a process-local spawn.
  */
-import * as net from "node:net";
+import type * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { logger, ptree } from "@oh-my-pi/pi-utils";
-import { MessageFramer } from "../../jsonrpc/message-framing";
+import { encodeMessageFrame, MessageFramer } from "../../jsonrpc/message-framing";
 import { daemonClientForProject } from "../../launch/client";
 import { describeQuietly, stopQuietly, waitReady } from "../../launch/ensure";
 import { daemonRuntimeDir } from "../../launch/paths";
 import { resolveWorkerSpawnCmd, SMOKE_TEST_TIMEOUT_MS, workerEnvFromParent } from "../../subprocess/worker-client";
+import { dialSocket } from "../../tiny/jsonl-socket";
 import type { LspJsonRpcRequest, LspJsonRpcResponse, LspTransport, LspWriteSink } from "../types";
 import {
 	LSP_MUX_DAEMON_NAME,
@@ -39,27 +40,6 @@ const PROBE_TIMEOUT_MS = 1_500;
 const READY_TIMEOUT_MS = 15_000;
 /** probe→describe→start rounds; bounds cross-process start races and wedged-mux replacement. */
 const ENSURE_ATTEMPTS = 3;
-
-/** Dial a mux endpoint (Unix socket or Windows named pipe) with a bounded connect. */
-function connectEndpoint(endpoint: string, timeoutMs: number): Promise<net.Socket> {
-	const { promise, resolve, reject } = Promise.withResolvers<net.Socket>();
-	const socket = net.connect(endpoint);
-	const timer = setTimeout(() => {
-		socket.destroy();
-		reject(new Error(`Timed out connecting to LSP mux at ${endpoint}`));
-	}, timeoutMs);
-	socket.once("connect", () => {
-		clearTimeout(timer);
-		socket.removeListener("error", onError);
-		resolve(socket);
-	});
-	const onError = (error: Error) => {
-		clearTimeout(timer);
-		reject(error);
-	};
-	socket.once("error", onError);
-	return promise;
-}
 
 /**
  * Send one request on a fresh socket and await its response. Used only
@@ -114,8 +94,7 @@ function requestOnSocket(
 	socket.on("data", onData);
 	socket.once("close", onClose);
 	socket.once("error", onClose);
-	const content = JSON.stringify(request);
-	socket.write(`Content-Length: ${Buffer.byteLength(content, "utf-8")}\r\n\r\n${content}`);
+	socket.write(encodeMessageFrame(request));
 	return promise;
 }
 
@@ -190,7 +169,7 @@ let nextHandshakeId = 1;
 
 /** Dial and handshake one server link; throws on any failure. */
 async function dialMuxServer(endpoint: string, params: MuxConnectParams): Promise<LspTransport> {
-	const socket = await connectEndpoint(endpoint, CONNECT_TIMEOUT_MS);
+	const socket = await dialSocket(endpoint, CONNECT_TIMEOUT_MS, `Timed out connecting to LSP mux at ${endpoint}`);
 	socket.setNoDelay(true);
 	try {
 		const { response, leftover } = await requestOnSocket(
@@ -209,7 +188,7 @@ async function dialMuxServer(endpoint: string, params: MuxConnectParams): Promis
 /** True when a mux answers the ping handshake at `endpoint`. */
 async function probeMux(endpoint: string): Promise<boolean> {
 	try {
-		const socket = await connectEndpoint(endpoint, PROBE_TIMEOUT_MS);
+		const socket = await dialSocket(endpoint, PROBE_TIMEOUT_MS, `Timed out connecting to LSP mux at ${endpoint}`);
 		try {
 			const { response } = await requestOnSocket(
 				socket,

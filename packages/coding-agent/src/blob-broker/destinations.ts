@@ -844,7 +844,10 @@ export const BUILTIN_BLOB_DESTINATIONS = {
 /** Identifier of any built-in blob destination, derived from registry keys. */
 export type BlobDestinationId = keyof typeof BUILTIN_BLOB_DESTINATIONS;
 
-/** Exhaustive mapping of ShareX `ImageDestination` members to registry entries. */
+/**
+ * Exhaustive mapping of ShareX `ImageDestination` members to registry entries.
+ * @deprecated Unused ShareX compatibility table; use {@link BUILTIN_BLOB_DESTINATIONS} keys directly. Will be removed in the next major.
+ */
 export const SHAREX_IMAGE_DESTINATIONS = {
 	Imgur: "imgur",
 	ImageShack: "imageshack",
@@ -856,7 +859,10 @@ export const SHAREX_IMAGE_DESTINATIONS = {
 	FileUploader: "file-uploader",
 } as const satisfies Record<string, BlobDestinationId>;
 
-/** Exhaustive mapping of ShareX `FileDestination` members to registry entries. */
+/**
+ * Exhaustive mapping of ShareX `FileDestination` members to registry entries.
+ * @deprecated Unused ShareX compatibility table; use {@link BUILTIN_BLOB_DESTINATIONS} keys directly. Will be removed in the next major.
+ */
 export const SHAREX_FILE_DESTINATIONS = {
 	Dropbox: "dropbox",
 	FTP: "ftp",

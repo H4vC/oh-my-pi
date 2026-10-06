@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { mapWithConcurrencyLimit } from "../task/parallel";
 import { ToolAbortError, throwIfAborted } from "../tools/tool-errors";
 
 /** Project type detection result */
@@ -165,29 +166,6 @@ export function combineDiagnosticsOutputs(sections: readonly { description: stri
 	return sections.map(section => `=== ${section.description} ===\n${section.output}`).join("\n\n");
 }
 
-/** Run a bounded number of tasks at a time, preserving input order in the results. */
-async function mapWithConcurrency<T, R>(
-	items: readonly T[],
-	limit: number,
-	run: (item: T) => Promise<R>,
-): Promise<R[]> {
-	// oxlint-disable-next-line unicorn/no-new-array -- length preallocation
-	const results: R[] = new Array(items.length);
-	let cursor = 0;
-
-	const worker = async (): Promise<void> => {
-		while (true) {
-			const index = cursor++;
-			const item = items[index];
-			if (index >= items.length || item === undefined) return;
-			results[index] = await run(item);
-		}
-	};
-
-	await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-	return results;
-}
-
 /** Run one language's checker and render its output. */
 async function runProjectDiagnostics(cwd: string, projectType: ProjectType, signal?: AbortSignal): Promise<string> {
 	const command = projectType.command;
@@ -258,10 +236,18 @@ export async function runWorkspaceDiagnostics(
 	const projectType =
 		projectTypes.length > 1 ? { ...primary, description: combineProjectDescriptions(projectTypes) } : primary;
 
-	const outputs = await mapWithConcurrency(projectTypes, MAX_CONCURRENT_CHECKERS, async detectedType => ({
-		description: detectedType.description,
-		output: await runProjectDiagnostics(cwd, detectedType, signal),
-	}));
+	const { results } = await mapWithConcurrencyLimit(
+		projectTypes,
+		MAX_CONCURRENT_CHECKERS,
+		async detectedType => ({
+			description: detectedType.description,
+			output: await runProjectDiagnostics(cwd, detectedType, signal),
+		}),
+		signal,
+	);
+	// An abort stops scheduling and leaves skipped slots undefined; surface it as the abort it is.
+	throwIfAborted(signal);
+	const outputs = results.filter(result => result !== undefined);
 
 	return { output: combineDiagnosticsOutputs(outputs), projectType, projectTypes };
 }

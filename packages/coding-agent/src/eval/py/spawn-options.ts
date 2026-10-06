@@ -110,7 +110,10 @@ function probeWindowsConsoleWindow(): ConsoleProbeResult {
 	return value;
 }
 
-/** Reset the cached Win32 probe result. Test-only; not part of the public surface. */
+/**
+ * Reset the cached Win32 probe result. Test-only; not part of the public surface.
+ * @deprecated No test or caller uses it. Will be removed in the next major.
+ */
 export function __resetWindowsConsoleProbeCache(): void {
 	cachedWindowsConsoleProbe = undefined;
 }

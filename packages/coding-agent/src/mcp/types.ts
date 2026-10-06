@@ -325,7 +325,11 @@ export interface MCPTransport {
 	onRequest?: (method: string, params: unknown) => Promise<unknown>;
 }
 
-/** Transport factory function */
+/**
+ * Transport factory function
+ *
+ * @deprecated Unused; no replacement. Will be removed in the next major.
+ */
 export type TransportFactory = (config: MCPServerConfig) => Promise<MCPTransport>;
 
 // =============================================================================
@@ -358,7 +362,11 @@ export interface MCPServerConnection {
 	prompts?: MCPPrompt[];
 }
 
-/** MCP tool with server context */
+/**
+ * MCP tool with server context
+ *
+ * @deprecated Unused; no replacement. Will be removed in the next major.
+ */
 export interface MCPToolWithServer {
 	server: MCPServerConnection;
 	tool: MCPToolDefinition;

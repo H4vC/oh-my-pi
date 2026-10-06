@@ -5,17 +5,18 @@ import path from "node:path";
 import { isEnoent } from "@oh-my-pi/pi-utils";
 import { type Theme, theme } from "@oh-my-pi/pi-tui/theme";
 import { formatPathRelativeToCwd, resolveToCwd } from "../tools/path-utils";
-import type {
-	CodeAction,
-	Command,
-	Diagnostic,
-	DiagnosticSeverity,
-	DocumentSymbol,
-	Location,
-	SymbolInformation,
-	SymbolKind,
-	TextEdit,
-	WorkspaceEdit,
+import {
+	type CodeAction,
+	type Command,
+	type Diagnostic,
+	type DiagnosticSeverity,
+	type DocumentSymbol,
+	type Location,
+	SYMBOL_KIND_NAMES,
+	type SymbolInformation,
+	type SymbolKind,
+	type TextEdit,
+	type WorkspaceEdit,
 } from "./types";
 
 export { detectLanguageId } from "@oh-my-pi/pi-tui/lang-from-path";
@@ -144,6 +145,7 @@ export function sortDiagnostics(diagnostics: Diagnostic[]): Diagnostic[] {
 
 /**
  * Get icon for diagnostic severity.
+ * @deprecated Unused; read `theme.status.error`/`warning`/`info` directly. Will be removed in the next major.
  */
 export function severityToIcon(severity?: DiagnosticSeverity): string {
 	const currentTheme = theme as Theme | undefined;
@@ -254,6 +256,7 @@ export function formatLocation(location: Location, cwd: string): string {
 
 /**
  * Format a position as line:col.
+ * @deprecated Unused; use a `${line}:${col}` template literal. Will be removed in the next major.
  */
 export function formatPosition(line: number, col: number): string {
 	return `${line}:${col}`;
@@ -306,6 +309,7 @@ export function formatWorkspaceEdit(edit: WorkspaceEdit, cwd: string): string[] 
 
 /**
  * Format a text edit as a preview.
+ * @deprecated Unused; use `formatWorkspaceEdit` for edit summaries. Will be removed in the next major.
  */
 export function formatTextEdit(edit: TextEdit, maxLength = 50): string {
 	const range = `${edit.range.start.line + 1}:${edit.range.start.character + 1}`;
@@ -373,37 +377,10 @@ export function symbolKindToIcon(kind: SymbolKind): string {
 
 /**
  * Get name for symbol kind.
+ * @deprecated Unused; map `SymbolKind` values to names locally. Will be removed in the next major.
  */
 export function symbolKindToName(kind: SymbolKind): string {
-	const names: Record<number, string> = {
-		1: "File",
-		2: "Module",
-		3: "Namespace",
-		4: "Package",
-		5: "Class",
-		6: "Method",
-		7: "Property",
-		8: "Field",
-		9: "Constructor",
-		10: "Enum",
-		11: "Interface",
-		12: "Function",
-		13: "Variable",
-		14: "Constant",
-		15: "String",
-		16: "Number",
-		17: "Boolean",
-		18: "Array",
-		19: "Object",
-		20: "Key",
-		21: "Null",
-		22: "EnumMember",
-		23: "Struct",
-		24: "Event",
-		25: "Operator",
-		26: "TypeParameter",
-	};
-	return names[kind] ?? "Unknown";
+	return SYMBOL_KIND_NAMES[kind] ?? "Unknown";
 }
 
 /**

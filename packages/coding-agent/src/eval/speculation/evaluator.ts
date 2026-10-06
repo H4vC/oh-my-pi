@@ -107,11 +107,13 @@ export function evaluateShadowExpression(expression: ShadowExpression, context: 
 	}
 }
 
+/** @deprecated Unused; call {@link evaluateShadowExpression} on `operation.call.args` directly. Will be removed in the next major. */
 export interface EvaluatedShadowOperation {
 	readonly operation: ShadowOperation;
 	readonly args: ShadowValue;
 }
 
+/** @deprecated Unused; call {@link evaluateShadowExpression} on `operation.call.args` directly. Will be removed in the next major. */
 export function evaluateShadowOperation(
 	operation: ShadowOperation,
 	context: ShadowEvaluationContext,
@@ -119,6 +121,7 @@ export function evaluateShadowOperation(
 	return { operation, args: evaluateShadowExpression(operation.call.args, context) };
 }
 
+/** @deprecated Unused; call {@link evaluateShadowExpression} per operation directly. Will be removed in the next major. */
 export function evaluateShadowPlan(
 	plan: ShadowPlan,
 	context: ShadowEvaluationContext,

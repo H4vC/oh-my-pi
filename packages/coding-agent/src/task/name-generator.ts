@@ -1571,6 +1571,8 @@ export function generateTaskName(): string {
 
 /**
  * Reset name generator state (for testing).
+ *
+ * @deprecated Unused test seam; no replacement. Will be removed in the next major.
  */
 export function resetTaskNames(): void {
 	usedNames = new Set<string>();

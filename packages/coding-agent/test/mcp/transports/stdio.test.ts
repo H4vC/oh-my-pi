@@ -90,7 +90,7 @@ describe("StdioTransport.connect", () => {
 					env: expect.objectContaining({
 						OMP_STDIO_SPAWN_SHAPE: envValue,
 					}),
-					stderr: "pipe",
+					stderr: "ignore",
 					stdin: "pipe",
 					stdout: "pipe",
 					windowsHide: process.platform === "win32" ? expect.any(Boolean) : undefined,

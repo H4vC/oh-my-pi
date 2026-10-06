@@ -138,7 +138,10 @@ export async function inlineContextImages(
 	return messagesChanged ? { ...context, messages } : context;
 }
 
-/** Remove every image URL so the request carries pure inline base64. */
+/**
+ * Remove every image URL so the request carries pure inline base64.
+ * @deprecated Unused; use {@link inlineContextImages}, which also drops provider-file references and materializes URL-only placeholders. Will be removed in the next major.
+ */
 export function stripContextImageUrls(context: Context): Context {
 	return mapContextImages(context, block => {
 		if (!block.url) return block;
@@ -147,7 +150,10 @@ export function stripContextImageUrls(context: Context): Context {
 	});
 }
 
-/** Remove provider-native references without disturbing independent URL mirrors. */
+/**
+ * Remove provider-native references without disturbing independent URL mirrors.
+ * @deprecated Unused; use {@link inlineContextImages}, which drops provider-file references together with URL mirrors. Will be removed in the next major.
+ */
 export function stripContextProviderFiles(context: Context): Context {
 	return mapContextImages(context, block => {
 		if (!block.providerFile) return block;

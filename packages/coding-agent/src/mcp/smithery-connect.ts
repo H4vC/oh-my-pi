@@ -3,6 +3,7 @@ import { withTimeoutSignal } from "../utils/fetch-timeout";
 const SMITHERY_API_BASE_URL = (process.env.SMITHERY_API_URL || "https://api.smithery.ai").replace(/\/+$/, "");
 const SMITHERY_CONNECT_TIMEOUT_MS = 10_000;
 
+/** @deprecated Smithery Connect REST client is unused; no replacement. Will be removed in the next major. */
 export class SmitheryConnectError extends Error {
 	status: number;
 
@@ -27,6 +28,7 @@ type SmitheryConnectionStatus =
 	| { state: "error"; message: string }
 	| { state: string; [key: string]: unknown };
 
+/** @deprecated Smithery Connect REST client is unused; no replacement. Will be removed in the next major. */
 export type SmitheryConnection = {
 	connectionId: string;
 	mcpUrl: string;
@@ -58,10 +60,12 @@ async function expectOk(response: Response, context: string): Promise<void> {
 	throw new SmitheryConnectError(`${context}: ${response.status} ${response.statusText}${suffix}`, response.status);
 }
 
+/** @deprecated Smithery Connect REST client is unused; no replacement. Will be removed in the next major. */
 export function getSmitheryApiBaseUrl(): string {
 	return SMITHERY_API_BASE_URL;
 }
 
+/** @deprecated Smithery Connect REST client is unused; no replacement. Will be removed in the next major. */
 export async function listSmitheryNamespaces(apiKey: string): Promise<SmitheryNamespace[]> {
 	const response = await fetch(toApiUrl("/namespaces"), {
 		headers: buildAuthHeaders(apiKey),
@@ -72,6 +76,7 @@ export async function listSmitheryNamespaces(apiKey: string): Promise<SmitheryNa
 	return payload.namespaces ?? [];
 }
 
+/** @deprecated Smithery Connect REST client is unused; no replacement. Will be removed in the next major. */
 export async function createSmitheryNamespace(apiKey: string): Promise<SmitheryNamespace> {
 	const response = await fetch(toApiUrl("/namespaces"), {
 		method: "POST",
@@ -82,6 +87,7 @@ export async function createSmitheryNamespace(apiKey: string): Promise<SmitheryN
 	return (await response.json()) as SmitheryNamespace;
 }
 
+/** @deprecated Smithery Connect REST client is unused; no replacement. Will be removed in the next major. */
 export async function resolveSmitheryNamespace(apiKey: string): Promise<string> {
 	const namespaces = await listSmitheryNamespaces(apiKey);
 	if (namespaces.length > 0) {
@@ -91,6 +97,7 @@ export async function resolveSmitheryNamespace(apiKey: string): Promise<string> 
 	return created.name;
 }
 
+/** @deprecated Smithery Connect REST client is unused; no replacement. Will be removed in the next major. */
 export async function listSmitheryConnectionsByUrl(
 	apiKey: string,
 	namespace: string,
@@ -107,6 +114,7 @@ export async function listSmitheryConnectionsByUrl(
 	return payload.connections ?? [];
 }
 
+/** @deprecated Smithery Connect REST client is unused; no replacement. Will be removed in the next major. */
 export async function createSmitheryConnection(
 	apiKey: string,
 	namespace: string,
@@ -125,6 +133,7 @@ export async function createSmitheryConnection(
 	return (await response.json()) as SmitheryConnection;
 }
 
+/** @deprecated Smithery Connect REST client is unused; no replacement. Will be removed in the next major. */
 export async function getSmitheryConnection(
 	apiKey: string,
 	namespace: string,
@@ -141,6 +150,7 @@ export async function getSmitheryConnection(
 	return (await response.json()) as SmitheryConnection;
 }
 
+/** @deprecated Smithery Connect REST client is unused; no replacement. Will be removed in the next major. */
 export async function deleteSmitheryConnection(apiKey: string, namespace: string, connectionId: string): Promise<void> {
 	const response = await fetch(
 		toApiUrl(`/connect/${encodeURIComponent(namespace)}/${encodeURIComponent(connectionId)}`),

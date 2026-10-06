@@ -93,6 +93,11 @@ export function fetchFor(config: DestinationRuntimeConfig): FetchImpl {
 	return config.fetch ?? globalThis.fetch;
 }
 
+/** HTTP Basic `Authorization` header value for a username/password pair. */
+export function basicAuthorization(username: string, password: string): string {
+	return `Basic ${Buffer.from(`${username}:${password}`, "utf8").toString("base64")}`;
+}
+
 /** Produce a safe remote filename from an upload request. */
 export function fileNameFor(request: BlobUploadRequest): string {
 	const preferred = request.filename?.trim().replaceAll("\\", "/").split("/").pop();

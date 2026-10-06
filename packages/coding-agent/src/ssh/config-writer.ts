@@ -120,6 +120,7 @@ export async function addSSHHost(filePath: string, name: string, hostConfig: SSH
  * If the host doesn't exist, this will add it.
  *
  * @throws Error if validation fails
+ * @deprecated Unused; use `readSSHConfigFile` + `writeSSHConfigFile` (or `removeSSHHost` + `addSSHHost`). Will be removed in the next major.
  */
 export async function updateSSHHost(filePath: string, name: string, hostConfig: SSHHostConfig): Promise<void> {
 	// Validate host name
@@ -176,6 +177,8 @@ export async function removeSSHHost(filePath: string, name: string): Promise<voi
 
 /**
  * List all host names in a config file.
+ *
+ * @deprecated Unused; use `Object.keys((await readSSHConfigFile(filePath)).hosts ?? {})`. Will be removed in the next major.
  */
 export async function listSSHHosts(filePath: string): Promise<string[]> {
 	const config = await readSSHConfigFile(filePath);

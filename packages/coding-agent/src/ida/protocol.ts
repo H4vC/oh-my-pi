@@ -8,6 +8,7 @@
 import type * as net from "node:net";
 import * as path from "node:path";
 import { type } from "@oh-my-pi/omptype";
+import { LineParser, writeJsonLine } from "../tiny/jsonl-socket";
 export { IDA_HOST_WORKER_ARG } from "../cli/worker-selectors";
 
 /** Environment key carrying the JSON {@link IdaHostConfig} for the daemon. */
@@ -35,20 +36,13 @@ export function errorMessage(error: unknown): string {
 /** Feed every complete newline-terminated, non-blank line received on `socket` to `onLine`. */
 export function readSocketLines(socket: net.Socket, onLine: (line: string) => void): void {
 	const decoder = new TextDecoder();
-	let buffer = "";
-	socket.on("data", (chunk: Buffer) => {
-		buffer += decoder.decode(chunk, { stream: true });
-		for (let newline = buffer.indexOf("\n"); newline >= 0; newline = buffer.indexOf("\n")) {
-			const line = buffer.slice(0, newline).trim();
-			buffer = buffer.slice(newline + 1);
-			if (line) onLine(line);
-		}
-	});
+	const parser = new LineParser(line => onLine(line.trim()));
+	socket.on("data", (chunk: Buffer) => parser.push(decoder.decode(chunk, { stream: true })));
 }
 
 /** Write one NDJSON frame unless the socket is already gone. */
 export function writeFrame(socket: net.Socket, frame: object): void {
-	if (!socket.destroyed && socket.writable) socket.write(`${JSON.stringify(frame)}\n`);
+	if (socket.writable) writeJsonLine(socket, frame);
 }
 
 function hash16(text: string): string {

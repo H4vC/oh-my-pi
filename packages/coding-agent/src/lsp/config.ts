@@ -586,6 +586,7 @@ export function getServerForFile(config: LspConfig, filePath: string): [string, 
 
 /**
  * Check if a server has a specific capability
+ * @deprecated Unused; read `config.capabilities?.[capability] === true` directly. Will be removed in the next major.
  */
 export function hasCapability(
 	config: ServerConfig,

@@ -279,6 +279,8 @@ export async function disconnectServer(connection: MCPServerConnection): Promise
 
 /**
  * Check if a server supports tools.
+ *
+ * @deprecated Unused; check `capabilities.tools !== undefined`. Will be removed in the next major.
  */
 export function serverSupportsTools(capabilities: MCPServerCapabilities): boolean {
 	return capabilities.tools !== undefined;
