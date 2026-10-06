@@ -57,6 +57,7 @@ packages/*/CHANGELOG.md merge=union
 
 # Generated, minified catalog artifacts: regenerate instead of diffing/merging.
 packages/catalog/src/models.json binary
+packages/catalog/src/models.interned.json binary
 packages/catalog/src/compat/rules.json binary
 
 # Generated tree-sitter parser: regenerate from grammar.js (see its README.md).

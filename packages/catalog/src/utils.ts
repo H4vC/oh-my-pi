@@ -30,10 +30,13 @@ export function toPositiveNumber(value: unknown, fallback: number | null): numbe
 	return parsed !== undefined && parsed > 0 ? parsed : fallback;
 }
 
-/** Positive finite number, or `null` when the value is missing/non-positive. */
+/**
+ * Positive finite number, or `null` when the value is missing/non-positive.
+ *
+ * @deprecated Duplicate of `toPositiveNumber(value, null)`; use that. Will be removed in the next major.
+ */
 export function toPositiveNumberOrNull(value: unknown): number | null {
-	const parsed = toNumber(value);
-	return parsed !== undefined && parsed > 0 ? parsed : null;
+	return toPositiveNumber(value, null);
 }
 
 export function toBoolean(value: unknown): boolean | undefined {

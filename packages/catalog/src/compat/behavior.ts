@@ -38,6 +38,8 @@ export function isLikelyOpenAIResponsesId(model: string): boolean {
 /**
  * Additional catalog-declared operations for a discovered provider/model pair
  * (e.g. `generate_image`), augmenting provider discovery metadata.
+ *
+ * @deprecated No runtime consumer reads catalog model operations. Will be removed in the next major.
  */
 export function modelOperationOverrides(provider: string, model: string): readonly string[] {
 	const lower = model.toLowerCase();
@@ -56,6 +58,8 @@ export function modelOperationOverrides(provider: string, model: string): readon
  * declared effort tier. The family gate requires the declared marker
  * (`gpt-`) followed immediately by an ASCII digit; matching stays
  * case-sensitive to preserve Cursor wire-id behavior.
+ *
+ * @deprecated No runtime consumer. Will be removed in the next major.
  */
 export function cursorEffortSuffix(model: string): { base: string; tier: string } | undefined {
 	const rule = behavior.cursorEffort;
@@ -108,12 +112,20 @@ export function retryResetTimezoneOffsetFor(provider: string): string | undefine
 	return behavior.retryResetTimezones.find(rule => rule.provider === provider)?.offset;
 }
 
-/** Whether a provider has catalog-authored model quota scopes. */
+/**
+ * Whether a provider has catalog-authored model quota scopes.
+ *
+ * @deprecated Unused; use `quotaTierFor` for the actual quota scope. Will be removed in the next major.
+ */
 export function hasQuotaTierPolicy(provider: string): boolean {
 	return behavior.quotaTiers.some(rule => rule.provider === provider);
 }
 
-/** The provider-default wire model for a model-less hosted operation. */
+/**
+ * The provider-default wire model for a model-less hosted operation.
+ *
+ * @deprecated No runtime consumer. Will be removed in the next major.
+ */
 export function hostedDefaultModel(provider: string): string | undefined {
 	return behavior.hostedDefaults.find(entry => entry.provider === provider)?.model;
 }

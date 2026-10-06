@@ -10,7 +10,7 @@ import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 // *matching* field, not just delete `reasoning_effort` — otherwise a Qwen /
 // Qwen-template / OpenRouter request keeps thinking enabled and re-trips the
 // very 400 the policy exists to dodge. Both conflict branches funnel through the
-// same `disableChatCompletionsReasoningForDialect` helper, so the forced-tool
+// same `encodeChatCompletionsDisabledReasoning` helper, so the forced-tool
 // path below exercises that helper for every dialect.
 
 function createAbortedSignal(): AbortSignal {

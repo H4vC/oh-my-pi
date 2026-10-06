@@ -4,6 +4,7 @@
  */
 import * as os from "node:os";
 import { $env } from "@oh-my-pi/pi-utils";
+import { decodeJwtPayload } from "@oh-my-pi/pi-utils/jwt";
 import { $, Cookie, CookieMap } from "bun";
 import * as AIError from "../../error";
 import type { OAuthController, OAuthCredentials } from "./types";
@@ -43,18 +44,8 @@ function rememberCookies(cookies: CookieMap, response: Response): void {
  */
 const NEVER_EXPIRES = 8.64e15; // max safe Date value
 function getJwtExpiry(token: string): number {
-	try {
-		const parts = token.split(".");
-		if (parts.length !== 3) return NEVER_EXPIRES;
-		const payload = parts[1] ?? "";
-		const decoded = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
-		if (typeof decoded?.exp === "number" && Number.isFinite(decoded.exp)) {
-			return decoded.exp * 1000 - 5 * 60_000;
-		}
-	} catch {
-		// Ignore decode errors
-	}
-	return NEVER_EXPIRES;
+	const exp = decodeJwtPayload(token)?.exp;
+	return typeof exp === "number" && Number.isFinite(exp) ? exp * 1000 - 5 * 60_000 : NEVER_EXPIRES;
 }
 
 /** Build OAuthCredentials from a Perplexity JWT string. */

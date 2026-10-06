@@ -43,31 +43,14 @@ import type {
 	ToolCall,
 } from "../types";
 import {
-	clearStreamingPartialJson,
-	copyCursorExecResolved,
-	getStreamingPartialJson,
+	type CursorExecResolvedCarrier,
+	cloneProjectedToolCall,
 	type StreamingPartialJsonCarrier,
-	setStreamingPartialJson,
+	syncProjectedToolCall,
 } from "./block-symbols";
 import { AssistantMessageEventStream } from "./event-stream";
 
-type StreamingToolCall = ToolCall & StreamingPartialJsonCarrier;
-
-function cloneToolCall(source: StreamingToolCall): StreamingToolCall {
-	const block: StreamingToolCall = { ...source, arguments: source.arguments };
-	const partialJson = getStreamingPartialJson(source);
-	if (partialJson !== undefined) setStreamingPartialJson(block, partialJson);
-	copyCursorExecResolved(block, source);
-	return block;
-}
-
-function syncToolCall(target: StreamingToolCall, source: StreamingToolCall): void {
-	Object.assign(target, source);
-	const partialJson = getStreamingPartialJson(source);
-	if (partialJson === undefined) clearStreamingPartialJson(target);
-	else setStreamingPartialJson(target, partialJson);
-	copyCursorExecResolved(target, source);
-}
+type StreamingToolCall = ToolCall & StreamingPartialJsonCarrier & CursorExecResolvedCarrier;
 
 /**
  * Wrap a provider stream so leaked reasoning fences are healed into thinking
@@ -291,7 +274,7 @@ class LeakedThinkingProjector {
 		this.#flushHealer();
 		this.#closeText();
 		this.#closeThinking();
-		const block = cloneToolCall(source);
+		const block = cloneProjectedToolCall(source);
 		this.#partial.content.push(block);
 		const index = this.#partial.content.length - 1;
 		this.#anchor(index, srcIndex);
@@ -306,14 +289,14 @@ class LeakedThinkingProjector {
 			entry = this.#toolBlocks.get(srcIndex);
 		}
 		if (!entry) return;
-		if (source) syncToolCall(entry.block, source);
+		if (source) syncProjectedToolCall(entry.block, source);
 		this.#out.push({ type: "toolcall_delta", contentIndex: entry.index, delta, partial: this.#partial });
 	}
 
 	toolEnd(srcIndex: number, toolCall: ToolCall): void {
 		const entry = this.#toolBlocks.get(srcIndex);
 		if (entry) {
-			syncToolCall(entry.block, toolCall);
+			syncProjectedToolCall(entry.block, toolCall);
 			this.#out.push({
 				type: "toolcall_end",
 				contentIndex: entry.index,
@@ -327,7 +310,7 @@ class LeakedThinkingProjector {
 		this.#flushHealer();
 		this.#closeText();
 		this.#closeThinking();
-		const block = cloneToolCall(toolCall);
+		const block = cloneProjectedToolCall(toolCall);
 		this.#partial.content.push(block);
 		const index = this.#partial.content.length - 1;
 		this.#anchor(index, srcIndex);

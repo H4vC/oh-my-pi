@@ -1887,6 +1887,7 @@ export interface ResponseCustomToolCallInputDoneEvent {
 }
 /**
  * A call to a custom tool created by the model.
+ * @deprecated Unused SDK mirror; use `ResponseCustomToolCall`. Will be removed in the next major.
  */
 export interface ResponseCustomToolCallItem extends ResponseCustomToolCall {
 	/**
@@ -2478,6 +2479,7 @@ export interface ResponseFunctionToolCall {
  * A tool call to run a function. See the
  * [function calling guide](https://platform.openai.com/docs/guides/function-calling)
  * for more information.
+ * @deprecated Unused SDK mirror; use `ResponseFunctionToolCall`. Will be removed in the next major.
  */
 export interface ResponseFunctionToolCallItem extends ResponseFunctionToolCall {
 	/**
@@ -3579,6 +3581,7 @@ export declare namespace ResponseInputItem {
  * types.
  */
 export type ResponseInputMessageContentList = Array<ResponseInputContent>;
+/** @deprecated Unused SDK mirror; use `ResponseInputItem.Message`. Will be removed in the next major. */
 export interface ResponseInputMessageItem {
 	/**
 	 * The unique ID of the message input.
@@ -3821,6 +3824,7 @@ export interface ResponseMcpListToolsInProgressEvent {
 }
 /**
  * An audio output from the model.
+ * @deprecated Unused SDK mirror; audio output is not bridged. Will be removed in the next major.
  */
 export interface ResponseOutputAudio {
 	/**

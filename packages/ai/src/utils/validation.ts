@@ -12,7 +12,7 @@
  */
 
 import { type Type, type } from "@oh-my-pi/omptype";
-import { structuredCloneJSON } from "@oh-my-pi/pi-utils";
+import { isRecord, structuredCloneJSON } from "@oh-my-pi/pi-utils";
 import * as AIError from "../error";
 import type { Tool, ToolCall } from "../types";
 import { upgradeJsonSchemaTo202012 } from "./schema/draft";
@@ -1596,7 +1596,7 @@ function buildFlattenedPath(root: Record<string, unknown>, steps: FlattenedPathS
  * See https://github.com/can1357/oh-my-pi/issues/8886.
  */
 function normalizeFlattenedArrayProperties(value: unknown): { value: unknown; changed: boolean } {
-	if (!isPlainRecord(value)) return { value, changed: false };
+	if (!isRecord(value)) return { value, changed: false };
 	const source = value as Record<string, unknown>;
 	const out: Record<string, unknown> = {};
 	let changed = false;
@@ -1738,12 +1738,8 @@ type ContextValidationResult =
 	| { success: true; value: unknown }
 	| { success: false; flatIssues: FlatIssue[]; messages: string[] };
 
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function preserveUnknownRootFields(input: unknown, parsed: unknown): unknown {
-	if (!isPlainRecord(input) || !isPlainRecord(parsed)) return parsed;
+	if (!isRecord(input) || !isRecord(parsed)) return parsed;
 	return { ...input, ...parsed };
 }
 
@@ -1936,7 +1932,7 @@ function splitSpilledValue(text: string): SpillSplit | null {
  * whose string content legitimately contains tag-like text are never touched.
  */
 function healInbandArgSpill(value: unknown): { value: unknown; changed: boolean } {
-	if (!isPlainRecord(value)) return { value, changed: false };
+	if (!isRecord(value)) return { value, changed: false };
 	let changed = false;
 	const out: Record<string, unknown> = { ...value };
 	const recovered: [string, string][] = [];

@@ -5,12 +5,52 @@
 ### Added
 
 - Added `getOAuthCredentialProvider()` to resolve a login alias (such as `openai-codex-device`) to the provider its credentials are stored under ([#14588](https://github.com/can1357/oh-my-pi/pull/14588) by [@andrebrait](https://github.com/andrebrait))
+- Added `ConnectFrameDecoder` and Connect frame flag constants in `@oh-my-pi/pi-ai/providers/connect-frame` ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Added `createEmptyAssistantMessage` and `createEmptyUsage` to `@oh-my-pi/pi-ai/providers/error-message` ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Added `isOpenAIWireReasoningEffort`, `isOpenAIWireServiceTier`, `isHeaderRecord`, `cloneProjectedToolCall` and `syncProjectedToolCall` helpers ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Added `sniffBase64ImageMimeType` to detect a base64 image's mime type from its header ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Added `Blob`/`File` support to `TranscriptionRequest.audio`, uploaded without copying ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Added `readOpenAIErrorEnvelope` to parse OpenAI-style error bodies ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Added `getCredentialBlockScopes` to `CredentialBlockStore` (optional) and `RemoteAuthCredentialStore` to read all of a credential's block scopes at once ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Added `scheduleAuthBrokerSnapshotCacheWrite` and `flushAuthBrokerSnapshotCacheWrites` to coalesce broker snapshot cache writes ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
 
 ### Fixed
 
 - Fixed Ultrafast service-tier turns being billed at standard rates; GPT-6 Astra now carries its published Ultrafast premium (6x on the OpenAI API, 8x included usage on Codex), and the premium-request counter counts them ([#14471](https://github.com/can1357/oh-my-pi/pull/14471) by [@eggpeat](https://github.com/eggpeat)).
 - Fixed Vertex AI on Windows ignoring credentials from `gcloud auth application-default login`, which gcloud writes to `%APPDATA%\gcloud\application_default_credentials.json` rather than `~/.config/gcloud` ([#14549](https://github.com/can1357/oh-my-pi/pull/14549) by [@jorgoose](https://github.com/jorgoose))
 - Fixed `auth.accountPolicies` and `/session pin` being unable to select a Cursor account by email: Cursor logins now store the account email, and accounts stored earlier gain it at their next token refresh ([#14511](https://github.com/can1357/oh-my-pi/pull/14511) by [@will-bogusz](https://github.com/will-bogusz))
+- Fixed Cursor provider leaking conversation checkpoints, blob stores and abort listeners after requests end ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Fixed in-band tool-call dialect streams dropping `thoughtSignature`, `customWireName`, `providerMetadata` and `intent` from forwarded native tool calls, breaking Gemini signed tool-call replay ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Fixed session-affinity pins growing without bound in long-lived gateways (now capped at 256 sessions per provider) ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+
+### Changed
+
+- Reduced per-request CPU and memory use for Codex and OpenAI Responses requests, and moved Codex SSE body compression off the event loop ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Sped up Cursor and Devin streaming ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Sped up in-band tool-call dialect parsing for long tool calls ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Sped up importing `@oh-my-pi/pi-ai` and constructing `AuthStorage` by loading provider modules on first use ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Sped up Apple Foundation Models tool-call argument parsing ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Changed `parseXAIAccessTokenPayload` to require a three-segment JWT ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Reduced auth gateway per-request serialization overhead ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Sped up Cloudflare AI Gateway requests by reusing rebuilt models ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Changed AWS credential-source detection to cache its probes; edits to `~/.aws` files take effect within 5 s ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Improved embeddings, rerank, transcription and video API errors to include numeric error codes and plain-string `error` bodies ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Dropped the provider's `raw` payload from cached usage reports; only freshly fetched reports include it ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Sped up account ranking, OAuth preflight and credential rate-limit checks by cutting SQLite reads and write locks ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Reduced auth broker server and client CPU use for credential sync and SSE streams ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+
+### Deprecated
+
+- Deprecated `mapAnthropicToolChoice`; use `mapToAnthropicToolChoice` from `@oh-my-pi/pi-ai/utils/tool-choice` ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Deprecated unused wire types `ResponseCustomToolCallItem`, `ResponseFunctionToolCallItem`, `ResponseInputMessageItem`, `ResponseOutputAudio` and server-schema aliases `OpenAIChatRequest`, `AnthropicMessagesRequest`, `OpenAIResponsesRequest`, `OpenAIResponsesInputItem`, `OpenAIResponsesUserItem`, `OpenAIResponsesSystemItem`, `OpenAIResponsesAssistantItem`, `OpenAIResponsesCustomToolCallItem`, `OpenAIResponsesOutputRefusalBlock` ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Deprecated unused dialect helpers `isArraySchema`, `isObjectSchema`, `getObjectProperties`, `getArrayItemSchema` ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Deprecated GitLab Duo Workflow `GITLAB_DUO_WORKFLOW_PROVIDER_ID`, `GITLAB_DUO_WORKFLOW_API`, `GitLabMcpToolArgs`, `PlainTextResponse` and `resolveGitLabDuoWorkflowRootNamespaceId`; use `resolveGitLabDuoWorkflowNamespaceSelection(...).rootNamespaceId` ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Deprecated `AUTH_RETRY_STEPS`; retries are bounded by `AUTH_RETRY_MAX_ATTEMPTS` ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Deprecated `disableChatCompletionsReasoningForDialect`; pass `disableReasoning` to `applyChatCompletionsReasoningParams` ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Deprecated `normalizeSchemaForOpenAIResponses`; use `sanitizeSchemaForOpenAIResponses` ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Deprecated `isCursorTokenExpiringSoon`; read the token's `exp` claim directly ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Deprecated `SqliteAuthCredentialStore.saveOAuth`/`getOAuth`/`saveApiKey`/`getApiKey`/`listProviders`/`deleteProvider`; use `upsertAuthCredential`/`listAuthCredentials`/`replaceAuthCredentials`/`deleteAuthCredentials` ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Deprecated `AUTH_BROKER_API_PREFIX` and `SnapshotStreamEventKind`; use `SnapshotStreamEvent["kind"]` ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
 
 ## [18.6.3] - 2026-10-06
 

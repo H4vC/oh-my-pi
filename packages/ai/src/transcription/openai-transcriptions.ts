@@ -3,6 +3,7 @@ import type { Api, FetchImpl, Model, Usage } from "@oh-my-pi/pi-catalog/types";
 import { type } from "@oh-my-pi/omptype";
 import { type ApiKey, withAuth } from "../auth-retry";
 import * as AIError from "../error";
+import { readOpenAIErrorEnvelope } from "../error/openai-envelope";
 import type { TranscriptionRequest, TranscriptionResult, TranscriptionSegment, TranscriptionWord } from "./types";
 
 export interface TranscriptionOptions {
@@ -56,21 +57,7 @@ function decodeUsage(model: Model<Api>, raw: unknown): { usage: Usage; seconds?:
 }
 
 async function responseError(response: Response, model: Model<Api>): Promise<TranscriptionApiError> {
-	const text = await response.text();
-	let detail = text;
-	let code: string | undefined;
-	try {
-		const parsed: unknown = JSON.parse(text);
-		if (parsed && typeof parsed === "object" && "error" in parsed) {
-			const error = parsed.error;
-			if (error && typeof error === "object") {
-				const envelope = error as { message?: unknown; code?: unknown; type?: unknown };
-				if (typeof envelope.message === "string") detail = envelope.message;
-				if (typeof envelope.code === "string") code = envelope.code;
-				else if (typeof envelope.type === "string") code = envelope.type;
-			}
-		}
-	} catch {}
+	const { detail, code } = readOpenAIErrorEnvelope(await response.text());
 	return new TranscriptionApiError(
 		`${model.provider}/${model.id} transcription API error (${response.status}): ${detail || response.statusText}`,
 		response.status,
@@ -86,6 +73,8 @@ export async function transcribeOpenAI(
 ): Promise<TranscriptionResult> {
 	const form = new FormData();
 	const fileName = request.fileName?.trim() || "audio";
+	// Wrapping a Blob/File shares its bytes (only the name and type change);
+	// raw bytes are copied once.
 	form.append("file", new File([request.audio], fileName, { type: request.mimeType }));
 	form.append("model", model.id);
 	form.append("response_format", request.responseFormat);

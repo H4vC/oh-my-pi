@@ -3,6 +3,7 @@ import { calculateCost } from "@oh-my-pi/pi-catalog/models";
 import type { Api, FetchImpl, Model, Usage } from "@oh-my-pi/pi-catalog/types";
 import { type ApiKey, withAuth } from "../auth-retry";
 import * as AIError from "../error";
+import { readOpenAIErrorEnvelope } from "../error/openai-envelope";
 import type { RerankRequest, RerankResult } from "./types";
 
 export interface RerankOptions {
@@ -58,21 +59,7 @@ function documentText(document: unknown): string | undefined {
 }
 
 async function responseError(response: Response, model: Model<Api>): Promise<RerankApiError> {
-	const text = await response.text();
-	let detail = text;
-	let code: string | undefined;
-	try {
-		const parsed: unknown = JSON.parse(text);
-		if (parsed && typeof parsed === "object" && "error" in parsed) {
-			const error = parsed.error;
-			if (error && typeof error === "object") {
-				const envelope = error as { message?: unknown; code?: unknown; type?: unknown };
-				if (typeof envelope.message === "string") detail = envelope.message;
-				if (typeof envelope.code === "string" || typeof envelope.code === "number") code = String(envelope.code);
-				else if (typeof envelope.type === "string") code = envelope.type;
-			}
-		}
-	} catch {}
+	const { detail, code } = readOpenAIErrorEnvelope(await response.text());
 	return new RerankApiError(
 		`${model.provider}/${model.id} rerank API error (${response.status}): ${detail || response.statusText}`,
 		response.status,

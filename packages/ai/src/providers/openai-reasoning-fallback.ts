@@ -1,4 +1,4 @@
-import { extractHttpStatusFromError } from "@oh-my-pi/pi-utils";
+import { extractHttpStatusFromError, isRecord } from "@oh-my-pi/pi-utils";
 import type { CapturedHttpErrorResponse } from "../utils/http-inspector";
 
 /**
@@ -71,10 +71,6 @@ export function createOpenAIReasoningEffortFallbackKey(
 	wireModelId: string | undefined,
 ): string {
 	return `${endpoint}:${baseUrl ?? ""}:${wireModelId ?? ""}`;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** @internal */

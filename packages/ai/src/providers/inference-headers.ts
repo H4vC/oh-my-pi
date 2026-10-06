@@ -56,7 +56,8 @@ export function applyInferenceHeaders(headers: Record<string, string>, options: 
 	}
 }
 
-function isHeaderRecord(headers: RequestInit["headers"]): headers is Record<string, string> {
+/** True for a plain `Record<string, string>` header bag (not `Headers`, not tuple array). */
+export function isHeaderRecord(headers: RequestInit["headers"]): headers is Record<string, string> {
 	return headers !== undefined && !(headers instanceof Headers) && !Array.isArray(headers);
 }
 

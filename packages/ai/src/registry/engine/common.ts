@@ -11,6 +11,7 @@ import type {
 	CompiledUserinfo,
 } from "@oh-my-pi/pi-catalog/compat/types";
 import { $env } from "@oh-my-pi/pi-utils";
+import { decodeJwtPayload } from "@oh-my-pi/pi-utils/jwt";
 import * as AIError from "../../error";
 import type { FetchImpl } from "../../types";
 import { HOOKS } from "../hooks";
@@ -85,18 +86,6 @@ export function jsonPath(body: unknown, path: string): unknown {
 		current = (current as Record<string, unknown>)[segment];
 	}
 	return current;
-}
-
-/** Decodes a JWT payload without verification; `null` for malformed tokens. */
-export function decodeJwtPayload(token: string): Record<string, unknown> | null {
-	const parts = token.split(".");
-	if (parts.length !== 3 || !parts[1]) return null;
-	try {
-		const decoded = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8")) as unknown;
-		return decoded !== null && typeof decoded === "object" ? (decoded as Record<string, unknown>) : null;
-	} catch {
-		return null;
-	}
 }
 
 /** Epoch ms of a JWT `exp` claim minus `skewMs`, or undefined when absent. */

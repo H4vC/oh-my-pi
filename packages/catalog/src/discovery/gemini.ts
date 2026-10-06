@@ -1,7 +1,6 @@
 import { type } from "@oh-my-pi/omptype";
-import { getBundledModels } from "../models";
-import { toModelSpec } from "../provider-models/bundled-references";
-import type { FetchImpl, Model, ModelSpec } from "../types";
+import { createBundledReferenceMap } from "../provider-models/bundled-references";
+import type { FetchImpl, ModelSpec } from "../types";
 import { discoveryFetch } from "../utils";
 
 const GOOGLE_GENERATIVE_AI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
@@ -88,9 +87,7 @@ export async function fetchGeminiModels(
 	const pageSize = normalizePositiveInt(options.pageSize, DEFAULT_PAGE_SIZE);
 	const maxPages = normalizePositiveInt(options.maxPages, DEFAULT_MAX_PAGES);
 
-	const bundledById = new Map(
-		getBundledModels("google").map(model => [model.id, toModelSpec(model as Model<"google-generative-ai">)]),
-	);
+	const bundledById = createBundledReferenceMap<"google-generative-ai">("google");
 	const modelsById = new Map<string, ModelSpec<"google-generative-ai">>();
 	const seenTokens = new Set<string>();
 	let nextPageToken: string | undefined;

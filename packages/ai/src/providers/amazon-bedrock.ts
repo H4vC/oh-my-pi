@@ -52,6 +52,7 @@ import { signRequest } from "./aws-sigv4";
 import { isThinkingPrefixBindingError } from "./anthropic";
 import { parseAnthropicInputTransformations, THINKING_BINDING_CONTROLS_BETA } from "./anthropic-wire";
 import { isBedrockRequestMetadataValue } from "./bedrock-request-metadata";
+import { createEmptyAssistantMessage } from "./error-message";
 import { transformMessages } from "./transform-messages";
 
 /**
@@ -419,23 +420,7 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream"> = (
 		const startTime = performance.now();
 		let firstTokenTime: number | undefined;
 
-		const output: AssistantMessage = {
-			role: "assistant",
-			content: [],
-			api: "bedrock-converse-stream" as Api,
-			provider: model.provider,
-			model: model.id,
-			usage: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-				totalTokens: 0,
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-			},
-			stopReason: "stop",
-			timestamp: Date.now(),
-		};
+		const output = createEmptyAssistantMessage("bedrock-converse-stream" as Api, model.provider, model.id);
 
 		const blocks = output.content as Block[];
 		const contentIndexByBlockIndex = new Map<number, number>();

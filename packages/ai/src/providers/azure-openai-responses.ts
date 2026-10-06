@@ -1,6 +1,6 @@
 import { $env, type ServerSentEvent } from "@oh-my-pi/pi-utils";
+import { getEnvApiKey } from "../env-api-key";
 import * as AIError from "../error";
-import { getEnvApiKey } from "../stream";
 import type {
 	AssistantMessage,
 	Context,

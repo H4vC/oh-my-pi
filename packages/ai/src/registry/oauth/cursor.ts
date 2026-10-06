@@ -1,3 +1,4 @@
+import { decodeJwtPayload } from "@oh-my-pi/pi-utils/jwt";
 import * as AIError from "../../error";
 import type { FetchImpl } from "../../types";
 import { isRecord } from "../../utils";
@@ -203,50 +204,22 @@ async function withCursorAccountEmail(
 	return email ? { ...credentials, email } : credentials;
 }
 
-function decodeCursorAccessTokenPayload(token: string): unknown | undefined {
-	const parts = token.split(".");
-	if (parts.length !== 3) return undefined;
-	const payload = parts[1];
-	if (!payload) return undefined;
-	return JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
-}
-
 export function extractCursorAccessTokenUserId(accessToken: string): string | undefined {
-	try {
-		const payload = decodeCursorAccessTokenPayload(accessToken);
-		if (!payload || typeof payload !== "object" || !("sub" in payload) || typeof payload.sub !== "string") {
-			return undefined;
-		}
-		const { sub } = payload;
-		const parts = sub.split("|");
-		const userId = (parts.length > 1 ? parts[1] : sub).trim();
-		return userId || undefined;
-	} catch {
-		return undefined;
-	}
+	const sub = decodeJwtPayload(accessToken)?.sub;
+	if (typeof sub !== "string") return undefined;
+	const parts = sub.split("|");
+	const userId = (parts.length > 1 ? parts[1] : sub).trim();
+	return userId || undefined;
 }
 
 function getTokenExpiry(token: string): number {
-	try {
-		const decoded = decodeCursorAccessTokenPayload(token);
-		if (decoded && typeof decoded === "object" && "exp" in decoded && typeof decoded.exp === "number") {
-			return decoded.exp * 1000 - 5 * 60 * 1000;
-		}
-	} catch {
-		// Ignore parsing errors
-	}
-	return Date.now() + 3600 * 1000;
+	const exp = decodeJwtPayload(token)?.exp;
+	return typeof exp === "number" ? exp * 1000 - 5 * 60 * 1000 : Date.now() + 3600 * 1000;
 }
 
+/** @deprecated Unused; compare the token's `exp` claim (via `decodeJwtPayload` from `@oh-my-pi/pi-utils/jwt`) directly. Will be removed in the next major. */
 export function isCursorTokenExpiringSoon(token: string, thresholdSeconds = 300): boolean {
-	try {
-		const decoded = decodeCursorAccessTokenPayload(token);
-		if (!decoded || typeof decoded !== "object" || !("exp" in decoded) || typeof decoded.exp !== "number") {
-			return true;
-		}
-		const currentTime = Math.floor(Date.now() / 1000);
-		return decoded.exp - currentTime < thresholdSeconds;
-	} catch {
-		return true;
-	}
+	const exp = decodeJwtPayload(token)?.exp;
+	if (typeof exp !== "number") return true;
+	return exp - Math.floor(Date.now() / 1000) < thresholdSeconds;
 }

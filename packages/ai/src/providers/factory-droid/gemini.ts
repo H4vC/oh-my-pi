@@ -13,6 +13,7 @@ import {
 } from "../../utils/idle-iterator";
 import { notifyProviderResponse } from "../../utils/provider-response";
 import { dereferenceJsonSchema, normalizeSchemaForFactoryDroid, toolWireSchema } from "../../utils/schema";
+import { createEmptyAssistantMessage } from "../error-message";
 import {
 	extractGoogleErrorMessage,
 	mapGoogleUsage,
@@ -294,23 +295,7 @@ export function streamFactoryDroidGemini(
 	(async () => {
 		const startTime = performance.now();
 		let firstTokenTime: number | undefined;
-		const output: AssistantMessage = {
-			role: "assistant",
-			content: [],
-			api: "google-generative-ai",
-			provider: model.provider,
-			model: model.id,
-			usage: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-				totalTokens: 0,
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-			},
-			stopReason: "stop",
-			timestamp: Date.now(),
-		};
+		const output = createEmptyAssistantMessage("google-generative-ai", model.provider, model.id);
 
 		// The proxy buffers generated output and can stall before the first
 		// event (long reasoning) and between events (post-tool-call silence).

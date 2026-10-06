@@ -16,8 +16,6 @@ import {
 import { extractHttpStatusFromError, fetchWithRetry, readSseJson } from "@oh-my-pi/pi-utils";
 import * as AIError from "../error";
 import type {
-	Api,
-	AssistantMessage,
 	Context,
 	Model,
 	ProviderSessionState,
@@ -36,6 +34,7 @@ import { armPreResponseTimeout, getStreamFirstEventTimeoutMs, iterateWithIdleTim
 // the stream provider trusts the access token threaded through `options.apiKey`.
 import { normalizeSchemaForCCA } from "../utils/schema";
 import { StreamMarkupHealing, type StreamMarkupHealingEvent } from "../utils/stream-markup-healing";
+import { createEmptyAssistantMessage, createEmptyUsage } from "./error-message";
 import forcedToolDirective from "./google-antigravity-forced-tool.md" with { type: "text" };
 import type { Content, FunctionCallingConfigMode, ThinkingConfig } from "./google-shared";
 import {
@@ -484,23 +483,7 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli"> = (
 		const startTime = performance.now();
 		let firstTokenTime: number | undefined;
 
-		const output: AssistantMessage = {
-			role: "assistant",
-			content: [],
-			api: "google-gemini-cli" as Api,
-			provider: model.provider,
-			model: model.id,
-			usage: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-				totalTokens: 0,
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-			},
-			stopReason: "stop",
-			timestamp: Date.now(),
-		};
+		const output = createEmptyAssistantMessage("google-gemini-cli", model.provider, model.id);
 		let rawRequestDump: RawHttpRequestDump | undefined;
 
 		try {
@@ -632,14 +615,7 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli"> = (
 
 			const resetOutput = () => {
 				output.content = [];
-				output.usage = {
-					input: 0,
-					output: 0,
-					cacheRead: 0,
-					cacheWrite: 0,
-					totalTokens: 0,
-					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-				};
+				output.usage = createEmptyUsage();
 				output.stopReason = "stop";
 				output.errorMessage = undefined;
 				output.timestamp = Date.now();

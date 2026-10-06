@@ -2,6 +2,8 @@
  * xAI OAuth endpoint discovery, identity, and billing helpers.
  */
 
+import { isRecord } from "@oh-my-pi/pi-utils";
+import { decodeJwtPayload } from "@oh-my-pi/pi-utils/jwt";
 import * as AIError from "../../error";
 import type { FetchImpl } from "../../types";
 
@@ -16,10 +18,6 @@ const DISCOVERY_TIMEOUT_MS = 15_000;
 
 interface XAIOAuthDiscovery {
 	token_endpoint: string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
 }
 
 /**
@@ -144,18 +142,7 @@ export async function getXAITokenEndpoint(signal?: AbortSignal): Promise<string>
 
 /** Decode an xAI access-token JWT payload without verifying its signature. */
 export function parseXAIAccessTokenPayload(jwt: string): Record<string, unknown> | null {
-	try {
-		if (typeof jwt !== "string" || !jwt.includes(".")) return null;
-		const parts = jwt.split(".");
-		if (parts.length < 2) return null;
-		const payloadPart = parts[1];
-		if (!payloadPart) return null;
-		const decoded = Buffer.from(payloadPart, "base64url").toString("utf8");
-		const payload = JSON.parse(decoded) as unknown;
-		return isRecord(payload) && !Array.isArray(payload) ? payload : null;
-	} catch {
-		return null;
-	}
+	return typeof jwt === "string" ? decodeJwtPayload(jwt) : null;
 }
 
 /**
@@ -210,7 +197,7 @@ export async function fetchXAIOAuthIdentity(
 		});
 		if (!response.ok) return null;
 		const payload = (await response.json()) as unknown;
-		if (!isRecord(payload) || Array.isArray(payload)) return null;
+		if (!isRecord(payload)) return null;
 		const sub = typeof payload.sub === "string" && payload.sub.trim() ? payload.sub.trim() : undefined;
 		const email = typeof payload.email === "string" && payload.email.trim() ? payload.email.trim() : undefined;
 		const name = typeof payload.name === "string" && payload.name.trim() ? payload.name.trim() : undefined;

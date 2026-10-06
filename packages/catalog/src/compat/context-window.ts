@@ -1,47 +1,32 @@
-import { toModelSpec } from "../provider-models/bundled-references";
 import type { Model } from "../types";
-import { resolveCatalogAxes } from "./resolve";
-
-/**
- * Rule-owned maxima by provider/id/api. Resolve once per process rather than
- * walking the static policy cascade on every catalog rebuild. Null caches the
- * absence of a curated maximum; undefined means the key has not been resolved.
- * Bounded: one entry per distinct model; the wire-id set is bounded.
- */
-const ruleMaximumCache = new Map<string, number | null>();
-const clampOverrideCache = new Map<string, boolean>();
-const RULE_POLICY_CACHE_MAX = 8192;
+import { resolveCatalogPolicy } from "./catalog-policy";
 
 /**
  * Extended-context capacity. Curated maxima correct stale lower discovery
  * values; a higher live maximum still wins. The registry applies this capacity
  * only when extended context is enabled, before explicit user overrides.
- */
-export function resolveMaxContextWindow(model: Model): number | undefined {
-	const key = `${model.provider} ${model.id} ${model.api}`;
-	let curated = ruleMaximumCache.get(key);
-	if (curated === undefined) {
-		const maximum = resolveCatalogAxes(toModelSpec(model)).maxContextWindow;
-		curated = typeof maximum === "number" && Number.isFinite(maximum) && maximum > 0 ? maximum : null;
-		if (ruleMaximumCache.size >= RULE_POLICY_CACHE_MAX) ruleMaximumCache.clear();
-		ruleMaximumCache.set(key, curated);
-	}
-
-	const maximum = model.maxContextWindow;
-	if (typeof maximum === "number" && Number.isFinite(maximum) && maximum > 0) {
-		return Math.max(maximum, curated ?? 0);
-	}
-	return curated ?? undefined;
-}
-
-/**
- * Override ceiling for Codex models. Upstream clamps `model_context_window`
+ *
+ * Override ceiling for Codex models too: upstream clamps `model_context_window`
  * to `min(override, max_context_window)` (`with_config_overrides` in
  * `models-manager/src/model_info.rs`); the ceiling here is stale-aware — the
  * curated maximum corrects a lower server value (Astra reports a stale 872K
  * maximum; OpenAI documents at most 922K input) while a higher live maximum
  * still wins. No curated or live maximum means no ceiling: overrides pass
  * through, matching upstream's unclamped branch.
+ */
+export function resolveMaxContextWindow(model: Model): number | undefined {
+	const ruleMaximum = resolveCatalogPolicy(model).maxContextWindow;
+	const curated =
+		typeof ruleMaximum === "number" && Number.isFinite(ruleMaximum) && ruleMaximum > 0 ? ruleMaximum : undefined;
+	const maximum = model.maxContextWindow;
+	if (typeof maximum === "number" && Number.isFinite(maximum) && maximum > 0) {
+		return Math.max(maximum, curated ?? 0);
+	}
+	return curated;
+}
+
+/**
+ * @deprecated Identical to {@link resolveMaxContextWindow}; use that instead. Will be removed in the next major.
  */
 export function codexOverrideCeiling(model: Model): number | undefined {
 	return resolveMaxContextWindow(model);
@@ -53,13 +38,7 @@ export function codexOverrideCeiling(model: Model): number | undefined {
  * it here keeps provider deployment contracts out of TypeScript.
  */
 export function clampsContextOverride(model: Model): boolean {
-	const key = `${model.provider} ${model.id} ${model.api}`;
-	const cached = clampOverrideCache.get(key);
-	if (cached !== undefined) return cached;
-	const clamps = resolveCatalogAxes(toModelSpec(model)).clampContextOverride === true;
-	if (clampOverrideCache.size >= RULE_POLICY_CACHE_MAX) clampOverrideCache.clear();
-	clampOverrideCache.set(key, clamps);
-	return clamps;
+	return resolveCatalogPolicy(model).clampContextOverride === true;
 }
 
 /**
@@ -74,7 +53,7 @@ export function clampCodexContextWindow(model: Model, requested: number): number
 	if (!Number.isFinite(requested) || requested <= 0) {
 		return requested;
 	}
-	const ceiling = codexOverrideCeiling(model);
+	const ceiling = resolveMaxContextWindow(model);
 	if (ceiling === undefined || requested <= ceiling) {
 		return requested;
 	}

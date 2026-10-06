@@ -9,9 +9,10 @@
  */
 
 import { buildModel } from "@oh-my-pi/pi-catalog/build";
-import { ANTHROPIC_THINKING, mapAnthropicToolChoice } from "../stream";
+import { ANTHROPIC_THINKING } from "../stream";
 import type { Context, Model, ModelSpec, SimpleStreamOptions, ThinkingControlMode } from "../types";
 import { AssistantMessageEventStream } from "../utils/event-stream";
+import { mapToAnthropicToolChoice } from "../utils/tool-choice";
 import { createProviderErrorMessage } from "./error-message";
 import { streamAnthropic, streamOpenAICompletions } from "./register-builtins";
 
@@ -106,7 +107,7 @@ export function streamOpenAIAnthropicShim(
 					thinkingEnabled,
 					thinkingBudgetTokens: thinkingBudget,
 					reasoning: config.anthropicThinkingMode ? reasoningEffort : undefined,
-					toolChoice: mapAnthropicToolChoice(options?.toolChoice),
+					toolChoice: mapToAnthropicToolChoice(options?.toolChoice),
 					serviceTier: options?.serviceTier,
 				});
 

@@ -13,7 +13,6 @@ import type {
 	Context,
 	ImageContent,
 	Message,
-	ServiceTier,
 	StopReason,
 	TextContent,
 	Tool,
@@ -21,6 +20,7 @@ import type {
 	ToolResultMessage,
 	TSchema,
 } from "../types";
+import { createEmptyAssistantMessage } from "./error-message";
 import {
 	type OpenAIChatContentPart,
 	type OpenAIChatMessage,
@@ -30,26 +30,9 @@ import {
 	openaiChatRequestSchema,
 } from "./openai-chat-server-schema";
 import { decodeDataUri } from "./openai-data-uri";
-import { coerceNullMessageContentInPlace } from "./openai-shared";
+import { coerceNullMessageContentInPlace, isOpenAIWireReasoningEffort, isOpenAIWireServiceTier } from "./openai-shared";
 
 export type { ParsedRequest };
-
-type ReasoningEffort = NonNullable<ParsedRequest["options"]["reasoning"]>;
-
-function isReasoningEffort(value: unknown): value is ReasoningEffort {
-	return (
-		value === "minimal" ||
-		value === "low" ||
-		value === "medium" ||
-		value === "high" ||
-		value === "xhigh" ||
-		value === "max"
-	);
-}
-
-function isServiceTier(value: unknown): value is ServiceTier {
-	return value === "auto" || value === "default" || value === "flex" || value === "scale" || value === "priority";
-}
 
 const UNSUPPORTED_EXPLICIT_PROMPT_CACHE_MESSAGE =
 	"openai-chat: prompt_cache_options and prompt_cache_breakpoint are unsupported by this auth-gateway route; use /v1/pi/stream with options.promptCache instead";
@@ -202,10 +185,10 @@ export function parseRequest(body: unknown, headers?: Headers): ParsedRequest {
 	if (data.parallel_tool_calls !== undefined) options.parallelToolCalls = data.parallel_tool_calls;
 	if (data.reasoning_effort === "none") {
 		options.forceReasoningOff = true;
-	} else if (data.reasoning_effort !== undefined && isReasoningEffort(data.reasoning_effort)) {
+	} else if (data.reasoning_effort !== undefined && isOpenAIWireReasoningEffort(data.reasoning_effort)) {
 		options.reasoning = data.reasoning_effort;
 	}
-	if (data.service_tier !== undefined && isServiceTier(data.service_tier)) {
+	if (data.service_tier !== undefined && isOpenAIWireServiceTier(data.service_tier)) {
 		options.serviceTier = data.service_tier;
 	}
 	if (data.metadata !== undefined) options.metadata = data.metadata;
@@ -296,23 +279,9 @@ function buildAssistantMessage(
 			parts.push(call);
 		}
 	}
-	return {
-		role: "assistant",
-		content: parts,
-		api: "openai-completions",
-		provider: "openai",
-		model: modelId,
-		usage: {
-			input: 0,
-			output: 0,
-			cacheRead: 0,
-			cacheWrite: 0,
-			totalTokens: 0,
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-		},
-		stopReason: "stop",
-		timestamp: now,
-	};
+	const message = createEmptyAssistantMessage("openai-completions", "openai", modelId, now);
+	message.content = parts;
+	return message;
 }
 
 /**

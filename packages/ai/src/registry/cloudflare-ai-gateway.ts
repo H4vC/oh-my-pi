@@ -10,7 +10,17 @@ import {
 import { $env } from "@oh-my-pi/pi-utils";
 import { NO_AUTH_SENTINEL } from "../auth-retry";
 import * as AIError from "../error";
+import type { Api, Model } from "../types";
 import type { ProviderTransport } from "./build";
+
+/**
+ * `prepareModel` runs per request, and the OpenAI-compat route rebuilds the
+ * model through the full compat engine. Models are immutable once built, so
+ * the rebuilt route is kept per source object; `id` and `baseUrl` pick the
+ * route and are re-checked so a caller that edits them in place still
+ * re-resolves.
+ */
+const compatRouteModels = new WeakMap<Model<Api>, { id: string; baseUrl: string; prepared: Model<Api> }>();
 
 /** Cloudflare AI Gateway model/request shaping; login lives in `oauth/cloudflare-ai-gateway.ts` + its auth rule. */
 export const cloudflareAiGatewayTransport: ProviderTransport = {
@@ -49,13 +59,17 @@ export const cloudflareAiGatewayTransport: ProviderTransport = {
 			) {
 				return model;
 			}
-			return buildModel({
+			const cached = compatRouteModels.get(model);
+			if (cached && cached.id === model.id && cached.baseUrl === model.baseUrl) return cached.prepared;
+			const prepared = buildModel({
 				...model,
 				api: "openai-completions",
 				baseUrl,
 				compat: model.compatConfig,
 				...(route.requestModelId !== undefined ? { requestModelId: route.requestModelId } : {}),
 			});
+			compatRouteModels.set(model, { id: model.id, baseUrl: model.baseUrl, prepared });
+			return prepared;
 		}
 		return model;
 	},

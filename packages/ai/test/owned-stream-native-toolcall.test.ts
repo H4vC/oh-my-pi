@@ -327,6 +327,28 @@ describe("wrapInbandToolStream native tool-call passthrough", () => {
 		expect(isCursorExecResolved(calls[0])).toBe(true);
 	});
 
+	it("preserves thoughtSignature and provider metadata across the owned/in-band projector", async () => {
+		// Gemini rejects a replayed function call whose thoughtSignature was lost.
+		const inner = drive((push, out) => {
+			const block: ToolCall = {
+				type: "toolCall",
+				id: "tool_todo_sig",
+				name: "todo",
+				arguments: { ops: [{ op: "view" }] },
+				thoughtSignature: "gemini-sig",
+				customWireName: "todo_custom",
+			};
+			out.content.push(block);
+			push({ type: "toolcall_start", contentIndex: 0, partial: out });
+			push({ type: "toolcall_end", contentIndex: 0, toolCall: block, partial: out });
+		});
+		const { message } = await collect(wrapInbandToolStream(inner, TOOLS, "gemini"));
+		const calls = message.content.filter((b): b is ToolCall => b.type === "toolCall");
+		expect(calls).toHaveLength(1);
+		expect(calls[0]!.thoughtSignature).toBe("gemini-sig");
+		expect(calls[0]!.customWireName).toBe("todo_custom");
+	});
+
 	it("drops a nameless native ghost but keeps the real native call", async () => {
 		const { message } = await collect(wrapInbandToolStream(ghostThenRealNative(), TOOLS, "gemini"));
 		const calls = message.content.filter((b): b is ToolCall => b.type === "toolCall");

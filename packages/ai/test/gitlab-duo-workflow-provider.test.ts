@@ -22,7 +22,6 @@ import {
 	type GitLabDuoWorkflowWebSocketLike,
 	gitLabDuoWorkflowErrorText,
 	resolveGitLabDuoWorkflowNamespaceSelection,
-	resolveGitLabDuoWorkflowRootNamespaceId,
 	runGitLabDuoWorkflowSocket,
 	streamGitLabDuoWorkflow,
 	traceGitLabDuoWorkflow,
@@ -529,15 +528,6 @@ describe("GitLab Duo Workflow namespace resolution", () => {
 				namespacePath: "discovered-group",
 				source: "group",
 			});
-			expect(
-				await resolveGitLabDuoWorkflowRootNamespaceId(
-					model,
-					{ apiKey: "redacted", cwd: "/" },
-					"redacted",
-					"https://gitlab.example.com",
-					fetchImpl,
-				),
-			).toBe("gid://gitlab/Group/discovered");
 		} finally {
 			restoreOptionalEnv("GITLAB_DUO_NAMESPACE_ID", originalNamespaceId);
 			restoreOptionalEnv("GITLAB_DUO_PROJECT_ID", originalProjectId);
@@ -569,7 +559,7 @@ describe("GitLab Duo Workflow namespace resolution", () => {
 		const originalProjectId = Bun.env.GITLAB_DUO_PROJECT_ID;
 		try {
 			Bun.env.GITLAB_DUO_PROJECT_ID = "env-project";
-			const resolved = await resolveGitLabDuoWorkflowRootNamespaceId(
+			const resolved = await resolveGitLabDuoWorkflowNamespaceSelection(
 				model,
 				{ apiKey: "redacted", projectPath: "group/project" },
 				"redacted",
@@ -577,7 +567,7 @@ describe("GitLab Duo Workflow namespace resolution", () => {
 				fetchImpl,
 			);
 
-			expect(resolved).toBe("gid://gitlab/Group/runtime-root");
+			expect(resolved.rootNamespaceId).toBe("gid://gitlab/Group/runtime-root");
 		} finally {
 			restoreOptionalEnv("GITLAB_DUO_PROJECT_ID", originalProjectId);
 		}

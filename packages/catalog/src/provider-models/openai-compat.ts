@@ -2830,9 +2830,7 @@ async function fetchClinePassModels(
  * known ids retain exact Cline limits, plan pricing, and reasoning controls.
  */
 export function clinePassModelManagerOptions(config?: ModelManagerConfig): ModelManagerOptions<"openai-completions"> {
-	const references = new Map(
-		(getBundledModels("cline-pass") as Model<"openai-completions">[]).map(model => [model.id, toModelSpec(model)]),
-	);
+	const references = createBundledReferenceMap<"openai-completions">("cline-pass");
 	const fetchImpl = discoveryFetch(config?.fetch);
 	return {
 		providerId: "cline-pass",
@@ -3223,7 +3221,6 @@ export function ollamaModelManagerOptions(config?: OllamaModelManagerConfig): Mo
 	const apiKey = config?.apiKey;
 	const baseUrl = normalizeOllamaBaseUrl(config?.baseUrl);
 	const nativeBaseUrl = toOllamaNativeBaseUrl(baseUrl);
-	const references = createBundledReferenceMap<"openai-responses">("ollama" as Parameters<typeof getBundledModels>[0]);
 	const resolveMetadata = createOllamaMetadataResolver(nativeBaseUrl, config?.fetch);
 	return {
 		providerId: "ollama",
@@ -3234,18 +3231,14 @@ export function ollamaModelManagerOptions(config?: OllamaModelManagerConfig): Mo
 				provider: "ollama",
 				baseUrl,
 				apiKey,
-				mapModel: (entry, defaults) => {
-					const reference = references.get(defaults.id);
-					if (!reference) {
-						return {
-							...defaults,
-							name: toModelName(entry.name, defaults.name),
-							contextWindow: OLLAMA_FALLBACK_CONTEXT_WINDOW,
-							maxTokens: OLLAMA_DEFAULT_MAX_TOKENS,
-						};
-					}
-					return mapWithBundledReference(entry, defaults, reference);
-				},
+				// Discovery-only provider: models.json never bundles ollama rows, so
+				// there is no bundled reference to inherit limits from.
+				mapModel: (entry, defaults) => ({
+					...defaults,
+					name: toModelName(entry.name, defaults.name),
+					contextWindow: OLLAMA_FALLBACK_CONTEXT_WINDOW,
+					maxTokens: OLLAMA_DEFAULT_MAX_TOKENS,
+				}),
 				fetch: config?.fetch,
 			});
 			if (openAiCompatible && openAiCompatible.length > 0) {
@@ -4117,7 +4110,6 @@ export function lmStudioModelManagerOptions(
 ): ModelManagerOptions<"openai-completions"> {
 	const apiKey = config?.apiKey;
 	const baseUrl = config?.baseUrl ?? Bun.env.LM_STUDIO_BASE_URL ?? "http://127.0.0.1:1234/v1";
-	const references = createBundledReferenceMap<"openai-completions">("lm-studio" as any);
 	return {
 		providerId: "lm-studio",
 		fetchDynamicModels: async () => {
@@ -4129,10 +4121,8 @@ export function lmStudioModelManagerOptions(
 				provider: "lm-studio",
 				baseUrl,
 				apiKey,
-				mapModel: (entry, defaults) => {
-					const reference = references.get(defaults.id);
-					return mapWithBundledReference(entry, defaults, reference);
-				},
+				// Discovery-only provider: models.json never bundles lm-studio rows.
+				mapModel: (entry, defaults) => mapWithBundledReference(entry, defaults, undefined),
 				fetch: config?.fetch,
 			});
 			if (!models) {
@@ -4257,9 +4247,7 @@ export function syntheticModelManagerOptions(
 ): ModelManagerOptions<"openai-completions"> {
 	const apiKey = config?.apiKey;
 	const baseUrl = config?.baseUrl ?? "https://api.synthetic.new/openai/v1";
-	const references = new Map(
-		(getBundledModels("synthetic") as Model<"openai-completions">[]).map(model => [model.id, toModelSpec(model)]),
-	);
+	const references = createBundledReferenceMap<"openai-completions">("synthetic");
 	return {
 		providerId: "synthetic",
 		dynamicModelsAuthoritative: true,
@@ -6030,7 +6018,6 @@ export interface VllmModelManagerConfig {
 export function vllmModelManagerOptions(config?: VllmModelManagerConfig): ModelManagerOptions<"openai-completions"> {
 	const apiKey = config?.apiKey;
 	const baseUrl = config?.baseUrl ?? getDefaultModelDiscoveryBaseUrl("vllm")!;
-	const references = createBundledReferenceMap<"openai-completions">("vllm" as Parameters<typeof getBundledModels>[0]);
 	return {
 		providerId: "vllm",
 		cacheProviderId: resolveModelCacheProviderId("vllm", { baseUrl }),
@@ -6041,7 +6028,8 @@ export function vllmModelManagerOptions(config?: VllmModelManagerConfig): ModelM
 				baseUrl,
 				apiKey,
 				mapModel: (entry, defaults) => {
-					const model = mapWithBundledReference(entry, defaults, references.get(defaults.id));
+					// Discovery-only provider: models.json never bundles vllm rows.
+					const model = mapWithBundledReference(entry, defaults, undefined);
 					const identity = classifyModel("vllm", model.id, { lenient: true });
 					return {
 						...model,

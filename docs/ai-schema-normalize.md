@@ -23,7 +23,7 @@ All exports live under `@oh-my-pi/pi-ai/utils/schema`:
 - `normalizeSchemaForMCP(value)` — MCP inputSchemas before they enter the
   custom-tool registry. `tool-bridge.ts` runs every MCP `inputSchema` through
   this dispatcher.
-- `sanitizeSchemaForOpenAIResponses(schema)` (alias
+- `sanitizeSchemaForOpenAIResponses(schema)` (deprecated alias
   `normalizeSchemaForOpenAIResponses`) — recursively rewrites `oneOf` →
   `anyOf`, adds empty `properties` to object schemas, and removes regex
   lookarounds that the Responses API rejects.

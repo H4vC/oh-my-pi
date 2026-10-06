@@ -15,13 +15,14 @@ import {
 	factoryDroidWireBaseUrl,
 	resolveFactoryDroidInferenceRegion,
 } from "@oh-my-pi/pi-catalog/wire/factory-droid";
+import { decodeJwtPayload } from "@oh-my-pi/pi-utils/jwt";
 import { NO_AUTH_SENTINEL } from "../auth-retry";
 import type { OAuthRequestIdentity } from "../auth/types";
 import * as AIError from "../error";
-import { mapAnthropicToolChoice } from "../stream";
 import type { Api, Context, Model, ModelSpec, ServiceTier, StreamFunction, StreamOptions, ToolChoice } from "../types";
 import { deterministicUuid } from "../utils/deterministic-id";
 import { AssistantMessageEventStream } from "../utils/event-stream";
+import { mapToAnthropicToolChoice } from "../utils/tool-choice";
 import { type AnthropicOptions, mapStainlessArch, mapStainlessOs, shouldStripThinkingHistory } from "./anthropic";
 import { createProviderErrorMessage } from "./error-message";
 import droidIdentity from "./factory-droid/droid-identity.md" with { type: "text" };
@@ -328,16 +329,7 @@ function buildCompletionsReasoningBody(
 
 /** Factory's external org id (`X-Factory-Org-Id` header value) from the WorkOS JWT payload, unverified (the server verifies). */
 function factoryDroidOrgIdFromToken(accessToken: string): string | undefined {
-	const [, payloadSegment] = accessToken.split(".");
-	if (!payloadSegment) return undefined;
-	let payload: unknown;
-	try {
-		payload = JSON.parse(Buffer.from(payloadSegment, "base64url").toString("utf8"));
-	} catch {
-		return undefined;
-	}
-	if (payload == null || typeof payload !== "object" || !("external_org_id" in payload)) return undefined;
-	const external = payload.external_org_id;
+	const external = decodeJwtPayload(accessToken)?.external_org_id;
 	return typeof external === "string" && external.length > 0 ? external : undefined;
 }
 
@@ -447,7 +439,7 @@ function streamMessagesWire(a: Attempt, inner: Model<"anthropic-messages">): Ass
 		temperature: options?.temperature,
 		stopSequences: options?.stopSequences,
 		serviceTier: options?.serviceTier,
-		toolChoice: mapAnthropicToolChoice(options?.toolChoice),
+		toolChoice: mapToAnthropicToolChoice(options?.toolChoice),
 	});
 }
 

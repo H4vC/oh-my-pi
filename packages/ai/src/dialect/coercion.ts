@@ -86,20 +86,24 @@ export function coerceValue(raw: string, schema: unknown): unknown {
 	return isStringOnlySchema(schema) ? raw : decodeValue(raw);
 }
 
+/** @deprecated Unused; inspect `schema.type` directly. Will be removed in the next major. */
 export function isArraySchema(schema: unknown): boolean {
 	return collectSchemaTypes(schema).has("array");
 }
 
+/** @deprecated Unused; inspect `schema.type` directly. Will be removed in the next major. */
 export function isObjectSchema(schema: unknown): boolean {
 	return collectSchemaTypes(schema).has("object");
 }
 
+/** @deprecated Unused; read `schema.properties` directly. Will be removed in the next major. */
 export function getObjectProperties(schema: unknown): Record<string, unknown> {
 	if (!schema || typeof schema !== "object" || Array.isArray(schema)) return {};
 	const props = (schema as Record<string, unknown>).properties;
 	return props && typeof props === "object" && !Array.isArray(props) ? (props as Record<string, unknown>) : {};
 }
 
+/** @deprecated Unused; read `schema.items` directly. Will be removed in the next major. */
 export function getArrayItemSchema(schema: unknown): unknown {
 	if (!schema || typeof schema !== "object" || Array.isArray(schema)) return undefined;
 	return (schema as Record<string, unknown>).items;

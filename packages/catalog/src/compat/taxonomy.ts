@@ -8,6 +8,7 @@
  * with token byte length as tiebreak; equal cross-class or cross-family ranks
  * throw unless classification is `lenient` (discovery normalization).
  */
+import { LRUCache } from "@oh-my-pi/pi-utils/lru";
 import type { Effort } from "../effort";
 import { globMatch } from "./cascade";
 import { formatRevision, parseRevisionPrefix } from "./revision";
@@ -433,8 +434,8 @@ export function stripThinkingVariantSuffix(model: string): string | undefined {
  * @throws AmbiguousIdentityError on equal-rank cross-class, cross-family, or
  * reviewed-pattern matches unless `opts.lenient`.
  */
-const classifyMemo = new Map<string, ModelIdentity>();
-const CLASSIFY_MEMO_MAX = 4096;
+// LRU sized above the bundled catalog so catalog-wide passes stay hot (a full `clear()` thrashed them).
+const classifyMemo = new LRUCache<string, ModelIdentity>({ max: 16384 });
 
 function classifyMemoKey(provider: string, modelId: string, lenient: boolean): string {
 	return `${provider.length}:${provider}${modelId.length}:${modelId}${lenient ? 1 : 0}`;
@@ -446,7 +447,6 @@ export function classifyModel(provider: string, modelId: string, opts?: Classify
 		const cached = classifyMemo.get(key);
 		if (cached !== undefined) return { ...cached };
 		const identity = classifyModelUncached(provider, modelId, opts);
-		if (classifyMemo.size >= CLASSIFY_MEMO_MAX) classifyMemo.clear();
 		classifyMemo.set(key, Object.freeze(identity));
 		return { ...identity };
 	}
@@ -514,19 +514,31 @@ export function routingVariantPlain(provider: string, wireModel: string): string
 	return undefined;
 }
 
-/** Whether any routing-variant suffix is declared for `provider`. */
+/**
+ * Whether any routing-variant suffix is declared for `provider`.
+ *
+ * @deprecated Unused; use `routingVariantPlain`. Will be removed in the next major.
+ */
 export function hasRoutingVariants(provider: string): boolean {
 	const lower = provider.toLowerCase();
 	return rules.taxonomy.collapse.routingVariants.some(rule => rule.providers.includes(lower));
 }
 
-/** Whether `provider`'s discovery recovers canonical intrinsic parameters. */
+/**
+ * Whether `provider`'s discovery recovers canonical intrinsic parameters.
+ *
+ * @deprecated No runtime consumer. Will be removed in the next major.
+ */
 export function recoversCanonicalParams(provider: string): boolean {
 	const lower = provider.toLowerCase();
 	return rules.taxonomy.discovery.canonicalRecovery.includes(lower);
 }
 
-/** The full responses-route hint group containing `provider`, when declared. */
+/**
+ * The full responses-route hint group containing `provider`, when declared.
+ *
+ * @deprecated No runtime consumer; use `responsesRouteModels`. Will be removed in the next major.
+ */
 export function responsesHintGroup(provider: string): readonly string[] | undefined {
 	const lower = provider.toLowerCase();
 	return rules.taxonomy.discovery.responsesHintGroups.find(group => group.includes(lower));
@@ -537,19 +549,31 @@ export function responsesRouteModels(provider: string): readonly string[] | unde
 	return rules.taxonomy.discovery.responsesRouteModels[provider.toLowerCase()];
 }
 
-/** Whether `provider` declares dynamic effort-sibling families. */
+/**
+ * Whether `provider` declares dynamic effort-sibling families.
+ *
+ * @deprecated No runtime consumer. Will be removed in the next major.
+ */
 export function supportsDynamicEffortSiblings(provider: string): boolean {
 	const lower = provider.toLowerCase();
 	return rules.taxonomy.collapse.effortFamilies.some(family => family.provider === lower && family.logical.length > 0);
 }
 
-/** The reviewed effort-family seeds declared for `provider`. */
+/**
+ * The reviewed effort-family seeds declared for `provider`.
+ *
+ * @deprecated No runtime consumer. Will be removed in the next major.
+ */
 export function effortFamiliesFor(provider: string): readonly { logical: string; aliases: readonly string[] }[] {
 	const lower = provider.toLowerCase();
 	return rules.taxonomy.collapse.effortFamilies.filter(family => family.provider === lower);
 }
 
-/** The standard-lane id when `model` ends in a declared effort lane for `provider`. */
+/**
+ * The standard-lane id when `model` ends in a declared effort lane for `provider`.
+ *
+ * @deprecated No runtime consumer. Will be removed in the next major.
+ */
 export function stripEffortLane(provider: string, model: string): string {
 	const lowerProvider = provider.toLowerCase();
 	for (const lane of rules.taxonomy.collapse.lanes) {

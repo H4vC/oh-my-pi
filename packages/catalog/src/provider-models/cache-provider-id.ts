@@ -1,3 +1,4 @@
+import { decodeJwtPayload } from "@oh-my-pi/pi-utils/jwt";
 import { CHARM_HYPER_API_BASE_URL, normalizeCharmHyperBaseUrl } from "../wire/charm-hyper";
 import { CODEX_BASE_URL, CODEX_CLIENT_VERSION } from "../wire/codex";
 import { CURSOR_DEFAULT_BASE_URL } from "../wire/cursor";
@@ -76,16 +77,8 @@ export function resolveOllamaModelCacheProviderId(providerId: string, baseUrl?: 
  * so the subject is the stable account scope. Non-JWT keys return undefined.
  */
 function cursorCredentialSubject(apiKey: string): string | undefined {
-	const parts = apiKey.split(".");
-	if (parts.length !== 3 || !parts[1]) return undefined;
-	try {
-		const payload: unknown = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf-8"));
-		if (typeof payload !== "object" || payload === null) return undefined;
-		const subject = Reflect.get(payload, "sub");
-		return typeof subject === "string" && subject.length > 0 ? `sub:${subject}` : undefined;
-	} catch {
-		return undefined;
-	}
+	const subject = decodeJwtPayload(apiKey)?.sub;
+	return typeof subject === "string" && subject.length > 0 ? `sub:${subject}` : undefined;
 }
 
 /** Resolve the cache namespace used by a provider's model-manager options without constructing those options. */

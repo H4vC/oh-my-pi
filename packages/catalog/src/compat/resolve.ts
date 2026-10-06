@@ -193,7 +193,8 @@ function effortValue(value: unknown): Effort | undefined {
 	return THINKING_EFFORTS.find(candidate => candidate === value);
 }
 
-function objectPayload(value: unknown): object | undefined {
+/** Narrow an unknown compiled-axis payload to an object payload. */
+export function objectPayload(value: unknown): object | undefined {
 	return typeof value === "object" && value !== null && !Array.isArray(value) ? value : undefined;
 }
 

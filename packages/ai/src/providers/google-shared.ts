@@ -29,6 +29,7 @@ import { normalizeSystemPrompts } from "../utils";
 import { AssistantMessageEventStream } from "../utils/event-stream";
 import type { RawHttpRequestDump } from "../utils/http-inspector";
 import { normalizeSchemaForCCA, normalizeSchemaForGoogle, toolWireSchema } from "../utils/schema";
+import { createEmptyAssistantMessage, createEmptyUsage } from "./error-message";
 import type {
 	Content,
 	FinishReason,
@@ -462,14 +463,7 @@ export function hasMeaningfulGoogleContent(output: AssistantMessage): boolean {
 /** Wipe a streamed message between empty-response retries so the next attempt starts clean. */
 function resetGoogleStreamOutputForRetry(output: AssistantMessage): void {
 	output.content = [];
-	output.usage = {
-		input: 0,
-		output: 0,
-		cacheRead: 0,
-		cacheWrite: 0,
-		totalTokens: 0,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-	};
+	output.usage = createEmptyUsage();
 	output.stopReason = "stop";
 	output.errorMessage = undefined;
 	output.timestamp = Date.now();
@@ -941,23 +935,7 @@ export function streamGoogleGenAI<T extends "google-generative-ai" | "google-ver
 		const startTime = performance.now();
 		let firstTokenTime: number | undefined;
 
-		const output: AssistantMessage = {
-			role: "assistant",
-			content: [],
-			api: api as Api,
-			provider: model.provider,
-			model: model.id,
-			usage: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-				totalTokens: 0,
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-			},
-			stopReason: "stop",
-			timestamp: Date.now(),
-		};
+		const output = createEmptyAssistantMessage(api as Api, model.provider, model.id);
 		let rawRequestDump: RawHttpRequestDump | undefined;
 
 		try {

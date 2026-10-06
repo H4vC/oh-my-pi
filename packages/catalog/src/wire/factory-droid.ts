@@ -3,7 +3,7 @@
  * provider, OAuth login and account usage: client identity, upstream/region
  * vocabulary, API hosts and the account-scoped model-cache namespace.
  */
-import { isRecord } from "../utils";
+import { decodeJwtPayload } from "@oh-my-pi/pi-utils/jwt";
 
 /**
  * Client version reported to Factory's API. When bumping it, recapture the
@@ -104,23 +104,15 @@ export function factoryDroidModelCacheProviderId(options: { apiKey?: string } & 
 	// Opaque credentials (including test keys) retain credential isolation.
 	const token = options.apiKey ?? "";
 	let credentialScope = `bearer\u0000${token}`;
-	const parts = token.split(".");
-	if (parts.length === 3 && parts.every(Boolean)) {
-		try {
-			const claims: unknown = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
-			if (
-				isRecord(claims) &&
-				!Array.isArray(claims) &&
-				typeof claims.external_org_id === "string" &&
-				claims.external_org_id.trim() &&
-				typeof claims.sub === "string" &&
-				claims.sub.trim()
-			) {
-				credentialScope = `account\u0000${claims.external_org_id}\u0000${claims.sub}`;
-			}
-		} catch {
-			// Non-JWT credentials continue to hash the opaque bearer.
-		}
+	// Non-JWT credentials continue to hash the opaque bearer.
+	const claims = decodeJwtPayload(token);
+	if (
+		typeof claims?.external_org_id === "string" &&
+		claims.external_org_id.trim() &&
+		typeof claims.sub === "string" &&
+		claims.sub.trim()
+	) {
+		credentialScope = `account\u0000${claims.external_org_id}\u0000${claims.sub}`;
 	}
 	const region = options.region === "eu" ? "eu" : "global";
 	const scope = `${credentialScope}\u0000${options.orgId ?? ""}\u0000${region}\u0000${options.inferenceRegion ?? region}`;

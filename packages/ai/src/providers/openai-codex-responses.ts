@@ -14,6 +14,7 @@ import {
 	$env,
 	$flag,
 	asRecord,
+	cloneJsonTree,
 	fetchWithRetry,
 	getInstallId,
 	logger,
@@ -23,9 +24,9 @@ import {
 } from "@oh-my-pi/pi-utils";
 import * as AIError from "../error";
 import { parseToolCallArguments, replayableToolCallArguments } from "../utils/tool-call-arguments";
-import { getEnvApiKey, isOfficialCodexApiUrl } from "../stream";
+import { getEnvApiKey } from "../env-api-key";
+import { isOfficialCodexApiUrl } from "../stream";
 import type {
-	Api,
 	AssistantMessage,
 	CodexCompactionContext,
 	CodexCompactionRequestContext,
@@ -72,6 +73,7 @@ import { getProxyForUrl } from "../utils/proxy";
 import { createRequestDebugSession, isRequestDebugEnabled, type RequestDebugResponseLog } from "../utils/request-debug";
 import { adaptSchemaForStrict, NO_STRICT, sanitizeSchemaForOpenAIResponses, toolWireSchema } from "../utils/schema";
 import { notifyRawSseEvent } from "../utils/sse-debug";
+import { createEmptyAssistantMessage, createEmptyUsage } from "./error-message";
 import { compactGrammarDefinition } from "./grammar";
 import {
 	type CodexLiteShapedBody,
@@ -452,8 +454,20 @@ type CodexWebSocketSessionState = {
 	fallbackCount: number;
 	lastFallbackAt?: number;
 	prewarmed: boolean;
-	stats: OpenAICodexWebSocketDebugStats;
+	stats: Omit<OpenAICodexWebSocketDebugStats, "lastTurn">;
+	lastTurn?: CodexTurnDiagnosticsRecord;
 };
+
+/**
+ * Latest turn diagnostics. Request diagnostics re-serialize the whole input and
+ * tools, so the request is kept by reference and only measured when a reader
+ * asks for it ({@link getOpenAICodexWebSocketDebugStats} or CODEX_DEBUG).
+ */
+interface CodexTurnDiagnosticsRecord {
+	source?: { request: Record<string, unknown>; transport: CodexTransport; canAppendBeforeRequest: boolean };
+	request?: OpenAICodexTurnRequestDiagnostics;
+	usage?: OpenAICodexTurnUsageDiagnostics;
+}
 
 interface CodexTurnStateCell {
 	value?: string;
@@ -1376,14 +1390,7 @@ function applyCodexServiceTierPricing(
 
 function resetOutputState(output: AssistantMessage): void {
 	output.content.length = 0;
-	output.usage = {
-		input: 0,
-		output: 0,
-		cacheRead: 0,
-		cacheWrite: 0,
-		totalTokens: 0,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-	};
+	output.usage = createEmptyUsage();
 	output.stopReason = "stop";
 	output.stopDetails = undefined;
 }
@@ -1874,7 +1881,7 @@ async function openCodexWebSocketTransport(
 					requestSetup.requestSignal,
 					onSseEvent,
 				),
-				requestBodyForState: structuredCloneJSON(requestContext.transformedBody),
+				requestBodyForState: cloneJsonTree(requestContext.transformedBody),
 				transport: "websocket",
 			};
 		}
@@ -1918,7 +1925,7 @@ async function openCodexWebSocketTransport(
 		websocketRequest = replacementWebsocketRequest as typeof websocketRequest;
 	}
 	recordCodexTurnRequestDiagnostics(websocketState, websocketRequest, "websocket", canAppendBeforeRequest);
-	const requestBodyForState = structuredCloneJSON(requestContext.transformedBody);
+	const requestBodyForState = cloneJsonTree(requestContext.transformedBody);
 	// `onPayload` may rewrite the outgoing frame (e.g. drop `stream_options`);
 	// recorded state must reflect what was actually sent — the sequential-cutoff
 	// summary decoder keys off it.
@@ -2021,7 +2028,14 @@ async function openCodexSseTransport(
 		wireBody = replacementWireBody as RequestBody;
 	}
 	recordCodexTurnRequestDiagnostics(state, wireBody, "sse", canAppendBeforeRequest);
-	return { eventStream: await open(wireBody), requestBodyForState: structuredCloneJSON(wireBody), transport: "sse" };
+	// SSE turns never chain, so later reads need only the per-turn knobs (summary
+	// delivery, service tier); copying the whole transcript would be wasted work.
+	const requestBodyForState: RequestBody = {
+		model: wireBody.model,
+		stream_options: wireBody.stream_options,
+		service_tier: wireBody.service_tier,
+	};
+	return { eventStream: await open(wireBody), requestBodyForState, transport: "sse" };
 }
 
 function isJsonWhitespaceOnly(value: string): boolean {
@@ -2546,7 +2560,7 @@ class CodexStreamProcessor {
 		const { runtime, output, stream } = this;
 		const rawItem = rawEvent.item;
 		if (!rawItem || typeof rawItem !== "object") return;
-		const item = structuredCloneJSON(rawItem) as CodexEventItem;
+		const item = cloneJsonTree(rawItem) as CodexEventItem;
 		if (item.type === "image_generation_call" && item.result) item.status = "completed";
 
 		// Match the finalization to the OPEN ITEM that started this block, not the
@@ -2706,10 +2720,12 @@ class CodexStreamProcessor {
 				// baseline, which no longer matches the transcript.
 				resetCodexWebSocketAppendState(state);
 			} else {
-				state.lastRequest = structuredCloneJSON(runtime.requestBodyForState);
+				// requestBodyForState is already a private copy and is not mutated after
+				// the request, so the append baseline takes ownership of it.
+				state.lastRequest = runtime.requestBodyForState;
 				const nativeOutputItems = runtime.finalizeNativeOutputItems();
 				const replayableResponseItems = sanitizeOpenAIResponsesAssistantHistoryItemsForReplay(
-					structuredCloneJSON(nativeOutputItems),
+					cloneJsonTree(nativeOutputItems),
 					{ supportsImageDetailOriginal: model.compat.supportsImageDetailOriginal },
 				);
 				if (responseId && replayableResponseItems && replayableResponseItems.length === nativeOutputItems.length) {
@@ -3220,23 +3236,7 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 
 	(async () => {
 		const startTime = performance.now();
-		const output: AssistantMessage = {
-			role: "assistant",
-			content: [],
-			api: "openai-codex-responses" as Api,
-			provider: model.provider,
-			model: model.id,
-			usage: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-				totalTokens: 0,
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-			},
-			stopReason: "stop",
-			timestamp: Date.now(),
-		};
+		const output = createEmptyAssistantMessage("openai-codex-responses", model.provider, model.id);
 		const requestSetup = createRequestSetup(options);
 		let processingContext: CodexStreamProcessor | undefined;
 		let requestContext: CodexRequestContext | undefined;
@@ -3510,8 +3510,11 @@ export function getOpenAICodexWebSocketDebugStats(
 		providerSessionState?: Map<string, ProviderSessionState>;
 	},
 ): OpenAICodexWebSocketDebugStats | undefined {
-	const stats = getCodexWebSocketStateForPublicSession(model, options)?.stats;
-	return stats ? { ...stats } : undefined;
+	const state = getCodexWebSocketStateForPublicSession(model, options);
+	if (!state) return undefined;
+	return state.lastTurn
+		? { ...state.stats, lastTurn: resolveCodexTurnDiagnostics(state.lastTurn) }
+		: { ...state.stats };
 }
 
 export function getOpenAICodexTransportDetails(
@@ -3553,13 +3556,6 @@ export function getOpenAICodexTransportDetails(
 		hasTurnState,
 		lastFallbackAt: state?.lastFallbackAt,
 	};
-}
-
-const codexDiagnosticsTextEncoder = new TextEncoder();
-
-function jsonByteLength(value: unknown): number {
-	const json = JSON.stringify(value);
-	return codexDiagnosticsTextEncoder.encode(json === undefined ? "undefined" : json).byteLength;
 }
 
 function hashJson(value: unknown): string {
@@ -3693,7 +3689,7 @@ function buildCodexTurnRequestDiagnostics(
 		inputItemCount: inputItems.length,
 		inputItemTypes,
 		...(inputItemTypes[0] ? { firstInputItemType: inputItemTypes[0] } : {}),
-		inputJsonBytes: jsonByteLength(inputItems),
+		inputJsonBytes: Buffer.byteLength(JSON.stringify(inputItems), "utf8"),
 		...(promptCacheKey !== undefined ? { promptCacheKey } : {}),
 		...(toolsHash !== undefined ? { toolsHash } : {}),
 		optionsHash: createCodexOptionsHash(request),
@@ -3721,10 +3717,24 @@ function recordCodexTurnRequestDiagnostics(
 		state.stats.lastDeltaInputItems = undefined;
 		state.stats.lastPreviousResponseId = undefined;
 	}
-	state.stats.lastTurn = {
-		request: buildCodexTurnRequestDiagnostics(request, transport, canAppendBeforeRequest),
-	};
-	CODEX_DEBUG && logger.debug("[codex] codex turn request diagnostics", { diagnostics: state.stats.lastTurn.request });
+	state.lastTurn = { source: { request, transport, canAppendBeforeRequest } };
+	CODEX_DEBUG &&
+		logger.debug("[codex] codex turn request diagnostics", {
+			diagnostics: resolveCodexTurnDiagnostics(state.lastTurn).request,
+		});
+}
+
+function resolveCodexTurnDiagnostics(record: CodexTurnDiagnosticsRecord): OpenAICodexTurnDiagnostics {
+	if (!record.request) {
+		const source = record.source!;
+		record.request = buildCodexTurnRequestDiagnostics(
+			source.request,
+			source.transport,
+			source.canAppendBeforeRequest,
+		);
+		record.source = undefined;
+	}
+	return record.usage ? { request: record.request, usage: record.usage } : { request: record.request };
 }
 
 function recordCodexTurnUsageDiagnostics(
@@ -3732,7 +3742,7 @@ function recordCodexTurnUsageDiagnostics(
 	rawUsage: CodexResponseUsage | undefined,
 	displayedUsage: Usage,
 ): void {
-	if (!state?.stats.lastTurn || !rawUsage) return;
+	if (!state?.lastTurn || !rawUsage) return;
 	const details = rawUsage.input_tokens_details;
 	const outputDetails = rawUsage.output_tokens_details;
 	const rawInputTokens = rawUsage.input_tokens ?? 0;
@@ -3761,11 +3771,9 @@ function recordCodexTurnUsageDiagnostics(
 		displayedOrchestrationCacheReadTokens: displayedUsage.orchestration?.cacheRead ?? 0,
 		displayedOrchestrationOutputTokens: displayedUsage.orchestration?.output ?? 0,
 	};
-	state.stats.lastTurn = {
-		...state.stats.lastTurn,
-		usage: usageDiagnostics,
-	};
-	CODEX_DEBUG && logger.debug("[codex] codex turn diagnostics", { diagnostics: state.stats.lastTurn });
+	state.lastTurn.usage = usageDiagnostics;
+	CODEX_DEBUG &&
+		logger.debug("[codex] codex turn diagnostics", { diagnostics: resolveCodexTurnDiagnostics(state.lastTurn) });
 }
 
 const CODEX_CHAIN_TOP_LEVEL_EXCLUDE_MAP = {
@@ -3824,14 +3832,6 @@ function toWebSocketUrl(url: string): string {
 		parsed.protocol = "ws:";
 	}
 	return parsed.toString();
-}
-
-function headersToRecord(headers: Headers): Record<string, string> {
-	const result: Record<string, string> = {};
-	for (const [key, value] of headers.entries()) {
-		result[key] = value;
-	}
-	return result;
 }
 
 interface CodexWebSocketRequestTimeouts {
@@ -4582,7 +4582,7 @@ async function getOrCreateCodexWebSocketConnection(
 	signal?: AbortSignal,
 ): Promise<CodexWebSocketConnection> {
 	const proxy = getProxyForUrl(provider, new URL(url));
-	const headerRecord = headersToRecord(headers);
+	const headerRecord = Object.fromEntries(headers);
 	// Join an in-flight handshake instead of tearing it down: closing a
 	// CONNECTING socket rejects the concurrent caller (prewarm racing the first
 	// request) with a fatal "websocket closed before open", which would disable
@@ -4635,10 +4635,12 @@ async function getOrCreateCodexWebSocketConnection(
  * compression is disabled or fails, in which case the caller sends the
  * plain JSON string without a `content-encoding` header.
  */
-function compressCodexRequestBody(bodyJson: string, baseUrl: string): Uint8Array | undefined {
+async function compressCodexRequestBody(bodyJson: string, baseUrl: string): Promise<Uint8Array | undefined> {
 	if (!isOfficialCodexApiUrl(baseUrl) || !$flag("PI_CODEX_ZSTD", true)) return undefined;
 	try {
-		return Bun.zstdCompressSync(bodyJson, { level: 3 });
+		// Off the main thread: SSE sends the full transcript, so multi-MB bodies
+		// would otherwise block the event loop for the whole compression.
+		return await Bun.zstdCompress(bodyJson, { level: 3 });
 	} catch (error) {
 		CODEX_DEBUG &&
 			logger.debug("[codex] codex request body compression failed", {
@@ -4705,7 +4707,7 @@ async function openCodexSseEventStream(
 		}
 	};
 	const bodyJson = JSON.stringify(body);
-	const compressedBody = compressCodexRequestBody(bodyJson, url);
+	const compressedBody = await compressCodexRequestBody(bodyJson, url);
 	if (compressedBody !== undefined) {
 		headers.set("content-encoding", "zstd");
 	}

@@ -5,6 +5,7 @@ import * as tls from "node:tls";
 import * as zlib from "node:zlib";
 import { logger } from "@oh-my-pi/pi-utils";
 import type { FetchImpl } from "../types";
+import { isHeaderRecord } from "./inference-headers";
 
 /** `host/path` for logging; query strings can carry keys. */
 function logTarget(input: string | URL | Request): string {
@@ -46,10 +47,6 @@ const directAgent = new https.Agent({ keepAlive: true });
 
 /** Resolved at call time, so a proxy wrapper installed after this module loads is honored. */
 const fallbackFetch: FetchImpl = (input, init) => globalThis.fetch(input, init as RequestInit);
-
-function isHeaderRecord(headers: RequestInit["headers"]): headers is Record<string, string> {
-	return headers !== undefined && !(headers instanceof Headers) && !Array.isArray(headers);
-}
 
 function resolveBody(body: RequestInit["body"]): RequestBody | undefined {
 	if (typeof body === "string" || body instanceof Uint8Array) return body;

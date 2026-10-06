@@ -9,15 +9,27 @@
 - Added `RUNNER_API_KINDS` and `runnerApiKind()`, the model kind each single-purpose runner API serves, plus `IMAGE_GENERATION_APIS`, `servedKinds()`, and `apiServesKind()` for the kinds any API can serve; the compat compiler now rejects a provider `kind-apis` entry that lists a runner API under a different kind ([#14483](https://github.com/can1357/oh-my-pi/pull/14483) by [@oshinop](https://github.com/oshinop))
 - Added `Model.kindConfig`, a configured kind that `buildModel` applies over catalog `kind` rules on every rebuild ([#14483](https://github.com/can1357/oh-my-pi/pull/14483) by [@jimhester](https://github.com/jimhester))
 - Added Google Cloud partner-model pricing for Claude Opus 5.5 and Sonnet 5.5 on Google Antigravity ([#14195](https://github.com/can1357/oh-my-pi/pull/14195) by [@eggpeat](https://github.com/eggpeat)).
+- Added `getBundledModelList(provider)` to get the shared frozen bundled model array without copying ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Added `fingerprintBundledModels(provider, dynamicModelsAuthoritative?)` to `model-manager` ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
 
 ### Changed
 
 - MiniMax Token Plan (`minimax-code`, `minimax-code-cn`) now uses MiniMax's recommended Anthropic-compatible API, and `/login` checks keys against the same endpoint ([#13696](https://github.com/can1357/oh-my-pi/pull/13696) by [@eggpeat](https://github.com/eggpeat))
 - Google Antigravity now lists Claude Opus 5.5 and Sonnet 5.5 once each, with selectable low, medium, and high thinking levels ([#14195](https://github.com/can1357/oh-my-pi/pull/14195) by [@eggpeat](https://github.com/eggpeat)).
+- Reduced bundled model import time (~23→12 ms) and retained heap (~9.9→5.8 MB); `@oh-my-pi/pi-catalog/models.json` is unchanged ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Sped up model cache reads from `models.db` (~6× faster for large rows) ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Sped up repeated catalog-wide model builds (~88→38 ms) ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
 
 ### Fixed
 
 - Fixed GPT-6 Astra's Ultrafast service tier being unpriced: the catalog now carries OpenAI's published multiplier, 6x on the first-party API and 8x (the included-usage rate, matching Fast's 2.5x) on the Codex card ([#14471](https://github.com/can1357/oh-my-pi/pull/14471) by [@eggpeat](https://github.com/eggpeat)).
+- Fixed `resolveMaxContextWindow`/`clampsContextOverride` returning stale results across models differing only in `providerType` or `reasoning` ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+
+### Deprecated
+
+- Deprecated `codexOverrideCeiling`; use `resolveMaxContextWindow` ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Deprecated unused compat helpers `modelOperationOverrides`, `cursorEffortSuffix`, `hasQuotaTierPolicy`, `hostedDefaultModel`, `hasRoutingVariants`, `recoversCanonicalParams`, `responsesHintGroup`, `supportsDynamicEffortSiblings`, `effortFamiliesFor`, `stripEffortLane` ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
+- Deprecated `toPositiveNumberOrNull` (use `toPositiveNumber(value, null)`), `isAzureDeploymentsUrl`, `toFirepassPublicModelId` and the empty `compat/seeds-tmp` `allSeeds` stub ([#14639](https://github.com/can1357/oh-my-pi/pull/14639) by [@H4vC](https://github.com/H4vC))
 
 ## [18.6.3] - 2026-10-06
 

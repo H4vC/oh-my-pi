@@ -7,7 +7,6 @@ import {
 import * as AIError from "../error";
 import { parseToolCallArguments } from "../utils/tool-call-arguments";
 import type {
-	Api,
 	AssistantMessage,
 	Context,
 	FetchImpl,
@@ -24,10 +23,13 @@ import type {
 import { normalizeSystemPrompts } from "../utils";
 import { AssistantMessageEventStream } from "../utils/event-stream";
 import { toolWireSchema } from "../utils/schema/wire";
+import { createEmptyAssistantMessage } from "./error-message";
 import chatmlHistoryNote from "./gitlab-duo-workflow-chatml-note.md" with { type: "text" };
 import { redactSensitiveCredentials } from "./transform-messages";
 
+/** @deprecated Unused; use the literal `"gitlab-duo-agent"` provider id. Will be removed in the next major. */
 export const GITLAB_DUO_WORKFLOW_PROVIDER_ID = "gitlab-duo-agent";
+/** @deprecated Unused; use the literal `"gitlab-duo-agent"` api id. Will be removed in the next major. */
 export const GITLAB_DUO_WORKFLOW_API = "gitlab-duo-agent";
 export const GITLAB_DUO_WORKFLOW_DEFINITION = "ambient";
 export type GitLabDuoWorkflowDefinition = "ambient" | (string & {});
@@ -164,6 +166,7 @@ const GITLAB_DUO_WORKFLOW_INLINE_UI_LOG_EVENTS = [
 
 const GITLAB_DUO_WORKFLOW_ACTION_NAMES = ["runMCPTool", "run_mcp_tool"] as const;
 
+/** @deprecated Unused; MCP action args are read as untyped records. Will be removed in the next major. */
 export interface GitLabMcpToolArgs {
 	name?: string;
 	tool_name?: string;
@@ -181,7 +184,9 @@ export interface GitLabPlainTextResponse {
 	error?: string;
 }
 
+/** @deprecated Duplicate alias; use `GitLabPlainTextResponse`. Will be removed in the next major. */
 export type PlainTextResponse = GitLabPlainTextResponse;
+
 export interface GitLabDuoWorkflowOptions extends StreamOptions {
 	rootNamespaceId?: string;
 	namespaceId?: string;
@@ -427,7 +432,7 @@ export const streamGitLabDuoWorkflow: StreamFunction<"gitlab-duo-agent"> = (
 	options: GitLabDuoWorkflowOptions,
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
-	const output = createAssistantMessage(model);
+	const output = createEmptyAssistantMessage(model.api, model.provider, model.id);
 	stream.push({ type: "start", partial: output });
 	const state: GitLabDuoWorkflowStreamState = { stream, output, started: true };
 
@@ -2233,26 +2238,6 @@ function buildGitLabMcpToolDefinition(tool: Tool): GitLabMcpToolDefinition {
 	};
 }
 
-function createAssistantMessage(model: Model<Api>): AssistantMessage {
-	return {
-		role: "assistant",
-		content: [],
-		api: model.api,
-		provider: model.provider,
-		model: model.id,
-		usage: {
-			input: 0,
-			output: 0,
-			cacheRead: 0,
-			cacheWrite: 0,
-			totalTokens: 0,
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-		},
-		stopReason: "stop",
-		timestamp: Date.now(),
-	};
-}
-
 function hydrateGitLabDuoWorkflowCheckpointState(
 	state: GitLabDuoWorkflowStreamState,
 	session: GitLabDuoWorkflowActiveSession,
@@ -2310,8 +2295,11 @@ function emitGitLabDuoWorkflowCheckpoint(
 		const contentByKey = state.checkpointAgentContentByKey ?? {};
 		const contentSignatures = state.checkpointAgentContentSignatures ?? {};
 		const previousContent = contentByKey[entry.messageKey];
-		const contentSignature = `${turnIndex}\u0000${entry.kind}\u0000${entry.content}`;
-		const contentOnlySignature = `${turnIndex}\u0000content\u0000${entry.content}`;
+		// Keyed by a content hash: every frame is a full snapshot, so keying on the
+		// text itself kept two copies of each message prefix seen per stream.
+		const contentHash = Bun.hash(entry.content).toString(36);
+		const contentSignature = `${turnIndex}\u0000${entry.kind}\u0000${contentHash}`;
+		const contentOnlySignature = `${turnIndex}\u0000content\u0000${contentHash}`;
 		const duplicateContent =
 			previousContent === undefined &&
 			(contentSignatures[contentSignature] === true || contentSignatures[contentOnlySignature] === true);
@@ -2869,6 +2857,10 @@ export async function resolveGitLabDuoWorkflowNamespaceSelection(
 	}
 }
 
+/**
+ * @deprecated Use `(await resolveGitLabDuoWorkflowNamespaceSelection(...)).rootNamespaceId`.
+ * Will be removed in the next major.
+ */
 export async function resolveGitLabDuoWorkflowRootNamespaceId(
 	model: Model<"gitlab-duo-agent">,
 	options: GitLabDuoWorkflowOptions,

@@ -1635,6 +1635,7 @@ export function sanitizeSchemaForOpenAIResponses(schema: JsonObject): JsonObject
 /**
  * Alias for {@link sanitizeSchemaForOpenAIResponses} matching the
  * `normalizeSchemaFor*` dispatcher naming used elsewhere in this module.
+ * @deprecated Unused alias; use `sanitizeSchemaForOpenAIResponses`. Will be removed in the next major.
  */
 export const normalizeSchemaForOpenAIResponses: (schema: JsonObject) => JsonObject = sanitizeSchemaForOpenAIResponses;
 const OPENAI_UNSUPPORTED_REGEX_LOOKAROUNDS = new Set(["=", "!", "<=", "<!"]);

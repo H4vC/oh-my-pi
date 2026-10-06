@@ -133,6 +133,8 @@ export interface CredentialUploadResponse {
  * as the SSE `event:` name (load-bearing for clients) **and** embedded as a
  * `kind` field inside the JSON body so a Zod discriminated union can validate
  * the payload without consulting the line metadata.
+ *
+ * @deprecated Unused; use `SnapshotStreamEvent["kind"]`. Will be removed in the next major.
  */
 export type SnapshotStreamEventKind = "snapshot" | "entry" | "removed";
 
@@ -165,6 +167,8 @@ export type SnapshotStreamEvent = SnapshotStreamSnapshotEvent | SnapshotStreamEn
 /**
  * Default bearer-protected route prefix. The broker exposes `/v1/healthz`
  * unauthenticated for liveness probes; everything else requires a bearer.
+ *
+ * @deprecated Unused; broker routes are fixed under `/v1`. Will be removed in the next major.
  */
 export const AUTH_BROKER_API_PREFIX = "/v1";
 

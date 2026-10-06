@@ -2,6 +2,8 @@
  * Constants for OpenAI Codex (ChatGPT OAuth) backend
  */
 
+import { decodeJwtPayload } from "@oh-my-pi/pi-utils/jwt";
+
 export const CODEX_BASE_URL = "https://chatgpt.com/backend-api";
 
 /**
@@ -76,16 +78,8 @@ export function codexRoutingHint(model: string, serviceTier: string | null | und
  * Returns undefined if the token is not a valid Codex JWT.
  */
 export function getCodexAccountId(accessToken: string): string | undefined {
-	try {
-		const parts = accessToken.split(".");
-		if (parts.length !== 3) return undefined;
-		const decoded = Buffer.from(parts[1] ?? "", "base64").toString("utf-8");
-		const payload = JSON.parse(decoded) as Record<string, unknown>;
-		const auth = payload[JWT_CLAIM_PATH] as { chatgpt_account_id?: string } | undefined;
-		return auth?.chatgpt_account_id ?? undefined;
-	} catch {
-		return undefined;
-	}
+	const auth = decodeJwtPayload(accessToken)?.[JWT_CLAIM_PATH] as { chatgpt_account_id?: string } | undefined;
+	return auth?.chatgpt_account_id ?? undefined;
 }
 
 /**
@@ -102,23 +96,15 @@ export function getCodexAccountId(accessToken: string): string | undefined {
  * claims omit residency entirely — those workspaces are not region-pinned.
  */
 export function getCodexResidency(accessToken: string): string | undefined {
-	try {
-		const parts = accessToken.split(".");
-		if (parts.length !== 3) return undefined;
-		const decoded = Buffer.from(parts[1] ?? "", "base64").toString("utf-8");
-		const payload = JSON.parse(decoded) as Record<string, unknown>;
-		const auth = payload[JWT_CLAIM_PATH] as
-			| { chatgpt_data_residency?: unknown; chatgpt_compute_residency?: unknown }
-			| undefined;
-		for (const claim of [auth?.chatgpt_data_residency, auth?.chatgpt_compute_residency]) {
-			if (typeof claim !== "string") continue;
-			const residency = claim.trim();
-			if (residency.length > 0) return residency;
-		}
-		return undefined;
-	} catch {
-		return undefined;
+	const auth = decodeJwtPayload(accessToken)?.[JWT_CLAIM_PATH] as
+		| { chatgpt_data_residency?: unknown; chatgpt_compute_residency?: unknown }
+		| undefined;
+	for (const claim of [auth?.chatgpt_data_residency, auth?.chatgpt_compute_residency]) {
+		if (typeof claim !== "string") continue;
+		const residency = claim.trim();
+		if (residency.length > 0) return residency;
 	}
+	return undefined;
 }
 
 /**

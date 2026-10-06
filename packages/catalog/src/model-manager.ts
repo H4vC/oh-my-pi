@@ -3,7 +3,7 @@ import { buildModel } from "./build";
 import { collapseBuiltVariants } from "./compat/collapse";
 import { applyCatalogMetrics, CatalogMetricsIndex } from "./identity/metrics";
 import { readModelCache, writeModelCache } from "./model-cache";
-import { type GeneratedProvider, getBundledModels } from "./models";
+import { type GeneratedProvider, getBundledModelList, getBundledModels } from "./models";
 import { isTimeBasedCost } from "./pricing";
 import {
 	type Api,
@@ -256,7 +256,9 @@ export async function resolveProviderModels<TApi extends Api = Api, TModelsDevPa
 	const cacheHasUnresolvedHeaders = restoredCache.unresolvedModelIds.size > 0;
 	const dynamicModelsAuthoritative = options.dynamicModelsAuthoritative ?? false;
 	const cacheDropIds = options.dropCachedModelIdsOnStaticMismatch;
-	const staticCatalogFingerprint = fingerprintStaticModels(staticModels, dynamicModelsAuthoritative);
+	const staticCatalogFingerprint = options.staticModels
+		? fingerprintStaticModels(staticModels, dynamicModelsAuthoritative)
+		: fingerprintBundledModels(options.providerId as GeneratedProvider, dynamicModelsAuthoritative);
 	// Endpoint-migration policy is cache identity: adding an id must invalidate
 	// matching-static-catalog caches written by the prior resolver.
 	const staticFingerprint =
@@ -596,6 +598,23 @@ export function fingerprintStaticModels<TApi extends Api>(
 	if (dynamicModelsAuthoritative)
 		return `${MODEL_CACHE_FINGERPRINT_VERSION}:authoritative:${fingerprintStaticModels(models)}`;
 	return `${MODEL_CACHE_FINGERPRINT_VERSION}:${Bun.hash(JSON.stringify(models)).toString(36)}`;
+}
+
+const bundledFingerprints = new Map<string, string>();
+
+/**
+ * `fingerprintStaticModels(getBundledModels(provider), dynamicModelsAuthoritative)`,
+ * memoized per provider: bundled rows are generator output and never change
+ * within a process, so their slice is stringified at most once.
+ */
+export function fingerprintBundledModels(provider: GeneratedProvider, dynamicModelsAuthoritative = false): string {
+	let fingerprint = bundledFingerprints.get(provider);
+	if (fingerprint === undefined) {
+		fingerprint = fingerprintStaticModels(getBundledModelList(provider));
+		bundledFingerprints.set(provider, fingerprint);
+	}
+	if (!dynamicModelsAuthoritative || fingerprint === `${MODEL_CACHE_FINGERPRINT_VERSION}:empty`) return fingerprint;
+	return `${MODEL_CACHE_FINGERPRINT_VERSION}:authoritative:${fingerprint}`;
 }
 
 function mergeDynamicModel<TApi extends Api>(existingModel: Model<TApi>, dynamicModel: Model<TApi>): Model<TApi> {

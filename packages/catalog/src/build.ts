@@ -7,7 +7,7 @@
  * compat per request.
  */
 
-import { resolveDiscoveryApi, resolveModelPolicy } from "./compat/resolve";
+import { objectPayload, resolveDiscoveryApi, resolveModelPolicy } from "./compat/resolve";
 import type { ModelIdentity } from "./compat/types";
 import { resolveModelTokenizer } from "./model-tokenizer";
 import { materializeTimeBasedCost } from "./pricing";
@@ -17,11 +17,6 @@ import { cleanModelName } from "./utils";
 function numberField(source: object, key: string): number | undefined {
 	const value: unknown = Reflect.get(source, key);
 	return typeof value === "number" ? value : undefined;
-}
-
-/** Narrow an unknown compiled-axis payload to an object payload. */
-function objectPayload(value: unknown): object | undefined {
-	return typeof value === "object" && value !== null && !Array.isArray(value) ? value : undefined;
 }
 
 /**

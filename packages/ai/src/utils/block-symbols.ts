@@ -78,6 +78,28 @@ export function copyCursorExecResolved(target: CursorExecResolvedCarrier, source
 }
 
 /**
+ * Clone a provider-native toolCall block into a stream projector's own message
+ * (owned/in-band dialect, leaked-thinking heal). Every field survives —
+ * `thoughtSignature` (Gemini replay), `customWireName`, `providerMetadata`,
+ * `intent` — together with the symbol-carried partial JSON and
+ * {@link kCursorExecResolved}.
+ */
+export function cloneProjectedToolCall<T extends StreamingPartialJsonCarrier & CursorExecResolvedCarrier>(
+	source: T,
+): T {
+	return { ...source };
+}
+
+/** Refresh a block made by {@link cloneProjectedToolCall} from the latest source snapshot. */
+export function syncProjectedToolCall(
+	target: StreamingPartialJsonCarrier & CursorExecResolvedCarrier,
+	source: StreamingPartialJsonCarrier & CursorExecResolvedCarrier,
+): void {
+	Object.assign(target, source);
+	if (getStreamingPartialJson(source) === undefined) clearStreamingPartialJson(target);
+}
+
+/**
  * Marks a text block synthesized by cross-model thinking demotion in
  * `transformMessages`. Converters that flatten adjacent text blocks into one
  * string (openai-completions) insert a paragraph separator after marked

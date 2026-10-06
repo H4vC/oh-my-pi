@@ -3,6 +3,7 @@
  */
 
 import { OPENAI_HEADER_VALUES } from "@oh-my-pi/pi-catalog/wire/codex";
+import { decodeJwtPayload } from "@oh-my-pi/pi-utils/jwt";
 import * as AIError from "../../error";
 import type { FetchImpl } from "../../types";
 import { isRecord } from "../../utils";
@@ -36,16 +37,9 @@ type JwtPayload = {
 	[key: string]: unknown;
 };
 
+/** Decode a JWT payload without verifying its signature; `null` for malformed tokens. */
 export function decodeJwt<T = Record<string, unknown>>(token: string): T | null {
-	try {
-		const parts = token.split(".");
-		if (parts.length !== 3) return null;
-		const payload = parts[1] ?? "";
-		const decoded = Buffer.from(payload, "base64").toString("utf-8");
-		return JSON.parse(decoded) as T;
-	} catch {
-		return null;
-	}
+	return decodeJwtPayload(token) as T | null;
 }
 
 /**

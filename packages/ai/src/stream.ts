@@ -13,12 +13,12 @@ import {
 	requireSupportedEffort,
 	resolveWireModelId,
 } from "@oh-my-pi/pi-catalog/model-thinking";
-import { providerEntries } from "@oh-my-pi/pi-catalog/compat/providers";
 import { CODEX_BASE_URL } from "@oh-my-pi/pi-catalog/wire/codex";
-import { $env, $pickenv, getProviderInFlightRoot, isEnoent, logger, untilAborted } from "@oh-my-pi/pi-utils";
+import { $env, getProviderInFlightRoot, isEnoent, logger, untilAborted } from "@oh-my-pi/pi-utils";
 import { getCustomApi } from "./api-registry";
 import { createAuthRetryKeyState, isApiKeyResolver, resolvedApiKeyBearer, resolveNextAuthRetryKey } from "./auth-retry";
 import type { OAuthRequestIdentity } from "./auth/types";
+import { getEnvApiKey } from "./env-api-key";
 import * as AIError from "./error";
 import { ProviderHttpError } from "./error";
 import { isConcurrencyCapExclusion, isUsageLimitOutcome } from "./error/rate-limit";
@@ -54,7 +54,7 @@ import {
 	streamOpenAICompletions,
 	streamOpenAIResponses,
 } from "./providers/register-builtins";
-import { getProviderDefinition, PROVIDER_REGISTRY } from "./registry";
+import { getProviderDefinition } from "./registry";
 import type {
 	Api,
 	AssistantMessage,
@@ -74,7 +74,10 @@ import { isFoundryEnabled } from "./utils/foundry";
 import { applyGlyphCodec } from "./utils/glyph-codec";
 import { wrapLeakedThinkingStream } from "./utils/leaked-thinking-stream";
 import { withThinkingLoopGuard } from "./utils/thinking-loop";
+import { mapToAnthropicToolChoice, mapToOpenAICompletionsToolChoice } from "./utils/tool-choice";
 import { withTransportFetch } from "./utils/transport-fetch";
+
+export { getEnvApiKey, getEnvApiKeyName, listProvidersWithEnvKey } from "./env-api-key";
 
 function isGoogleVertexAuthenticatedModel(model: Model<Api>): boolean {
 	return (
@@ -865,75 +868,6 @@ function resolveVertexRequest(input: string | URL | Request): string | URL | Req
 	return rewriteUrl(input);
 }
 
-type KeyResolver = string | (() => string | undefined);
-
-const LEGACY_ENV_KEYS: Record<string, KeyResolver> = {
-	// Non-provider / search-tool keys and API-name keys not modeled as registry provider defs.
-	"azure-openai-responses": "AZURE_OPENAI_API_KEY",
-	jina: "JINA_API_KEY",
-	brave: "BRAVE_API_KEY",
-	tinyfish: "TINYFISH_API_KEY",
-	firecrawl: "FIRECRAWL_API_KEY",
-};
-
-/**
- * Env fallbacks derived from the catalog provider entries (`env` in
- * `providers/<id>.kdl`) — the single source for plain provider env-var names.
- * Registry defs override with computed resolvers (Foundry/ADC/Bedrock
- * probes); legacy non-provider keys merge last.
- */
-const CATALOG_ENTRY_ENV_KEYS = Object.values(providerEntries()).flatMap(provider => {
-	const envVars = provider.envVars;
-	if (!envVars || envVars.length === 0) return [];
-	const resolver: KeyResolver = envVars.length === 1 ? envVars[0] : () => $pickenv(...envVars);
-	return [[provider.id, resolver] as [string, KeyResolver]];
-});
-
-const serviceProviderMap: Record<string, KeyResolver> = {
-	...Object.fromEntries(CATALOG_ENTRY_ENV_KEYS),
-	...Object.fromEntries(
-		PROVIDER_REGISTRY.flatMap(provider =>
-			provider.envKeys != null ? [[provider.id, provider.envKeys] as [string, KeyResolver]] : [],
-		),
-	),
-	...LEGACY_ENV_KEYS,
-};
-
-/**
- * Get API key for provider from known environment variables, e.g. OPENAI_API_KEY.
- *
- * Will not return API keys for providers that require OAuth tokens.
- * Checks Bun.env, then cwd/.env, then ~/.env.
- */
-export function getEnvApiKey(provider: string): string | undefined {
-	const resolver = serviceProviderMap[provider];
-	if (typeof resolver === "string") {
-		return $env[resolver];
-	}
-	return resolver?.();
-}
-
-/**
- * Name of the environment variable that backs `getEnvApiKey` for a provider,
- * when that provider maps to a single named variable (e.g. `github-copilot` →
- * `COPILOT_GITHUB_TOKEN`). Returns undefined for providers whose env fallback
- * is computed (multi-var pickers, Vertex ADC / Bedrock probes, …) since no
- * single variable name describes the source.
- */
-export function getEnvApiKeyName(provider: string): string | undefined {
-	const resolver = serviceProviderMap[provider];
-	return typeof resolver === "string" ? resolver : undefined;
-}
-
-/**
- * Enumerate every provider that has an env-var fallback for `getEnvApiKey`.
- * Used by `omp auth-broker migrate --include-env` to discover env-sourced keys
- * that should be uploaded to the broker.
- */
-export function listProvidersWithEnvKey(): string[] {
-	return Object.keys(serviceProviderMap);
-}
-
 function withResolvedModelHeaders<TApi extends Api>(
 	model: Model<TApi>,
 	signal: AbortSignal | undefined,
@@ -1704,21 +1638,12 @@ function resolveBedrockThinkingBudget(
 	return { budget, level };
 }
 
+/**
+ * @deprecated Duplicate of `mapToAnthropicToolChoice`; use `mapToAnthropicToolChoice` from
+ * `@oh-my-pi/pi-ai/utils/tool-choice`. Will be removed in the next major.
+ */
 export function mapAnthropicToolChoice(choice?: ToolChoice): AnthropicOptions["toolChoice"] {
-	if (!choice) return undefined;
-	if (typeof choice === "string") {
-		if (choice === "required") return "any";
-		if (choice === "auto" || choice === "none" || choice === "any") return choice;
-		return undefined;
-	}
-	if (choice.type === "tool") {
-		return choice.name ? { type: "tool", name: choice.name } : undefined;
-	}
-	if (choice.type === "function") {
-		const name = "function" in choice ? choice.function?.name : choice.name;
-		return name ? { type: "tool", name } : undefined;
-	}
-	return undefined;
+	return mapToAnthropicToolChoice(choice);
 }
 
 export function mapGoogleToolChoice(
@@ -1738,23 +1663,6 @@ export function mapGoogleToolChoice(
 	if (choice.type === "function") {
 		const name = "function" in choice ? choice.function?.name : choice.name;
 		return name ? { mode: "ANY", allowedFunctionNames: [name] } : undefined;
-	}
-	return undefined;
-}
-
-function mapOpenAiToolChoice(choice?: ToolChoice): OpenAICompletionsOptions["toolChoice"] {
-	if (!choice) return undefined;
-	if (typeof choice === "string") {
-		if (choice === "any") return "required";
-		if (choice === "auto" || choice === "none" || choice === "required") return choice;
-		return undefined;
-	}
-	if (choice.type === "tool") {
-		return choice.name ? { type: "function", function: { name: choice.name } } : undefined;
-	}
-	if (choice.type === "function") {
-		const name = "function" in choice ? choice.function?.name : choice.name;
-		return name ? { type: "function", function: { name } } : undefined;
 	}
 	return undefined;
 }
@@ -1941,7 +1849,7 @@ function mapOptionsForApi<TApi extends Api>(
 					...base,
 					requestModelId: resolveWireModelId(model, undefined),
 					thinkingEnabled: false,
-					toolChoice: mapAnthropicToolChoice(options?.toolChoice),
+					toolChoice: mapToAnthropicToolChoice(options?.toolChoice),
 					thinkingDisplay: options?.hideThinkingSummary ? "omitted" : undefined,
 					serviceTier: options?.serviceTier,
 				});
@@ -1953,7 +1861,7 @@ function mapOptionsForApi<TApi extends Api>(
 					...base,
 					requestModelId: resolveWireModelId(model, undefined),
 					thinkingEnabled: false,
-					toolChoice: mapAnthropicToolChoice(options?.toolChoice),
+					toolChoice: mapToAnthropicToolChoice(options?.toolChoice),
 					thinkingDisplay: options?.hideThinkingSummary ? "omitted" : undefined,
 					serviceTier: options?.serviceTier,
 				});
@@ -1983,7 +1891,7 @@ function mapOptionsForApi<TApi extends Api>(
 					requestModelId: resolveWireModelId(model, reasoning),
 					thinkingEnabled: true,
 					effort,
-					toolChoice: mapAnthropicToolChoice(options?.toolChoice),
+					toolChoice: mapToAnthropicToolChoice(options?.toolChoice),
 					thinkingDisplay: options?.hideThinkingSummary ? "omitted" : undefined,
 					serviceTier: options?.serviceTier,
 				});
@@ -2005,7 +1913,7 @@ function mapOptionsForApi<TApi extends Api>(
 						thinkingEnabled: true,
 						thinkingBudgetTokens: thinkingBudget,
 						effort,
-						toolChoice: mapAnthropicToolChoice(options?.toolChoice),
+						toolChoice: mapToAnthropicToolChoice(options?.toolChoice),
 						thinkingDisplay: options?.hideThinkingSummary ? "omitted" : undefined,
 						serviceTier: options?.serviceTier,
 					});
@@ -2027,7 +1935,7 @@ function mapOptionsForApi<TApi extends Api>(
 					...base,
 					requestModelId: resolveWireModelId(model, undefined),
 					thinkingEnabled: false,
-					toolChoice: mapAnthropicToolChoice(options?.toolChoice),
+					toolChoice: mapToAnthropicToolChoice(options?.toolChoice),
 					thinkingDisplay: options?.hideThinkingSummary ? "omitted" : undefined,
 					serviceTier: options?.serviceTier,
 				});
@@ -2039,7 +1947,7 @@ function mapOptionsForApi<TApi extends Api>(
 					thinkingEnabled: true,
 					thinkingBudgetTokens: thinkingBudget,
 					effort,
-					toolChoice: mapAnthropicToolChoice(options?.toolChoice),
+					toolChoice: mapToAnthropicToolChoice(options?.toolChoice),
 					thinkingDisplay: options?.hideThinkingSummary ? "omitted" : undefined,
 					serviceTier: options?.serviceTier,
 				});
@@ -2055,7 +1963,7 @@ function mapOptionsForApi<TApi extends Api>(
 				// that was turned off.
 				reasoning: options?.disableReasoning || options?.forceReasoningOff ? undefined : options?.reasoning,
 				thinkingBudgets: options?.thinkingBudgets,
-				toolChoice: mapAnthropicToolChoice(options?.toolChoice),
+				toolChoice: mapToAnthropicToolChoice(options?.toolChoice),
 				thinkingDisplay: options?.hideThinkingSummary ? "omitted" : undefined,
 				guardrailIdentifier: model.guardrailIdentifier ?? options?.guardrailIdentifier,
 				guardrailVersion: model.guardrailVersion ?? options?.guardrailVersion,
@@ -2109,7 +2017,7 @@ function mapOptionsForApi<TApi extends Api>(
 				return castApi<"openai-responses">({
 					...base,
 					reasoning: resolveOpenAiReasoningEffort(model, options),
-					toolChoice: mapOpenAiToolChoice(options?.toolChoice),
+					toolChoice: mapToOpenAICompletionsToolChoice(options?.toolChoice),
 					serviceTier: options?.serviceTier,
 					reasoningSummary: options?.hideThinkingSummary ? null : undefined,
 					openrouterVariant: options?.openrouterVariant,
@@ -2128,7 +2036,7 @@ function mapOptionsForApi<TApi extends Api>(
 				reasoning: resolveOpenAiReasoningEffort(model, options),
 				// `OpenAICompletionsOptions` carries no forceReasoningOff; fold it.
 				disableReasoning: options?.disableReasoning || options?.forceReasoningOff,
-				toolChoice: mapOpenAiToolChoice(options?.toolChoice),
+				toolChoice: mapToOpenAICompletionsToolChoice(options?.toolChoice),
 				serviceTier: options?.serviceTier,
 				openrouterVariant: options?.openrouterVariant,
 				maxTokensExplicit: rawOptions?.maxTokens !== undefined,
@@ -2142,7 +2050,7 @@ function mapOptionsForApi<TApi extends Api>(
 				reasoning: resolveOpenAiReasoningEffort(model, options),
 				// `OpenAICompletionsOptions` carries no forceReasoningOff; fold it.
 				disableReasoning: options?.disableReasoning || options?.forceReasoningOff,
-				toolChoice: mapOpenAiToolChoice(options?.toolChoice),
+				toolChoice: mapToOpenAICompletionsToolChoice(options?.toolChoice),
 				serviceTier: options?.serviceTier,
 				openrouterVariant: options?.openrouterVariant,
 				maxTokensExplicit: rawOptions?.maxTokens !== undefined,
@@ -2153,7 +2061,7 @@ function mapOptionsForApi<TApi extends Api>(
 			return castApi<"openai-responses">({
 				...base,
 				reasoning: resolveOpenAiReasoningEffort(model, options),
-				toolChoice: mapOpenAiToolChoice(options?.toolChoice),
+				toolChoice: mapToOpenAICompletionsToolChoice(options?.toolChoice),
 				serviceTier: options?.serviceTier,
 				reasoningSummary: options?.hideThinkingSummary ? null : undefined,
 				openrouterVariant: options?.openrouterVariant,
@@ -2170,7 +2078,7 @@ function mapOptionsForApi<TApi extends Api>(
 			return castApi<"azure-openai-responses">({
 				...base,
 				reasoning: resolveOpenAiReasoningEffort(model, options),
-				toolChoice: mapOpenAiToolChoice(options?.toolChoice),
+				toolChoice: mapToOpenAICompletionsToolChoice(options?.toolChoice),
 				serviceTier: options?.serviceTier,
 				reasoningSummary: options?.hideThinkingSummary ? null : undefined,
 				promptCache: options?.promptCache,
@@ -2183,7 +2091,7 @@ function mapOptionsForApi<TApi extends Api>(
 			return castApi<"openai-codex-responses">({
 				...base,
 				reasoning: resolveOpenAiReasoningEffort(model, options),
-				toolChoice: mapOpenAiToolChoice(options?.toolChoice),
+				toolChoice: mapToOpenAICompletionsToolChoice(options?.toolChoice),
 				serviceTier: options?.serviceTier,
 				preferWebsockets: options?.preferWebsockets,
 				codexCompaction: options?.codexCompaction,

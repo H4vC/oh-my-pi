@@ -129,6 +129,7 @@ export { isAuthRetryableError };
  * Legacy a/b/c retry sequence retained for public compatibility:
  * `false` → refresh-same, `true` → rotate/switch. Current drivers may repeat
  * sibling rotation until a termination guard fires.
+ * @deprecated No in-repo reader; drivers bound retries by `AUTH_RETRY_MAX_ATTEMPTS`. Will be removed in the next major.
  */
 export const AUTH_RETRY_STEPS: readonly boolean[] = [false, true];
 

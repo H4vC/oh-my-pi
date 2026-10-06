@@ -59,6 +59,7 @@ import {
 	hasBillableCost,
 	linkOpenAIPromotionTargets,
 } from "./generated-policies";
+import { writeInternedModels } from "./intern-models";
 
 const packageRoot = path.join(import.meta.dir, "..");
 
@@ -740,6 +741,8 @@ async function generateModels() {
 	// Generate JSON file
 	await Bun.write(path.join(packageRoot, "src/models.json"), JSON.stringify(MODELS));
 	console.log("Generated src/models.json");
+	await writeInternedModels();
+	console.log("Generated src/models.interned.json");
 
 	// Print statistics
 	const totalModels = allModels.length;

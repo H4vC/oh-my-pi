@@ -2,9 +2,10 @@ import { buildModel } from "@oh-my-pi/pi-catalog/build";
 import { apiRouteFor } from "@oh-my-pi/pi-catalog/compat/behavior";
 import { getGitLabDuoModels, resolveGitLabDuoModelIdentity } from "@oh-my-pi/pi-catalog/provider-models";
 import * as AIError from "../error";
-import { ANTHROPIC_THINKING, mapAnthropicToolChoice } from "../stream";
+import { ANTHROPIC_THINKING } from "../stream";
 import type { Api, Context, FetchImpl, Model, ModelSpec, SimpleStreamOptions } from "../types";
 import { AssistantMessageEventStream } from "../utils/event-stream";
+import { mapToAnthropicToolChoice } from "../utils/tool-choice";
 import { createProviderErrorMessage } from "./error-message";
 import type { OpenAICompletionsOptions } from "./openai-completions";
 import type { OpenAIResponsesOptions } from "./openai-responses";
@@ -174,7 +175,7 @@ export function streamGitLabDuo(
 										ANTHROPIC_THINKING[anthropicReasoningEffort])
 									: undefined,
 								reasoning: anthropicReasoningEffort,
-								toolChoice: mapAnthropicToolChoice(options.toolChoice),
+								toolChoice: mapToAnthropicToolChoice(options.toolChoice),
 							},
 						)
 					: route.api === "openai-responses"

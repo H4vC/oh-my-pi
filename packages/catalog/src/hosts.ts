@@ -166,7 +166,11 @@ export function isVertexRawPredictUrl(baseUrl: string): boolean {
 	return baseUrl.includes(":streamRawPredict") || baseUrl.includes(":rawPredict");
 }
 
-/** Azure OpenAI deployment-scoped path (`…/deployments/<name>/…`). */
+/**
+ * Azure OpenAI deployment-scoped path (`…/deployments/<name>/…`).
+ *
+ * @deprecated Unused. Will be removed in the next major.
+ */
 export function isAzureDeploymentsUrl(baseUrl: string): boolean {
 	return baseUrl.includes("/deployments/");
 }

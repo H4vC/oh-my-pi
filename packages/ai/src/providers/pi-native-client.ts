@@ -20,7 +20,6 @@ import { getAppName, getInstallId, readSseJson } from "@oh-my-pi/pi-utils";
 import * as AIError from "../error";
 import type {
 	Api,
-	AssistantMessage,
 	AssistantMessageEvent,
 	AssistantMessageEventStream as AssistantMessageEventStreamType,
 	Context,
@@ -31,6 +30,7 @@ import { createAbortSourceTracker } from "../utils/abort";
 import { AssistantMessageEventStream } from "../utils/event-stream";
 import { getStreamFirstEventTimeoutMs, getStreamIdleTimeoutMs, iterateWithIdleTimeout } from "../utils/idle-iterator";
 import { notifyProviderResponse } from "../utils/provider-response";
+import { createEmptyAssistantMessage } from "./error-message";
 
 /**
  * Fields that must not cross the wire — either non-serializable (functions,
@@ -237,7 +237,7 @@ export function streamPiNative<TApi extends Api>(
 
 			if (!sawTerminal) {
 				const aborted = abortTracker.wasCallerAbort();
-				const partial = makeSyntheticAssistant(model as Model<Api>);
+				const partial = createEmptyAssistantMessage(model.api, model.provider, model.id);
 				if (aborted) {
 					partial.stopReason = "aborted";
 					partial.errorMessage = "stream closed without terminal event";
@@ -264,24 +264,4 @@ export function streamPiNative<TApi extends Api>(
 	})();
 
 	return stream;
-}
-
-function makeSyntheticAssistant(model: Model<Api>): AssistantMessage {
-	return {
-		role: "assistant",
-		content: [],
-		api: model.api,
-		provider: model.provider,
-		model: model.id,
-		usage: {
-			input: 0,
-			output: 0,
-			cacheRead: 0,
-			cacheWrite: 0,
-			totalTokens: 0,
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-		},
-		stopReason: "stop",
-		timestamp: Date.now(),
-	};
 }

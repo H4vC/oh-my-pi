@@ -1,5 +1,6 @@
 import { classifyModel } from "./compat/taxonomy";
-import MODELS from "./models.json" with { type: "json" };
+import type MODELS from "./models.json";
+import INTERNED from "./models.interned.json" with { type: "json" };
 import type {
 	Api,
 	EffectiveTokenCost,
@@ -13,32 +14,59 @@ import type {
 } from "./types";
 
 /**
- * Static bundled model registry loaded from `models.json`.
+ * Static bundled model registry loaded from `models.interned.json`, the
+ * runtime form of `models.json` with repeated `compat` / `thinking` /
+ * `identity` records stored once (see scripts/intern-models.ts).
  *
  * This module intentionally exposes compile-time defaults only.
  * It does not include runtime discovery, stencil.so overlays, or on-disk cache state.
  *
  * For runtime-aware resolution, use `createModelManager()` / `resolveProviderModels()`.
  */
-const modelRegistry = new Map<string, Map<string, Model<Api>>>();
+interface InternedRow {
+	compat?: unknown;
+	thinking?: unknown;
+	identity?: unknown;
+	[key: string]: unknown;
+}
+interface InternedBundle {
+	profiles: { compat: object[]; thinking: object[]; identity: object[] };
+	models: Record<string, Record<string, InternedRow>>;
+}
+const { models: BUNDLED, profiles: PROFILES } = INTERNED as unknown as InternedBundle;
+
+interface BundledProviderModels {
+	byId: Map<string, Model<Api>>;
+	/** Frozen; identity is stable for the process, so fingerprints can be memoized on it. */
+	list: readonly Model<Api>[];
+}
+
+const modelRegistry = new Map<string, BundledProviderModels>();
 
 /** Return one provider's bundled models, materialized by the generator. */
-function getProviderModels(provider: string): Map<string, Model<Api>> | undefined {
+function getProviderModels(provider: string): BundledProviderModels | undefined {
 	const cachedModels = modelRegistry.get(provider);
 	if (cachedModels !== undefined) return cachedModels;
-	if (!Object.hasOwn(MODELS, provider)) return undefined;
+	if (!Object.hasOwn(BUNDLED, provider)) return undefined;
 
-	const providerModels = new Map<string, Model<Api>>();
-	const rawModels = MODELS[provider as keyof typeof MODELS];
+	const byId = new Map<string, Model<Api>>();
+	const rawModels = BUNDLED[provider]!;
 	for (const id in rawModels) {
-		// models.json rows are complete Models emitted by generate-models.ts;
-		// consuming them verbatim keeps startup allocation-free.
-		const row = rawModels[id as keyof typeof rawModels] as unknown as Model<Api>;
+		// Rows are complete Models emitted by generate-models.ts except for the
+		// interned records, which are shared across rows. They are frozen
+		// (shallowly: deep freezing costs ~2.5 ms at startup) so an in-place
+		// write fails loudly instead of leaking into every row sharing them.
+		const row = rawModels[id]!;
+		if (typeof row.compat === "number") row.compat = Object.freeze(PROFILES.compat[row.compat]);
+		if (typeof row.thinking === "number") row.thinking = Object.freeze(PROFILES.thinking[row.thinking]);
+		if (typeof row.identity === "number") row.identity = Object.freeze(PROFILES.identity[row.identity]);
+		const model = row as unknown as Model<Api>;
 		// Rows baked before the compat engine (and stale cache snapshots) lack
 		// `identity`; classify lazily so consumers can rely on the field.
-		row.identity ??= classifyModel(provider, id, { lenient: true });
-		providerModels.set(id, row);
+		model.identity ??= classifyModel(provider, id, { lenient: true });
+		byId.set(id, model);
 	}
+	const providerModels: BundledProviderModels = { byId, list: Object.freeze(Array.from(byId.values())) };
 	modelRegistry.set(provider, providerModels);
 	return providerModels;
 }
@@ -47,21 +75,29 @@ export type GeneratedProvider = keyof typeof MODELS;
 
 /** Whether `provider` has bundled rows in models.json (e.g. a provider id authored in KDL). */
 export function isGeneratedProvider(provider: string): provider is GeneratedProvider {
-	return Object.hasOwn(MODELS, provider);
+	return Object.hasOwn(BUNDLED, provider);
 }
 
 export function getBundledModel<TApi extends Api = Api>(provider: GeneratedProvider, modelId: string): Model<TApi> {
-	const providerModels = getProviderModels(provider);
-	return providerModels?.get(modelId) as Model<TApi>;
+	return getProviderModels(provider)?.byId.get(modelId) as Model<TApi>;
 }
 
 export function getBundledProviders(): KnownProvider[] {
-	return Object.keys(MODELS) as KnownProvider[];
+	return Object.keys(BUNDLED) as KnownProvider[];
 }
 
+/** One provider's bundled models as a fresh array (rows themselves are shared). */
 export function getBundledModels(provider: GeneratedProvider): Model<Api>[] {
-	const models = getProviderModels(provider);
-	return models ? (Array.from(models.values()) as Model<Api>[]) : [];
+	return getProviderModels(provider)?.list.slice() ?? [];
+}
+
+/**
+ * One provider's bundled models as a shared frozen array whose identity is
+ * stable for the process. Prefer this over {@link getBundledModels} on hot
+ * paths that only read the list (it skips the copy and lets fingerprints memoize).
+ */
+export function getBundledModelList(provider: GeneratedProvider): readonly Model<Api>[] {
+	return getProviderModels(provider)?.list ?? [];
 }
 /** Resolve display semantics without mistaking an absent rate card for a free model. */
 export function getModelPricingStatus(model: Pick<Model<Api>, "cost" | "pricingStatus">): ModelPricingStatus {

@@ -5,9 +5,8 @@ import { compareRevision, parseRevision } from "../compat/revision";
 import { resolveCatalogAxes, resolveModelPolicy } from "../compat/resolve";
 import { classifyModel } from "../compat/taxonomy";
 import { Effort, THINKING_EFFORTS } from "../effort";
-import { getBundledModels } from "../models";
-import { toModelSpec } from "../provider-models/bundled-references";
-import type { CursorModelRoute, Model, ModelSpec, TokenCost } from "../types";
+import { createBundledReferenceMap } from "../provider-models/bundled-references";
+import type { CursorModelRoute, ModelSpec, TokenCost } from "../types";
 import {
 	CURSOR_AVAILABLE_MODELS_PATH,
 	CURSOR_DEFAULT_BASE_URL,
@@ -145,7 +144,7 @@ export async function fetchCursorUsableModels(
 	if (usable === null && available === null) return null;
 	const defaultModel = decodeUnary(GetDefaultModelForCliResponseSchema, defaultPayload)?.model;
 	const parsedUsable = CursorDecodedResponseSchema(usable);
-	const references = createCursorReferenceMap();
+	const references = createBundledReferenceMap<"cursor-agent">("cursor");
 	const legacyModels =
 		parsedUsable instanceof type.errors
 			? []
@@ -277,14 +276,6 @@ function normalizeCustomModelIds(customModelIds: readonly string[] | undefined):
 		normalized.add(trimmed);
 	}
 	return [...normalized];
-}
-
-function createCursorReferenceMap(): Map<string, ModelSpec<"cursor-agent">> {
-	const references = new Map<string, ModelSpec<"cursor-agent">>();
-	for (const model of getBundledModels("cursor")) {
-		references.set(model.id, toModelSpec(model as Model<"cursor-agent">));
-	}
-	return references;
 }
 
 function decodeUnary<TMessage extends ProtoMessage>(

@@ -2,9 +2,8 @@ import { calculateCost } from "@oh-my-pi/pi-catalog/models";
 import { fetchWithRetry, parseStreamingJson, readJsonl } from "@oh-my-pi/pi-utils";
 import * as AIError from "../error";
 import { parseToolCallArguments } from "../utils/tool-call-arguments";
-import { getEnvApiKey } from "../stream";
+import { getEnvApiKey } from "../env-api-key";
 import type {
-	Api,
 	AssistantMessage,
 	Context,
 	ImageContent,
@@ -33,6 +32,7 @@ import {
 	StreamMarkupHealing,
 	type StreamMarkupHealingEvent,
 } from "../utils/stream-markup-healing";
+import { createEmptyAssistantMessage } from "./error-message";
 import { transformMessages } from "./transform-messages";
 import { joinTextWithImagePlaceholder, partitionVisionContent } from "./vision-guard";
 
@@ -365,26 +365,6 @@ async function captureHttpErrorResponse(response: Response): Promise<CapturedHtt
 	};
 }
 
-function createEmptyOutput(model: Model<"ollama-chat">): AssistantMessage {
-	return {
-		role: "assistant",
-		content: [],
-		api: "ollama-chat" as Api,
-		provider: model.provider,
-		model: model.id,
-		usage: {
-			input: 0,
-			output: 0,
-			cacheRead: 0,
-			cacheWrite: 0,
-			totalTokens: 0,
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-		},
-		stopReason: "stop",
-		timestamp: Date.now(),
-	};
-}
-
 function endThinkingBlock(stream: AssistantMessageEventStream, output: AssistantMessage, index: number): void {
 	const block = output.content[index];
 	if (block?.type === "thinking") {
@@ -455,7 +435,7 @@ const streamOllamaOnce = (
 	void (async () => {
 		const startTime = performance.now();
 		let firstTokenTime: number | undefined;
-		const output = createEmptyOutput(model);
+		const output = createEmptyAssistantMessage("ollama-chat", model.provider, model.id);
 		let rawRequestDump: RawHttpRequestDump | undefined;
 		let capturedErrorResponse: CapturedHttpErrorResponse | undefined;
 		let activeThinkingIndex: number | undefined;

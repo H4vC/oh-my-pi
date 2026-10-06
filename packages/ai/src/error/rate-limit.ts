@@ -1,4 +1,5 @@
 import { extractRetryHint } from "@oh-my-pi/pi-utils/fetch-retry";
+import { asRecord, isRecord } from "@oh-my-pi/pi-utils/type-guards";
 
 /**
  * Rate limit reason classification and backoff calculation utilities.
@@ -131,19 +132,13 @@ const GOOGLE_RPC_ERROR_INFO_TYPE = "type.googleapis.com/google.rpc.ErrorInfo";
 const ANTIGRAVITY_MODEL_QUOTA_PATTERN = /\bexhausted your capacity on this model\b/i;
 const LONG_RATE_LIMIT_DELAY_MS = 5 * 60 * 1000;
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-	return typeof value === "object" && value !== null && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: undefined;
-}
-
 function parseJsonBody(errorMessage: string): Record<string, unknown> | undefined {
 	const start = errorMessage.indexOf("{");
 	const end = errorMessage.lastIndexOf("}");
 	if (start < 0 || end < start) return undefined;
 	try {
 		const parsed: unknown = JSON.parse(errorMessage.slice(start, end + 1));
-		return asRecord(parsed);
+		return isRecord(parsed) ? parsed : undefined;
 	} catch {
 		return undefined;
 	}

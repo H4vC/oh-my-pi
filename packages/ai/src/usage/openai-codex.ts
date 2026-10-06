@@ -1,7 +1,7 @@
-import { Buffer } from "node:buffer";
 import { planRequirementFor, quotaTierFor } from "@oh-my-pi/pi-catalog/compat/behavior";
 import { toNumber } from "@oh-my-pi/pi-catalog/utils";
 import { USER_AGENT } from "@oh-my-pi/pi-utils";
+import { decodeJwtPayload } from "@oh-my-pi/pi-utils/jwt";
 import type {
 	CredentialRankingContext,
 	CredentialRankingStrategy,
@@ -111,24 +111,6 @@ const toBoolean = (value: unknown): boolean | undefined => {
 	return undefined;
 };
 
-function base64UrlDecode(input: string): string {
-	const base64 = input.replace(/-/g, "+").replace(/_/g, "/");
-	const padLen = (4 - (base64.length % 4)) % 4;
-	const padded = base64 + "=".repeat(padLen);
-	return Buffer.from(padded, "base64").toString("utf8");
-}
-
-function parseJwt(token: string): JwtPayload | null {
-	const parts = token.split(".");
-	if (parts.length !== 3) return null;
-	try {
-		const payloadJson = base64UrlDecode(parts[1]);
-		return JSON.parse(payloadJson) as JwtPayload;
-	} catch {
-		return null;
-	}
-}
-
 function normalizeEmail(email: string | undefined): string | undefined {
 	if (!email) return undefined;
 	const normalized = email.trim().toLowerCase();
@@ -137,13 +119,13 @@ function normalizeEmail(email: string | undefined): string | undefined {
 
 function extractAccountId(token: string | undefined): string | undefined {
 	if (!token) return undefined;
-	const payload = parseJwt(token);
+	const payload = decodeJwtPayload(token) as JwtPayload | null;
 	return payload?.[JWT_AUTH_CLAIM]?.chatgpt_account_id ?? undefined;
 }
 
 function extractEmail(token: string | undefined): string | undefined {
 	if (!token) return undefined;
-	const payload = parseJwt(token);
+	const payload = decodeJwtPayload(token) as JwtPayload | null;
 	return normalizeEmail(payload?.[JWT_PROFILE_CLAIM]?.email);
 }
 

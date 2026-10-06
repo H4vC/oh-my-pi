@@ -31,6 +31,7 @@ import {
 	anthropicMessagesRequestSchema,
 } from "./anthropic-messages-server-schema";
 import { isAnthropicServerToolHistoryBlock, THINKING_BINDING_CONTROLS_BETA } from "./anthropic-wire";
+import { createEmptyUsage } from "./error-message";
 
 /**
  * Anthropic Messages API (https://docs.anthropic.com/en/api/messages) ↔ pi-ai
@@ -393,7 +394,7 @@ export function parseRequest(body: unknown, headers?: Headers): ParsedRequest {
 				api: "anthropic-messages",
 				provider: "anthropic",
 				model: stampedAssistantModelId(data.model, "anthropic"),
-				usage: emptyUsage(),
+				usage: createEmptyUsage(),
 				// The wire carries no stop reason, but tool calls answered by their
 				// `tool_result` blocks did request execution. A constant "stop" reads
 				// as an abandoned tool-use turn and strips the turn's signatures.
@@ -477,17 +478,6 @@ export function parseRequest(body: unknown, headers?: Headers): ParsedRequest {
 		},
 		stream: data.stream === true,
 		options,
-	};
-}
-
-function emptyUsage(): AssistantMessage["usage"] {
-	return {
-		input: 0,
-		output: 0,
-		cacheRead: 0,
-		cacheWrite: 0,
-		totalTokens: 0,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};
 }
 

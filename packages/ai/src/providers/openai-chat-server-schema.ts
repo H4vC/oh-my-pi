@@ -235,6 +235,7 @@ export const openaiChatRequestSchema = type({
  * lock-step with the canonical API surface; the schemas above are runtime
  * validators for the subset we actually accept.
  */
+/** @deprecated Unused alias; use `ChatCompletionCreateParams` from `providers/openai-chat-wire`. Will be removed in the next major. */
 export type OpenAIChatRequest = ChatCompletionCreateParams;
 export type OpenAIChatMessage = ChatCompletionMessageParam;
 export type OpenAIChatToolCall = ChatCompletionMessageToolCall;

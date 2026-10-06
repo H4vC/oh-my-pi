@@ -273,20 +273,27 @@ export const inputItemSchema = userMessageItemSchema
 // Variant types alias the canonical SDK union members so the walker can
 // narrow them cleanly. The convenience "message" shape (no `type` field) maps
 // to EasyInputMessage; the explicit form maps to ResponseInputItem.Message.
+/** @deprecated Unused alias; use `EasyInputMessage | ResponseInputItem.Message` from `providers/openai-responses-wire`. Will be removed in the next major. */
 export type OpenAIResponsesUserItem = EasyInputMessage | ResponseInputItem.Message;
+/** @deprecated Unused alias; use `EasyInputMessage | ResponseInputItem.Message` from `providers/openai-responses-wire`. Will be removed in the next major. */
 export type OpenAIResponsesSystemItem = EasyInputMessage | ResponseInputItem.Message;
+/** @deprecated Unused alias; use `EasyInputMessage | ResponseOutputMessage` from `providers/openai-responses-wire`. Will be removed in the next major. */
 export type OpenAIResponsesAssistantItem = EasyInputMessage | ResponseOutputMessage;
 export type OpenAIResponsesReasoningItem = ResponseReasoningItem;
 export type OpenAIResponsesFunctionCallItem = ResponseFunctionToolCall;
 export type OpenAIResponsesFunctionCallOutputItem = ResponseInputItem.FunctionCallOutput;
 
-/** Inferred shape of the custom tool call input item (no canonical SDK alias). */
+/**
+ * Inferred shape of the custom tool call input item (no canonical SDK alias).
+ * @deprecated Unused; use `ResponseCustomToolCall` from `providers/openai-responses-wire`. Will be removed in the next major.
+ */
 export type OpenAIResponsesCustomToolCallItem = typeof customToolCallItemSchema.infer;
 export type OpenAIResponsesCustomToolCallOutputItem = typeof customToolCallOutputItemSchema.infer;
 export type OpenAIResponsesComputerCallItem = typeof computerCallItemSchema.infer;
 export type OpenAIResponsesComputerCallOutputItem = typeof computerCallOutputItemSchema.infer;
 export type OpenAIResponsesInputImageBlock = typeof inputImageBlockSchema.infer;
 export type OpenAIResponsesInputFileBlock = typeof inputFileBlockSchema.infer;
+/** @deprecated Unused; use `ResponseOutputRefusal` from `providers/openai-responses-wire`. Will be removed in the next major. */
 export type OpenAIResponsesOutputRefusalBlock = typeof outputRefusalSchema.infer;
 
 // ─── Tools ──────────────────────────────────────────────────────────────────
@@ -399,7 +406,9 @@ export const openaiResponsesRequestSchema = type({
  * lock-step with the canonical API surface; the schemas above are runtime
  * validators for the subset we actually accept.
  */
+/** @deprecated Unused alias; use `ResponseCreateParams` from `providers/openai-responses-wire`. Will be removed in the next major. */
 export type OpenAIResponsesRequest = ResponseCreateParams;
+/** @deprecated Unused alias; use `ResponseInputItem` from `providers/openai-responses-wire`. Will be removed in the next major. */
 export type OpenAIResponsesInputItem = ResponseInputItem;
 export type OpenAIResponsesTool = ResponsesTool;
 export type OpenAIResponsesToolChoice = NonNullable<ResponseCreateParams["tool_choice"]>;
