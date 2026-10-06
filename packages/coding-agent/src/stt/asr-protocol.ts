@@ -1,24 +1,14 @@
+import type { WorkerProgressEvent } from "../subprocess/worker-runtime";
 import type { SttModelKey } from "./models";
 
-export type SttProgressStatus = "initiate" | "download" | "progress" | "progress_total" | "done" | "ready" | "error";
+export type SttProgressStatus = WorkerProgressEvent<SttModelKey>["status"];
 
 export interface SttProgressFileState {
 	loaded: number;
 	total: number;
 }
 
-export interface SttProgressEvent {
-	modelKey: SttModelKey;
-	status: SttProgressStatus;
-	name?: string;
-	file?: string;
-	progress?: number;
-	loaded?: number;
-	total?: number;
-	files?: Record<string, SttProgressFileState>;
-	task?: string;
-	model?: string;
-}
+export type SttProgressEvent = WorkerProgressEvent<SttModelKey>;
 
 export type SttWorkerInbound =
 	| { type: "ping"; id: string }

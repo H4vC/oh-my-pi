@@ -4,7 +4,6 @@ import type { ModelRegistry } from "../config/model-registry";
 import type { Settings } from "../config/settings";
 import { runSharpshooterConsolidation } from "./consolidate";
 import { readSharpshooterState, sharpshooterBankDir } from "./paths";
-import { sharpshooterQueueDepth } from "./queue";
 
 import { cfgSharpshooterIntervalMinutes } from "./settings";
 
@@ -33,13 +32,13 @@ export function startSharpshooterScheduler(options: {
 
 	const tick = async (): Promise<void> => {
 		try {
-			const [depth, state] = await Promise.all([
-				sharpshooterQueueDepth(options.agentDir, options.cwd),
-				readSharpshooterState(options.agentDir, options.cwd),
-			]);
-			const intervalMinutes = cfgSharpshooterIntervalMinutes.get(options.settings);
-			const due = Date.now() - state.lastConsolidatedAt >= intervalMinutes * 60_000;
-			if (depth === 0 && !due) return;
+			// Consolidation is a no-op until the interval elapses, so gate on state alone;
+			// the queue is only listed once consolidation actually runs. A recorded error
+			// (e.g. no model resolved) backs off for one interval instead of retrying every tick.
+			const state = await readSharpshooterState(options.agentDir, options.cwd);
+			const intervalMs = cfgSharpshooterIntervalMinutes.get(options.settings) * 60_000;
+			const lastAttempt = Math.max(state.lastConsolidatedAt, state.lastError?.at ?? 0);
+			if (Date.now() - lastAttempt < intervalMs) return;
 			await runSharpshooterConsolidation(options);
 		} catch (error) {
 			logger.debug("sharpshooter scheduler tick failed", {

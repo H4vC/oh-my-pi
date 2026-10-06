@@ -6,13 +6,13 @@ import { $env, getProjectDir, isEnoent, prompt } from "@oh-my-pi/pi-utils";
 import { applyChangelogProposals } from "../../commit/changelog";
 import { detectChangelogBoundaries } from "../../commit/changelog/detect";
 import { parseUnreleasedSection } from "../../commit/changelog/parse";
-import { formatCommitMessage } from "../../commit/message";
+import { formatConventionalCommit } from "../../commit/conventional/normalization";
 import { resolvePrimaryModel } from "../../commit/model-selection";
-import type { CommitCommandArgs, ConventionalAnalysis, NumstatEntry } from "../../commit/types";
+import type { CommitCommandArgs, NumstatEntry } from "../../commit/types";
 import { ModelRegistry } from "../../config/model-registry";
 import { Settings } from "../../config/settings";
 import { discoverAuthStorage, discoverContextFiles, loadCliExtensionProviders } from "../../sdk";
-import type { AuthStorage } from "../../session/auth-storage";
+import type { AuthStorage } from "@oh-my-pi/pi-ai";
 import { abortOnGitFailure, pushOrAbort } from "../execute";
 import { type ExistingChangelogEntries, runCommitAgentSession } from "./agent";
 import { generateFallbackProposal } from "./fallback";
@@ -258,7 +258,13 @@ async function runSingleCommit(proposal: CommitProposal, ctx: CommitExecutionCon
 	if (proposal.warnings.length > 0) {
 		process.stdout.write(formatWarnings(proposal.warnings));
 	}
-	const commitMessage = formatCommitMessage(proposal.analysis, proposal.summary);
+	const commitMessage = formatConventionalCommit({
+		type: proposal.analysis.type,
+		scope: proposal.analysis.scope,
+		summary: proposal.summary,
+		body: proposal.analysis.details.map(detail => detail.text.trim()),
+		footers: [],
+	});
 	if (ctx.dryRun) {
 		process.stdout.write("\nGenerated commit message:\n");
 		process.stdout.write(`${commitMessage}\n`);
@@ -297,13 +303,13 @@ async function runSplitCommit(
 	if (ctx.dryRun) {
 		process.stdout.write("\nSplit commit plan (dry run):\n");
 		for (const [index, commit] of plan.commits.entries()) {
-			const analysis: ConventionalAnalysis = {
+			const message = formatConventionalCommit({
 				type: commit.type,
 				scope: commit.scope,
-				details: commit.details,
-				issueRefs: commit.issueRefs,
-			};
-			const message = formatCommitMessage(analysis, commit.summary);
+				summary: commit.summary,
+				body: commit.details.map(detail => detail.text.trim()),
+				footers: [],
+			});
 			process.stdout.write(`Commit ${index + 1}:\n${message}\n`);
 			const changeSummary = commit.changes.map(change => formatFileChangeSummary(change.path, change)).join(", ");
 			process.stdout.write(`Changes: ${changeSummary}\n`);
@@ -327,13 +333,13 @@ async function runSplitCommit(
 	for (const [position, commitIndex] of order.entries()) {
 		const commit = plan.commits[commitIndex];
 		await repo.stageHunks(commit.changes, stagedDiff);
-		const analysis: ConventionalAnalysis = {
+		const message = formatConventionalCommit({
 			type: commit.type,
 			scope: commit.scope,
-			details: commit.details,
-			issueRefs: commit.issueRefs,
-		};
-		const message = formatCommitMessage(analysis, commit.summary);
+			summary: commit.summary,
+			body: commit.details.map(detail => detail.text.trim()),
+			footers: [],
+		});
 		try {
 			await repo.commitCreate(message, {});
 		} catch (error) {

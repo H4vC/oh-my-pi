@@ -56,6 +56,7 @@ export function createSessionRuntime(): AutoresearchRuntime {
 	};
 }
 
+/** @deprecated Unused; use `structuredClone(state)`. Will be removed in the next major. */
 export function cloneExperimentState(state: ExperimentState): ExperimentState {
 	return {
 		...state,

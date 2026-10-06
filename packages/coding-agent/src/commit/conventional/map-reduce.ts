@@ -36,7 +36,10 @@ export function shouldUseMapReduce(diff: string, config: ConventionalGenerationC
 	return hasIncludedFile && totalTokens >= config.mapReduceThreshold;
 }
 
-/** Group all file indices into greedy token- and byte-budgeted batches. */
+/**
+ * Group all file indices into greedy token- and byte-budgeted batches.
+ * @deprecated Unused by the commit pipeline; use {@link buildLlmFileBatches}. Will be removed in the next major.
+ */
 export function buildFileBatches(files: readonly ConventionalFileDiff[], budget: number): number[][] {
 	return buildBatchesForIndices(
 		files,

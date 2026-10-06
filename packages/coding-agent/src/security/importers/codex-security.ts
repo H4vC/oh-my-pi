@@ -21,6 +21,7 @@ import {
 	encodeSecurityProjectKey,
 	parseSecurityScanBundle,
 } from "../contracts";
+import { normalizeRepositoryRelativePath } from "../paths";
 
 interface CodexManifest {
 	documentType?: string;
@@ -109,13 +110,8 @@ function stringArray(value: unknown): string[] {
 }
 
 function importedLocationPath(value: string): string {
-	const normalized = value.replaceAll("\\", "/").replace(/^\.\//, "");
-	if (
-		!normalized ||
-		normalized.startsWith("/") ||
-		/^[a-zA-Z]:\//.test(normalized) ||
-		normalized.split("/").includes("..")
-	) {
+	const normalized = normalizeRepositoryRelativePath(value);
+	if (normalized === undefined) {
 		throw new Error(`Codex Security bundle locations must be repository-relative: ${value}`);
 	}
 	return normalized;

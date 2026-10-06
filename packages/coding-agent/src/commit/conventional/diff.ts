@@ -337,38 +337,46 @@ export function truncateDiffByLines(diff: string, maxLines: number, config: Conv
 	return result.join("\n") + (result.length > 0 ? "\n" : "");
 }
 
+/** Whitespace classification of a diff plus the {@link stripWhitespaceOnlyFiles} result, from one pass. */
+export interface DiffWhitespaceAnalysis {
+	whitespaceOnlyFiles: string[];
+	hasSubstantive: boolean;
+	allWhitespace: boolean;
+	/** Diff without whitespace-only sections; `null` when nothing (or everything) would be removed. */
+	strippedDiff: string | null;
+}
+
+/** Classify file sections and strip whitespace-only ones in a single pass over the diff. */
+export function analyzeDiffWhitespace(diff: string): DiffWhitespaceAnalysis {
+	const { preamble, sections } = fileSections(diff);
+	const whitespaceOnlyFiles: string[] = [];
+	const kept: string[] = [];
+	for (const [path, section] of sections) {
+		if (sectionIsWhitespaceOnly(section)) whitespaceOnlyFiles.push(path);
+		else kept.push(section);
+	}
+	const hasSubstantive = kept.length > 0;
+	return {
+		whitespaceOnlyFiles,
+		hasSubstantive,
+		allWhitespace: whitespaceOnlyFiles.length > 0 && !hasSubstantive,
+		strippedDiff: whitespaceOnlyFiles.length === 0 || !hasSubstantive ? null : preamble + kept.join(""),
+	};
+}
+
 /** Classify file sections as whitespace-only or substantive. */
 export function classifyDiffWhitespace(diff: string): {
 	whitespaceOnlyFiles: string[];
 	hasSubstantive: boolean;
 	allWhitespace: boolean;
 } {
-	const sections = fileSections(diff).sections;
-	const whitespaceOnlyFiles: string[] = [];
-	let hasSubstantive = false;
-	for (const [path, section] of sections) {
-		if (sectionIsWhitespaceOnly(section)) whitespaceOnlyFiles.push(path);
-		else hasSubstantive = true;
-	}
-	return {
-		whitespaceOnlyFiles,
-		hasSubstantive,
-		allWhitespace: whitespaceOnlyFiles.length > 0 && !hasSubstantive,
-	};
+	const { whitespaceOnlyFiles, hasSubstantive, allWhitespace } = analyzeDiffWhitespace(diff);
+	return { whitespaceOnlyFiles, hasSubstantive, allWhitespace };
 }
 
 /** Remove whitespace-only file sections, returning `null` when nothing changes. */
 export function stripWhitespaceOnlyFiles(diff: string): string | null {
-	const { preamble, sections } = fileSections(diff);
-	if (sections.length === 0) return null;
-	const kept: string[] = [];
-	let strippedAny = false;
-	for (const [, section] of sections) {
-		if (sectionIsWhitespaceOnly(section)) strippedAny = true;
-		else kept.push(section);
-	}
-	if (!strippedAny || kept.length === 0) return null;
-	return preamble + kept.join("");
+	return analyzeDiffWhitespace(diff).strippedDiff;
 }
 
 function truncateUtf8(text: string, maxBytes: number): string {
@@ -418,8 +426,8 @@ function fileSections(diff: string): { preamble: string; sections: Array<[string
 }
 
 function sectionIsWhitespaceOnly(section: string): boolean {
-	const added: string[] = [];
-	const removed: string[] = [];
+	let added = "";
+	let removed = "";
 	let hasChange = false;
 	for (const line of splitLines(section)) {
 		if (NONCONTENT_CHANGE_PREFIXES.some(prefix => line.startsWith(prefix))) {
@@ -428,14 +436,16 @@ function sectionIsWhitespaceOnly(section: string): boolean {
 		if (line.startsWith("+++") || line.startsWith("---")) continue;
 		if (line.startsWith("+")) {
 			hasChange = true;
-			for (const char of line.slice(1)) if (!/\s/.test(char)) added.push(char);
+			added += line.slice(1).replace(WHITESPACE_RUN_RE, "");
 		} else if (line.startsWith("-")) {
 			hasChange = true;
-			for (const char of line.slice(1)) if (!/\s/.test(char)) removed.push(char);
+			removed += line.slice(1).replace(WHITESPACE_RUN_RE, "");
 		}
 	}
-	return hasChange && added.join("") === removed.join("");
+	return hasChange && added === removed;
 }
+
+const WHITESPACE_RUN_RE = /\s+/g;
 function splitLines(text: string): string[] {
 	if (!text) return [];
 	const lines = text.split(/\r\n|\n|\r/);

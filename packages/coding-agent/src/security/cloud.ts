@@ -1,6 +1,6 @@
 import { decodeJwt } from "@oh-my-pi/pi-ai/registry/oauth/openai-codex";
 import * as vcs from "@oh-my-pi/pi-natives/vcs";
-import type { AuthStorage } from "../session/auth-storage";
+import type { AuthStorage } from "@oh-my-pi/pi-ai";
 import { resolveExactSecurityOAuthAccess } from "./auth";
 import {
 	createSecurityEvidenceId,
@@ -19,6 +19,7 @@ import {
 	type SecurityScanBundle,
 	type SecuritySeverityLevel,
 } from "./contracts";
+import { normalizeRepositoryRelativePath } from "./paths";
 import { exportSecurityBundleToSarif } from "./sarif";
 import type { SecurityStore } from "./store";
 
@@ -369,16 +370,7 @@ export class CodexSecurityCloudClient {
 }
 
 function normalizePath(value: unknown): string | undefined {
-	if (typeof value !== "string") return undefined;
-	const normalized = value.trim().replaceAll("\\", "/").replace(/^\.\//, "");
-	if (
-		!normalized ||
-		normalized.startsWith("/") ||
-		/^[a-zA-Z]:\//.test(normalized) ||
-		normalized.split("/").includes("..")
-	)
-		return undefined;
-	return normalized;
+	return typeof value === "string" ? normalizeRepositoryRelativePath(value.trim()) : undefined;
 }
 
 function severity(value: unknown): SecuritySeverityLevel {
@@ -408,11 +400,6 @@ function disposition(value: unknown): SecurityDispositionStatus {
 	}
 }
 
-function text(value: unknown): string | undefined {
-	if (typeof value === "string" && value.length > 0) return value;
-	return undefined;
-}
-
 function locationsAndEvidence(
 	commit: JsonObject,
 	fingerprintSeed: string,
@@ -438,10 +425,10 @@ function locationsAndEvidence(
 		const entry: (typeof evidenceInputs)[number] = {
 			kind: "code",
 			label: `Cloud source evidence ${index + 1}`,
-			explanation: text(line.comment) ?? "Source location reported by Codex Security cloud.",
+			explanation: optionalString(line.comment) ?? "Source location reported by Codex Security cloud.",
 			location,
 		};
-		const excerpt = text(line.content);
+		const excerpt = optionalString(line.content);
 		if (excerpt) entry.excerpt = excerpt;
 		evidenceInputs.push(entry);
 	}
@@ -453,7 +440,7 @@ function locationsAndEvidence(
 	}
 	if (locations.length === 0)
 		throw new Error("Codex Security cloud finding has no usable repository-relative location");
-	const validationReport = text(commit.validation_report) ?? text(commit.fix_check_report);
+	const validationReport = optionalString(commit.validation_report) ?? optionalString(commit.fix_check_report);
 	if (validationReport) {
 		evidenceInputs.push({
 			kind: "validation",
@@ -515,7 +502,7 @@ function normalizeFinding(
 		},
 	};
 	const findingSeverity: SecurityFinding["severity"] = { level: severity(raw.criticality ?? commit.criticality) };
-	const severityRationale = text(raw.criticality_reason);
+	const severityRationale = optionalString(raw.criticality_reason);
 	if (severityRationale) findingSeverity.rationale = severityRationale;
 	const validation: SecurityFinding["validation"] = {
 		status: commit.validated === true ? "validated" : "unvalidated",
@@ -523,10 +510,10 @@ function normalizeFinding(
 	};
 	const validatedAt = optionalString(commit.validation_finished_at);
 	if (validatedAt) validation.validatedAt = validatedAt;
-	const validationSummary = text(commit.validation_report);
+	const validationSummary = optionalString(commit.validation_report);
 	if (validationSummary) validation.summary = validationSummary;
 	const findingDisposition: SecurityFinding["disposition"] = { status: disposition(raw.status) };
-	const dispositionRationale = text(raw.resolution_reason);
+	const dispositionRationale = optionalString(raw.resolution_reason);
 	if (dispositionRationale) findingDisposition.rationale = dispositionRationale;
 	const dispositionUpdatedAt = optionalString(raw.updated_at);
 	if (dispositionUpdatedAt) findingDisposition.updatedAt = dispositionUpdatedAt;
@@ -536,7 +523,7 @@ function normalizeFinding(
 		fingerprint,
 		ruleId,
 		title,
-		summary: text(commit.description) ?? text(raw.description) ?? title,
+		summary: optionalString(commit.description) ?? optionalString(raw.description) ?? title,
 		severity: findingSeverity,
 		confidence: { level: confidence(commit) },
 		taxonomy: { category, cwe: [] },
@@ -556,7 +543,7 @@ function normalizeFinding(
 			cloudValidationConfidence: commit.validation_confidence ?? null,
 		},
 	};
-	const remediation = text(commit.proposed_patch) ?? text(raw.proposed_patch);
+	const remediation = optionalString(commit.proposed_patch) ?? optionalString(raw.proposed_patch);
 	if (remediation) finding.remediation = remediation;
 	return finding;
 }

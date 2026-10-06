@@ -106,9 +106,9 @@ export function computeBankScope(config: HindsightConfig, directory: string): Ba
 }
 
 /**
- * Backwards-compatible thin wrapper: just return the bank id portion of the
- * scope. New code should prefer `computeBankScope` directly so it can also
- * apply the tag fields.
+ * Bank id portion of {@link computeBankScope}.
+ *
+ * @deprecated Use `computeBankScope(config, directory).bankId` (and apply its tag fields). Will be removed in the next major.
  */
 export function deriveBankId(config: HindsightConfig, directory: string): string {
 	return computeBankScope(config, directory).bankId;

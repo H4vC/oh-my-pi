@@ -10,6 +10,7 @@ export interface TinyTitleLocalModelSpec {
 	mlxRepo: string;
 	label: string;
 	description: string;
+	/** @deprecated Never read; use `description`. Will be removed in the next major. */
 	contextNote: string;
 	/** Model family emits hidden reasoning unless the chat template disables it. */
 	reasoning?: boolean;
@@ -53,13 +54,17 @@ export function isTinyTitleLocalModelKey(value: string): value is TinyTitleLocal
 	return TINY_TITLE_LOCAL_MODELS.some(model => model.key === value);
 }
 
+/** @deprecated Unused; use {@link getTinyLocalModelSpec}. Will be removed in the next major. */
 export function getTinyTitleModelSpec(key: TinyTitleLocalModelKey): (typeof TINY_TITLE_LOCAL_MODELS)[number] {
 	const spec = TINY_TITLE_LOCAL_MODELS.find(model => model.key === key);
 	if (!spec) throw new Error(`Unknown tiny title model: ${key}`);
 	return spec;
 }
 
-/** Recommended local model for memory tasks when none is named. */
+/**
+ * Recommended local model for memory tasks when none is named.
+ * @deprecated Unused; name a key from {@link TINY_MEMORY_LOCAL_MODELS} explicitly. Will be removed in the next major.
+ */
 export const DEFAULT_MEMORY_LOCAL_MODEL_KEY = "lfm2-1.2b";
 
 /**
@@ -123,6 +128,7 @@ export const TINY_MEMORY_LOCAL_MODELS = [
 
 export type TinyMemoryLocalModelKey = (typeof TINY_MEMORY_LOCAL_MODELS)[number]["key"];
 
+/** @deprecated Unused; check {@link TINY_MEMORY_LOCAL_MODELS} directly. Will be removed in the next major. */
 export function isTinyMemoryLocalModelKey(value: string): value is TinyMemoryLocalModelKey {
 	return TINY_MEMORY_LOCAL_MODELS.some(model => model.key === value);
 }
@@ -133,7 +139,10 @@ export function getTinyMemoryModelSpec(key: TinyMemoryLocalModelKey): (typeof TI
 	return spec;
 }
 
-/** Return whether a memory local model may emit reasoning tokens before answers. */
+/**
+ * Return whether a memory local model may emit reasoning tokens before answers.
+ * @deprecated Unused; read `reasoning` from {@link getTinyLocalModelSpec}. Will be removed in the next major.
+ */
 export function isTinyMemoryReasoningModelKey(key: TinyMemoryLocalModelKey): boolean {
 	const spec = getTinyMemoryModelSpec(key);
 	return "reasoning" in spec && spec.reasoning === true;

@@ -3,12 +3,11 @@ import * as path from "node:path";
 import { type } from "@oh-my-pi/omptype";
 import { completeSimple, Effort, retryTransientCompletion } from "@oh-my-pi/pi-ai";
 import { clampThinkingLevelForModel } from "@oh-my-pi/pi-catalog/model-thinking";
-import { prompt, withFileLock } from "@oh-my-pi/pi-utils";
+import { prompt, truncate, withFileLock } from "@oh-my-pi/pi-utils";
 
 import type { ModelRegistry } from "../config/model-registry";
 import type { Settings } from "../config/settings";
 import { redactMemorySecrets as redactSecrets } from "../memory-backend/redact";
-import { truncateApproxTokens } from "../mnemopi/config";
 import consolidateInputTemplate from "../prompts/memories/sharpshooter-consolidate-input.md" with { type: "text" };
 import consolidateSystemTemplate from "../prompts/memories/sharpshooter-consolidate-system.md" with { type: "text" };
 import { resolveSharpshooterModel } from "./extract";
@@ -139,10 +138,20 @@ async function consolidateLocked(
 		}
 
 		const model = await resolveSharpshooterModel(options.settings, options.modelRegistry);
-		if (!model) return { ran: false, reason: "no_model" };
+		if (!model) {
+			await recordConsolidationError(
+				options.agentDir,
+				options.cwd,
+				state,
+				"No sharpshooter model resolved; consolidation postponed",
+			);
+			return { ran: false, reason: "no_model" };
+		}
 
-		const currentFiles = await readCurrentMemoryFiles(options.agentDir, options.cwd);
-		const projectDocs = await readProjectDocs(options.cwd);
+		const [currentFiles, projectDocs] = await Promise.all([
+			readCurrentMemoryFiles(options.agentDir, options.cwd),
+			readProjectDocs(options.cwd),
+		]);
 		const sessions = renderSharpshooterSessions(groups);
 		const input = prompt.render(consolidateInputTemplate, {
 			architecture: currentFiles["architecture.md"],
@@ -227,7 +236,9 @@ async function readProjectDocs(cwd: string): Promise<string> {
 			.catch(() => "");
 		if (content.trim()) blocks.push(`--- ${name} ---\n${content.trim()}`);
 	}
-	return truncateApproxTokens(blocks.join("\n\n"), PROJECT_DOC_TOKEN_LIMIT);
+	const text = blocks.join("\n\n");
+	const maxChars = Math.max(0, PROJECT_DOC_TOKEN_LIMIT * 4);
+	return text.length <= maxChars ? text : `${truncate(text, maxChars, "").slice(0, -1).trimEnd()}…`;
 }
 
 function parseReplacementFiles(

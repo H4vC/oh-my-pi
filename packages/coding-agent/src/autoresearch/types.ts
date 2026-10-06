@@ -62,5 +62,7 @@ export interface AutoresearchToolFactoryOptions {
 	pi: ExtensionAPI;
 }
 
+/** @deprecated Unused alias; use `AgentToolResult` from `@oh-my-pi/pi-agent-core`. Will be removed in the next major. */
 export type AutoresearchToolResult<TDetails> = AgentToolResult<TDetails>;
+/** @deprecated Unused alias; use `SessionEntry[]`. Will be removed in the next major. */
 export type SessionEntries = SessionEntry[];

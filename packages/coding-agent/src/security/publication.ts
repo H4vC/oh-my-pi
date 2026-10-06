@@ -18,6 +18,7 @@ import {
 	createSecurityFindingId,
 	createSecurityOccurrenceId,
 } from "./contracts";
+import { normalizeRepositoryRelativePath } from "./paths";
 import { pathMatchesSecurityScope } from "./preflight";
 import { createNativeSecurityProducer, createNativeSecurityProvenance } from "./provenance";
 import { exportSecurityBundleToSarif } from "./sarif";
@@ -117,14 +118,8 @@ export interface SecurityPublicationOptions {
 }
 
 function normalizePublishedPath(input: string): string {
-	const normalized = input.replaceAll("\\", "/").replace(/^\.\//, "");
-	const segments = normalized.split("/");
-	if (
-		!normalized ||
-		normalized.startsWith("/") ||
-		/^[a-zA-Z]:\//.test(normalized) ||
-		segments.some(segment => segment === "..")
-	) {
+	const normalized = normalizeRepositoryRelativePath(input);
+	if (normalized === undefined) {
 		throw new Error(`Security finding paths must be repository-relative: ${input}`);
 	}
 	return normalized;

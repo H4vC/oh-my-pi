@@ -17,7 +17,7 @@ import type {
 	CommitInferenceResponse,
 } from "../src/commit/conventional/inference";
 import { conventionalCommit } from "../src/commit/conventional/commit-types";
-import { buildFileBatches } from "../src/commit/conventional/map-reduce";
+import { buildLlmFileBatches } from "../src/commit/conventional/map-reduce";
 import {
 	fallbackSummary,
 	parseConventionalAnalysisMarkdown,
@@ -143,7 +143,7 @@ index 111..222 100644
 			new ConventionalFileDiff("b.rs", "", "b".repeat(16)),
 			new ConventionalFileDiff("c.rs", "", "c".repeat(16)),
 		];
-		expect(buildFileBatches(files, 10)).toEqual([[0, 1], [2]]);
+		expect(buildLlmFileBatches(files, 10)).toEqual([[0, 1], [2]]);
 	});
 });
 

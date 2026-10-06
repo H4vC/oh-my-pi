@@ -3027,7 +3027,7 @@ describe("SecretObfuscator friendlyName placeholders", () => {
 		// instead of restoring the never-provider-visible uppercase secret.
 		const synthesized = `$$${base}:U$$`;
 		expect(obfuscator.deobfuscate(synthesized)).toBe(synthesized);
-		expect(obfuscator.deobfuscateObject({ cmd: synthesized })).toEqual({ cmd: synthesized });
+		expect(deobfuscateToolArguments(obfuscator, { cmd: synthesized })).toEqual({ cmd: synthesized });
 		// The legitimate visible token still round-trips.
 		expect(obfuscator.deobfuscate(visible)).toBe("abc12345");
 	});

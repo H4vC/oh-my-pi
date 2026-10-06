@@ -1,7 +1,6 @@
 import { rm } from "node:fs/promises";
-import { logger } from "@oh-my-pi/pi-utils";
+import { logger, truncate } from "@oh-my-pi/pi-utils";
 import type { MemoryBackend, MemoryBackendSearchItem, MemoryBackendStatus } from "../memory-backend/types";
-import { truncateApproxTokens } from "../mnemopi/config";
 import type { AgentSession } from "../session/agent-session";
 import { runSharpshooterConsolidation } from "./consolidate";
 import { maybeStartSharpshooterExtraction, resolveSharpshooterModel } from "./extract";
@@ -124,7 +123,9 @@ export const sharpshooterBackend: MemoryBackend = {
 			"Project decision memory (sharpshooter). These are friction-earned decisions; follow them unless the user overrides.",
 		];
 		for (const file of populated) parts.push(`## ${file.name.slice(0, -3)}\n\n${file.content.trim()}`);
-		return truncateApproxTokens(parts.join("\n\n"), cfgSharpshooterInjectionTokenLimit.get(settings));
+		const text = parts.join("\n\n");
+		const maxChars = Math.max(0, cfgSharpshooterInjectionTokenLimit.get(settings) * 4);
+		return text.length <= maxChars ? text : `${truncate(text, maxChars, "").slice(0, -1).trimEnd()}…`;
 	},
 
 	async clear(agentDir, cwd): Promise<void> {

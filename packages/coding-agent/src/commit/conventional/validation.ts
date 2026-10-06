@@ -137,7 +137,10 @@ export function validateCommitMessage(
 	return finishReport(report);
 }
 
-/** Return advisory type/file-stat consistency diagnostics. */
+/**
+ * Return advisory type/file-stat consistency diagnostics.
+ * @deprecated Unused; `validateCommitMessage` already runs this check. Will be removed in the next major.
+ */
 export function checkTypeScopeConsistency(message: ConventionalCommit, stat: string): ValidationReport {
 	const report = emptyReport();
 	typeScopeConsistency(message.type, stat, message.body, report);

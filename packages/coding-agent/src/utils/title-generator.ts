@@ -236,6 +236,7 @@ export async function generateSessionTitle(
 	}
 }
 
+/** @deprecated Unused; no replacement. Will be removed in the next major. */
 export async function generateTitleOnline(
 	firstMessage: string,
 	registry: ModelRegistry,
@@ -564,6 +565,7 @@ function getFallbackTerminalTitle(cwd: string | undefined): string | undefined {
 	return sanitizeTerminalTitlePart(baseName);
 }
 
+/** @deprecated Unused; no replacement. Will be removed in the next major. */
 export function formatSessionTerminalTitle(sessionName: string | undefined, cwd?: string): string {
 	const label = sanitizeTerminalTitlePart(sessionName) ?? getFallbackTerminalTitle(cwd);
 	return label ? `${DEFAULT_TERMINAL_TITLE}: ${label}` : DEFAULT_TERMINAL_TITLE;
@@ -573,6 +575,7 @@ export function formatSessionTerminalTitle(sessionName: string | undefined, cwd?
  * Set the terminal title through the native Win32 API or OSC 0.
  *
  * Repeating the same sanitized title is a no-op on every platform.
+ * @deprecated Test-only; no replacement. Will be removed in the next major.
  */
 export function setTerminalTitle(title: string): void {
 	writeTerminalTitle(title);

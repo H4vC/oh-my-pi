@@ -14,7 +14,7 @@ import securityRequestPrompt from "../prompts/security/scan-request.md" with { t
 import securityPublishDescription from "../prompts/tools/security-publish.md" with { type: "text" };
 import { createAgentSession } from "../sdk";
 import type { AgentSession } from "../session/agent-session";
-import type { AuthStorage } from "../session/auth-storage";
+import type { AuthStorage } from "@oh-my-pi/pi-ai";
 import { SessionManager } from "../session/session-manager";
 import { createSecurityAuthResolver, selectSecurityAuth } from "./auth";
 import type {
@@ -721,6 +721,7 @@ export function getSecurityCoordinator(host: SecurityCoordinatorHost): SecurityC
 	return coordinator;
 }
 
+/** @deprecated Unused test seam; construct `new SecurityCoordinator(host)` directly in tests. Will be removed in the next major. */
 export function resetSecurityCoordinatorsForTests(): void {
 	COORDINATORS.clear();
 }

@@ -14,6 +14,11 @@
 - Added `AgentSession.getTokenTotals()` and `SessionStatsTracker.getTokenTotals()` ([#14644](https://github.com/can1357/oh-my-pi/pull/14644) by [@H4vC](https://github.com/H4vC))
 - Added `findLatestCompaction(entries)` in `session/session-context`; `getLatestCompactionEntry` accepts readonly arrays ([#14644](https://github.com/can1357/oh-my-pi/pull/14644) by [@H4vC](https://github.com/H4vC))
 - Added `session/auth-discovery` (`discoverAuthStorage`) and `extensibility/extensions/session-loader` (`discoverSessionExtensionPaths`, `loadSessionExtensions`, `loadCliExtensionProviders`) modules; `sdk.ts` still re-exports them ([#14643](https://github.com/can1357/oh-my-pi/pull/14643) by [@H4vC](https://github.com/H4vC))
+- Added exports `buildRecallQuery` (hindsight/content), `flattenAgentMessages`/`countUserTurns` (hindsight/transcript), `buildStage1RolloutItems` (memories), `dedupeScopedTargets`/`resolveMnemopiBankDbPath`/`MnemopiScopedMemory` (mnemopi/state) ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Added raw-byte input (`Uint8Array` or `ImageBytesInput`) to `resizeImage` ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Added `floatToPcm16` in `stt/wav`; `encodePcm16Wav` accepts `Int16Array` chunks ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Added `analyzeDiffWhitespace` in `commit/conventional/diff` ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Added `dialSocket` and `endpointAlive` in `tiny/jsonl-socket`, and `longestBacktickRun` ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
 - Added `AgentSession.countRunningAsyncJobs()` ([#14644](https://github.com/can1357/oh-my-pi/pull/14644) by [@H4vC](https://github.com/H4vC))
 - Added `BlobPutOptions.hash` so `BlobStore.put`/`putSync` can skip re-hashing a known SHA-256 ([#14644](https://github.com/can1357/oh-my-pi/pull/14644) by [@H4vC](https://github.com/H4vC))
 
@@ -25,6 +30,16 @@
 - Removed quadratic slowdown of TTSR stream rules on long responses ([#14644](https://github.com/can1357/oh-my-pi/pull/14644) by [@H4vC](https://github.com/H4vC))
 - Changed `GoalRuntime.onAgentEnd({ currentUsage })` to also accept a thunk ([#14644](https://github.com/can1357/oh-my-pi/pull/14644) by [@H4vC](https://github.com/H4vC))
 - Changed prompt history search to show only prefix matches when they fill the page ([#14644](https://github.com/can1357/oh-my-pi/pull/14644) by [@H4vC](https://github.com/H4vC))
+- Reduced CPU during live voice calls, dictation and `/usage` heatmap loads ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Fixed multi-second freezes after large pastes with unclosed tags in title/auto-thinking preprocessing ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Changed `quarantineAdvisorUnsafeOutput` to also accept a `() => string` thunk ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Reduced per-turn advisor and secret-obfuscation work ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Reduced memory use of local memory extraction and `run_experiment` on large inputs ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Fixed Hindsight/Mnemopi auto-retain double-retaining on overlapping turns, and sped up Mnemopi session start ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Sped up image resizing up to ~2.6× with identical output ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Stopped text prediction from touching the filesystem on every keystroke while SmolLM weights download ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Changed Sharpshooter's scheduler to wait one consolidation interval after a failure (including no model resolved, now recorded as the last error) ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Sped up security scan planning, `omp commit` and `history://` transcript discovery ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
 
 ### Fixed
 
@@ -52,12 +67,31 @@
 - Fixed custom `GlobOperations` backends hanging a `glob` call forever: the call now stops at the tool's scan deadline and reports the scan as incomplete, and the backend receives the resolved hidden/gitignore/limit policy plus a cancellation signal ([#6370](https://github.com/can1357/oh-my-pi/issues/6370), [#14426](https://github.com/can1357/oh-my-pi/pull/14426) by [@F0Rextasy](https://github.com/F0Rextasy))
 - Fixed `--resume <path>` silently creating a brand new session when the path did not exist; it now fails with a message naming the path, matching `--fork <path>` and `--resume <id>` ([#14404](https://github.com/can1357/oh-my-pi/pull/14404) by [@F0Rextasy](https://github.com/F0Rextasy))
 - Fixed ephemeral side-channel replies (idle recap, completion probe, `runEphemeralTurn`) truncating in quadratic time and splitting multi-byte characters ([#14644](https://github.com/can1357/oh-my-pi/pull/14644) by [@H4vC](https://github.com/H4vC))
+- Fixed Mnemopi pre-compaction recall using punctuation-only messages ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
 
 ### Deprecated
 
 - Deprecated `AgentSession.resolveRoleModel` (use `resolveRoleModelWithThinking`), `getLastVisibleHandoffText`, `hasCopyCandidateAssistantMessage`, `hasExtensionHandlers`, `hasPendingPythonMessages`, `titleSystemPrompt`, `cacheWarmingStatus`, and `formatCacheWarmingStatus` (`session/cache-warmer`) ([#14644](https://github.com/can1357/oh-my-pi/pull/14644) by [@H4vC](https://github.com/H4vC))
 - Deprecated `migrateSessionEntries` (use `migrateToCurrentVersion`), `onceGen` (`session/tool-choice-queue`), `snapcompactSavingsJournalPath` and `readSnapcompactSavingsJournal` (`session/snapcompact-savings-journal`) ([#14644](https://github.com/can1357/oh-my-pi/pull/14644) by [@H4vC](https://github.com/H4vC))
 - Deprecated `isImageBlock` and `isImageDataPayload` (`session/session-persistence`), `externalizeImageDataUrl` (`session/blob-store`; use `externalizeImageDataUrlSync`), and `SessionManager.sanitizeLoadedOpenAIResponsesReplayMetadata()` (load and fork already run it) ([#14644](https://github.com/can1357/oh-my-pi/pull/14644) by [@H4vC](https://github.com/H4vC))
+- Deprecated `advisorConfigFilePath` (use `resolveAdvisorConfigEditPath`) and the `AdvisorConfig`/`AdvisorConfigScope`/`WatchdogConfigDoc` re-exports from `advisor/index` (import from `@oh-my-pi/pi-tui/overlays/advisor-config`) ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Deprecated `tiny/models` `getTinyTitleModelSpec`, `DEFAULT_MEMORY_LOCAL_MODEL_KEY`, `isTinyMemoryLocalModelKey`, `isTinyMemoryReasoningModelKey` and the `contextNote` spec field; `tiny/title-client` `tinyModelClient` (use `tinyTitleClient`) ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Deprecated `SecretObfuscator.batch()` (now a passthrough); call the wrapped function directly ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Deprecated `SecretObfuscator.obfuscateObject()`/`deobfuscateObject()` and `secrets/placeholder-scan` `deepWalkStrings()`; use `mapJsonStrings()` or `obfuscateToolArguments()`/`deobfuscateToolArguments()` ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Deprecated `@oh-my-pi/pi-coding-agent/secrets` re-exports of `SecretEntry`, `CREDENTIAL_PATTERNS`, `CREDENTIAL_PREFIX_RULES`, `CredentialPattern`, `CredentialPrefixRule`, `secretEntryNeedsPlaceholderKey` and `secretEntriesNeedPlaceholderKey`; import them from `secrets/obfuscator`, `secrets/patterns` or `secrets/placeholder` ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Deprecated hindsight `deriveBankId` (use `computeBankScope().bankId`), `HindsightApi` listMemories/listDocuments/getDocument/updateDocument/deleteDocument and their option/response types, `builtinSeedsForTest` ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Deprecated mnemopi type re-exports from `memory-backend` (import from `mnemopi/config`/`mnemopi/state`), `createSessionMemoryRuntimeContext` (use `createMemoryRuntimeContext`), `mnemopi/index` barrel, `truncateApproxTokens` (use pi-utils `truncate`), `getMnemopiDbDirForTests` ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Deprecated `encodeWav` (`tts/wav`); use `encodePcm16Wav([samples], sampleRate)` from `stt/wav` ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Deprecated the `tts` barrel (`tts/index`); import the leaf `tts/*` modules instead ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Deprecated `VocalizerPlayer`, the `Vocalizer` constructor `createPlayer` parameter and `createStreamingPlayer`; use `StreamingAudioPlayer` ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Deprecated `resolveTtsRepo` (`tts/models`); use `getTtsLocalModelSpec(key)?.repo` ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Deprecated `ensureSTTDependencies`, `DownloadProgress` and `EnsureOptions` (`stt/downloader`), plus the `status`/`loaded`/`total`/`file`/`repo` fields of `SttDownloadProgress`; use `downloadSttModel` with `percent`/`label` ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Deprecated `STT_MODEL_VALUES` (`stt/models`); use `STT_MODELS.map(m => m.key)` ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Deprecated `shutdownSttClient`; call `sttClient.terminate()` ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Deprecated `security/remediation` exports and `resetSecurityCoordinatorsForTests` ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Deprecated `commit/cli` (`parseCommitArgs`, `printCommitHelp`), `commit/utils/exclusions`, `parseNumstat`, `normalizeAnalysis`, `buildFileBatches` (use `buildLlmFileBatches`), `checkTypeScopeConsistency`, `formatCommitMessage` (use `formatConventionalCommit`) and the `commit/analysis` barrel ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Deprecated `cloneExperimentState`, the `AutoresearchToolResult` and `SessionEntries` type aliases, and the `sharpshooter` index barrel (import the leaf modules) ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
+- Deprecated `generateTitleOnline`, `formatSessionTerminalTitle` and `setTerminalTitle` (utils/title-generator) ([#14645](https://github.com/can1357/oh-my-pi/pull/14645) by [@H4vC](https://github.com/H4vC))
 
 ## [18.6.3] - 2026-10-06
 

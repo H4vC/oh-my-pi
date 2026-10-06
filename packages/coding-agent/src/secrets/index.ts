@@ -155,8 +155,17 @@ export {
 	obfuscateMessages,
 	obfuscateProviderContext,
 } from "./message-transform";
-export { type SecretEntry, SecretObfuscator } from "./obfuscator";
-export * from "./patterns";
+export { SecretObfuscator } from "./obfuscator";
+/** @deprecated Import from `@oh-my-pi/pi-coding-agent/secrets/obfuscator`. Will be removed in the next major. */
+export type { SecretEntry } from "./obfuscator";
+/** @deprecated Import from `@oh-my-pi/pi-coding-agent/secrets/patterns`. Will be removed in the next major. */
+export {
+	type CredentialPattern,
+	type CredentialPrefixRule,
+	CREDENTIAL_PATTERNS,
+	CREDENTIAL_PREFIX_RULES,
+} from "./patterns";
+/** @deprecated Import from `@oh-my-pi/pi-coding-agent/secrets/placeholder`. Will be removed in the next major. */
 export { secretEntriesNeedPlaceholderKey, secretEntryNeedsPlaceholderKey } from "./placeholder";
 
 /**

@@ -27,6 +27,15 @@ const XML_BLOCK = /<([a-zA-Z][\w-]*)(?:\s[^>]*)?>[\s\S]*?<\/\1>/g;
 const LONG_HEX_RUN = /\b[0-9a-fA-F]{12,}\b/g;
 /** Short-hash prefix length kept after truncating a long hex run. */
 const SHORT_HASH_CHARS = 7;
+/**
+ * Raw characters kept from each end of an oversized message before cleanup.
+ * The paired-tag regex is quadratic on unclosed `<Tag>`s (TS generics, JSX), so
+ * huge pastes are windowed first; output is bounded to
+ * {@link MAX_TINY_MESSAGE_CHARS} anyway, so the dropped middle is never emitted.
+ */
+const RAW_WINDOW_EDGE_CHARS = 16_384;
+/** Joins the head and tail windows of an oversized raw message. */
+const RAW_WINDOW_SEPARATOR = "\n…\n";
 
 /** Drop SGR ANSI escape sequences. */
 export function stripAnsi(message: string): string {
@@ -92,9 +101,17 @@ export function stripCodeBlocks(message: string): string {
 	return cleaned.length >= MIN_STRIPPED_TITLE_CHARS ? cleaned : message;
 }
 
-/** Clean noise from message content without applying the length bound. */
+/**
+ * Clean noise from message content without applying the length bound.
+ * Inputs longer than twice {@link RAW_WINDOW_EDGE_CHARS} are reduced to their
+ * head and tail windows before any cleanup runs.
+ */
 export function cleanTinyMessage(message: string): string {
-	return stripCodeBlocks(shortenHashes(stripXmlBlocks(stripAnsi(message))));
+	const windowed =
+		message.length > RAW_WINDOW_EDGE_CHARS * 2
+			? `${message.slice(0, RAW_WINDOW_EDGE_CHARS)}${RAW_WINDOW_SEPARATOR}${message.slice(-RAW_WINDOW_EDGE_CHARS)}`
+			: message;
+	return stripCodeBlocks(shortenHashes(stripXmlBlocks(stripAnsi(windowed))));
 }
 
 /** Apply the shared tiny-model cleanup and middle-truncation policy. */

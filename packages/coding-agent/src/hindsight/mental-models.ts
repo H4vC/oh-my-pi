@@ -437,5 +437,5 @@ function longestCommonSubsequence(a: string[], b: string[]): string[] {
 /** Awaited only by the first-turn race in `beforeAgentStartPrompt`. */
 export const MENTAL_MODEL_FIRST_TURN_DEADLINE_MS = 1500;
 
-/** Need-only export of the raw seed list for tests. */
+/** @deprecated Unused test seam; use `resolveSeedsForScope` for the effective seed list. Will be removed in the next major. */
 export const builtinSeedsForTest: ReadonlyArray<Readonly<RawSeed>> = BUILTIN_SEEDS;

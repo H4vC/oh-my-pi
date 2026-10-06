@@ -45,7 +45,7 @@ import { type Settings, settings } from "../config/settings";
 import { DEFAULT_TTS_VOICE, TTS_LOCAL_MODELS } from "./models";
 import { SpeakableStream } from "./speakable";
 import { BlockAccumulator, type SpeechEnhancer } from "./speech-enhancer";
-import { createStreamingPlayer, DUCK_GAIN } from "./streaming-player";
+import { DUCK_GAIN, StreamingAudioPlayer } from "./streaming-player";
 import { type TtsStreamHandle, ttsClient } from "./tts-client";
 
 import { cfgSpeechEnabled, cfgSpeechEnhanced, cfgSpeechVoice } from "./settings";
@@ -71,6 +71,7 @@ export function resolveLocalSpeechModelId(source: VocalizerModelSource): string 
 	return local?.model.id ?? TTS_LOCAL_MODELS[0].key;
 }
 
+/** @deprecated Test seam with a single implementation; use `StreamingAudioPlayer`. Will be removed in the next major. */
 export interface VocalizerPlayer {
 	start(sampleRate: number): void;
 	write(pcm: Float32Array): void;
@@ -128,7 +129,8 @@ export class Vocalizer {
 	#slotWaiters: Array<() => void> = [];
 	#createPlayer: () => VocalizerPlayer;
 
-	constructor(createPlayer: () => VocalizerPlayer = createStreamingPlayer) {
+	/** @param createPlayer Deprecated test seam; omit it. Will be removed in the next major. */
+	constructor(createPlayer: () => VocalizerPlayer = () => new StreamingAudioPlayer()) {
 		this.#createPlayer = createPlayer;
 	}
 

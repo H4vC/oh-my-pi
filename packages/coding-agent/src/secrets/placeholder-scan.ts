@@ -419,7 +419,10 @@ export function replaceRange(text: string, start: number, end: number, replaceme
 	return text.slice(0, start) + replacement + text.slice(end);
 }
 
-/** Deep-walk an object, transforming all string values. */
+/**
+ * Deep-walk an object, transforming all string values.
+ * @deprecated Duplicates {@link mapJsonStrings}, which every redaction path uses; use it instead. Will be removed in the next major.
+ */
 export function deepWalkStrings<T>(obj: T, transform: (s: string) => string): T {
 	if (typeof obj === "string") {
 		return transform(obj) as unknown as T;

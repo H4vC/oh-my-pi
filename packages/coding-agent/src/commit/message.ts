@@ -1,11 +1,16 @@
+import { formatConventionalCommit } from "./conventional/normalization";
 import type { ConventionalAnalysis } from "./types";
 
+/**
+ * @deprecated Duplicate of `formatConventionalCommit` from `commit/conventional/normalization`
+ * (pass `body: details.map(d => d.text.trim())`, `footers: []`). Will be removed in the next major.
+ */
 export function formatCommitMessage(analysis: ConventionalAnalysis, summary: string): string {
-	const scopePart = analysis.scope ? `(${analysis.scope})` : "";
-	const header = `${analysis.type}${scopePart}: ${summary}`;
-	const bodyLines = analysis.details.map(detail => `- ${detail.text.trim()}`);
-	if (bodyLines.length === 0) {
-		return header;
-	}
-	return `${header}\n\n${bodyLines.join("\n")}`;
+	return formatConventionalCommit({
+		type: analysis.type,
+		scope: analysis.scope,
+		summary,
+		body: analysis.details.map(detail => detail.text.trim()),
+		footers: [],
+	});
 }

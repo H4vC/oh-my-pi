@@ -1,4 +1,3 @@
-import { rm } from "node:fs/promises";
 import * as path from "node:path";
 import { type ApiKeyResolver, completeSimple, retryTransientCompletion } from "@oh-my-pi/pi-ai";
 import { hostMatchesUrl } from "@oh-my-pi/pi-catalog/hosts";
@@ -6,7 +5,7 @@ import type { Mnemopi } from "@oh-my-pi/pi-mnemopi";
 import type { MnemopiLlmCompleteOptions } from "@oh-my-pi/pi-mnemopi/core/runtime-options";
 import type * as MnemopiDiagnoseNs from "@oh-my-pi/pi-mnemopi/diagnose";
 import type { DiagnosticSummary } from "@oh-my-pi/pi-mnemopi/diagnose";
-import { logger, prompt } from "@oh-my-pi/pi-utils";
+import { logger, prompt, removeWithRetries, truncate } from "@oh-my-pi/pi-utils";
 import type { ModelRegistry } from "../config/model-registry";
 import { roleCandidatePool } from "../config/model-roles";
 import { resolveRoleChain } from "../config/model-resolver";
@@ -24,23 +23,21 @@ import memoryConsolidationPrompt from "../prompts/system/memory-consolidation-sy
 import memoryExtractionPrompt from "../prompts/system/memory-extraction-system.md" with { type: "text" };
 import mnemopiInstructions from "../prompts/system/mnemopi-instructions.md" with { type: "text" };
 import type { AgentSession } from "../session/agent-session";
-import { tinyModelClient } from "../tiny/title-client";
+import { tinyTitleClient } from "../tiny/title-client";
 import { shortenPath } from "@oh-my-pi/pi-tui/render/render-utils";
+import { loadMnemopiConfig, type MnemopiBackendConfig, type MnemopiProviderOptions } from "./config";
 import {
-	loadMnemopiConfig,
-	type MnemopiBackendConfig,
-	type MnemopiProviderOptions,
-	truncateApproxTokens,
-} from "./config";
-import {
+	dedupeScopedTargets,
 	getMnemopiScopedBanks,
 	getMnemopiScopedDbPaths,
 	getMnemopiSessionState,
 	loadMnemopi,
 	loadMnemopiCore,
+	type MnemopiScopedMemory,
 	MnemopiSessionState,
 	requireMnemopi,
 	requireMnemopiCore,
+	resolveMnemopiBankDbPath,
 	setMnemopiSessionState,
 } from "./state";
 
@@ -143,7 +140,7 @@ export const mnemopiBackend: MemoryBackend = {
 		if (primary?.lastRecallSnippet) parts.push(primary.lastRecallSnippet);
 		const rendered = parts.join("\n\n").trim();
 		if (!rendered) return undefined;
-		return truncateApproxTokens(rendered, cfgMnemopiInjectionTokenLimit.get(settings));
+		return truncate(rendered, cfgMnemopiInjectionTokenLimit.get(settings) * 4);
 	},
 
 	async beforeAgentStartPrompt(session, promptText, signal): Promise<MemoryPromptPreparation | undefined> {
@@ -158,7 +155,7 @@ export const mnemopiBackend: MemoryBackend = {
 			});
 			const rendered = [instructions, preparation.context].join("\n\n").trim();
 			preparation.context =
-				truncateApproxTokens(rendered, cfgMnemopiInjectionTokenLimit.get(session.settings))
+				truncate(rendered, cfgMnemopiInjectionTokenLimit.get(session.settings) * 4)
 					.slice(instructions.length)
 					.trim() || undefined;
 		}
@@ -339,19 +336,14 @@ export const mnemopiBackend: MemoryBackend = {
 	},
 };
 
-interface MnemopiStatsTarget {
-	bank: string;
-	memory: Mnemopi;
-}
-
 function createStatsTargets(
 	agentDir: string,
 	session: AgentSession | undefined,
-): { targets: MnemopiStatsTarget[]; owned: Mnemopi[] } {
+): { targets: readonly MnemopiScopedMemory[]; owned: Mnemopi[] } {
 	const state = getMnemopiSessionState(session);
 	if (state) {
 		return {
-			targets: dedupeStatsTargets([state.getScopedRetainTarget(), ...state.getScopedRecallTargets()]),
+			targets: dedupeScopedTargets([state.getScopedRetainTarget(), ...state.getScopedRecallTargets()]),
 			owned: [],
 		};
 	}
@@ -368,7 +360,7 @@ function createStatsMemory(config: MnemopiBackendConfig, bank: string): Mnemopi 
 	const providerOptions = config.providerOptions as Record<string, unknown>;
 	const { Mnemopi } = requireMnemopi();
 	return new Mnemopi({
-		dbPath: resolveBankDbPath(config, bank),
+		dbPath: resolveMnemopiBankDbPath(config, bank),
 		bank,
 		sessionId: bank,
 		authorId: "coding-agent",
@@ -379,25 +371,7 @@ function createStatsMemory(config: MnemopiBackendConfig, bank: string): Mnemopi 
 	} as ConstructorParameters<typeof Mnemopi>[0]);
 }
 
-function resolveBankDbPath(config: MnemopiBackendConfig, bank: string): string {
-	const sharedBank = config.globalBank ?? config.baseBank ?? "default";
-	if (bank === sharedBank) return config.dbPath;
-	const { BankManager } = requireMnemopiCore();
-	return new BankManager(path.dirname(config.dbPath)).getBankDbPath(bank);
-}
-
-function dedupeStatsTargets(targets: readonly MnemopiStatsTarget[]): MnemopiStatsTarget[] {
-	const seen = new Set<string>();
-	const unique: MnemopiStatsTarget[] = [];
-	for (const target of targets) {
-		if (seen.has(target.bank)) continue;
-		seen.add(target.bank);
-		unique.push(target);
-	}
-	return unique;
-}
-
-function renderMnemopiStats(targets: readonly MnemopiStatsTarget[]): string {
+function renderMnemopiStats(targets: readonly MnemopiScopedMemory[]): string {
 	const lines = [
 		"# Mnemopi Memory Stats",
 		"",
@@ -416,7 +390,7 @@ function renderMnemopiStats(targets: readonly MnemopiStatsTarget[]): string {
 }
 
 function summarizeMnemopiStatus(
-	targets: readonly MnemopiStatsTarget[],
+	targets: readonly MnemopiScopedMemory[],
 	session: AgentSession | undefined,
 ): MemoryBackendStatus {
 	let workingCount = 0;
@@ -590,7 +564,7 @@ async function resolveMnemopiProviderOptions(
 				if (signal?.aborted) return null;
 				try {
 					if (model.api === "local-inference") {
-						const result = await tinyModelClient.complete(model.id, request.prompt, {
+						const result = await tinyTitleClient.complete(model.id, request.prompt, {
 							maxTokens: opts?.maxTokens,
 							systemPrompt: request.systemPrompt,
 							signal,
@@ -694,6 +668,7 @@ function getMnemopiSessionStateFromParent(options: MemoryBackendStartOptions): M
 	return parent?.aliasOf ?? parent;
 }
 
+/** @deprecated Unused test seam; read `getMnemopiSessionState(session)?.config.dbPath` instead. Will be removed in the next major. */
 export function getMnemopiDbDirForTests(session: AgentSession): string | undefined {
 	const state = getMnemopiSessionState(session);
 	return state ? path.dirname(state.config.dbPath) : undefined;
@@ -719,28 +694,6 @@ async function removeDbFiles(dbPaths: readonly string[]): Promise<void> {
 					logger.warn("Mnemopi: failed to remove DB file after retries", { path: `${dbPath}${suffix}`, code });
 				}
 			});
-		}
-	}
-}
-
-const kRemoveRetries = 40;
-const kRemoveRetryDelayMs = 25;
-const kRetryableRemoveErrorCodes = new Set(["EBUSY", "EPERM", "ENOTEMPTY"]);
-
-async function removeWithRetries(target: string): Promise<void> {
-	for (let attempt = 0; ; attempt++) {
-		try {
-			await rm(target, { force: true });
-			return;
-		} catch (err) {
-			const retryable =
-				typeof err === "object" &&
-				err !== null &&
-				"code" in err &&
-				typeof err.code === "string" &&
-				kRetryableRemoveErrorCodes.has(err.code);
-			if (!retryable || attempt >= kRemoveRetries) throw err;
-			await Bun.sleep(kRemoveRetryDelayMs);
 		}
 	}
 }

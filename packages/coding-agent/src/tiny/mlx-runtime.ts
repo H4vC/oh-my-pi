@@ -30,9 +30,10 @@ function venvPython(runtimeDir: string): string {
 	return path.join(runtimeDir, "bin", "python");
 }
 
-async function readReadyMarker(runtimeDir: string): Promise<string | null> {
+/** Trimmed contents of the install marker `marker` in `dir`, or `null` when it does not exist. */
+export async function readReadyMarker(dir: string, marker: string): Promise<string | null> {
 	try {
-		return (await Bun.file(path.join(runtimeDir, READY_MARKER)).text()).trim();
+		return (await Bun.file(path.join(dir, marker)).text()).trim();
 	} catch (error) {
 		if (isEnoent(error)) return null;
 		throw error;
@@ -74,13 +75,13 @@ async function installWithSystemPython(python3: string, runtimeDir: string): Pro
  */
 export async function ensureTinyMlxRuntime(onPhase?: (phase: RuntimeInstallPhase) => void): Promise<string> {
 	const runtimeDir = getTinyMlxRuntimeDir();
-	if ((await readReadyMarker(runtimeDir)) === MLX_LM_VERSION) return venvPython(runtimeDir);
+	if ((await readReadyMarker(runtimeDir, READY_MARKER)) === MLX_LM_VERSION) return venvPython(runtimeDir);
 	onPhase?.("initiate");
 	// withFileLock does not create parent directories; the runtime cache dir may
 	// not exist yet on the very first install.
 	await fs.mkdir(path.dirname(runtimeDir), { recursive: true });
 	return withFileLock(`${runtimeDir}.install`, async () => {
-		if ((await readReadyMarker(runtimeDir)) === MLX_LM_VERSION) return venvPython(runtimeDir);
+		if ((await readReadyMarker(runtimeDir, READY_MARKER)) === MLX_LM_VERSION) return venvPython(runtimeDir);
 		onPhase?.("download");
 		const uv = $which("uv");
 		if (uv) {

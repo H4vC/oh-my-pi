@@ -114,7 +114,11 @@ export class StreamingAudioPlayer {
 	}
 }
 
-/** Creates the single-use player used by the speech vocalizer. */
+/**
+ * Creates the single-use player used by the speech vocalizer.
+ *
+ * @deprecated Use `new StreamingAudioPlayer()`. Will be removed in the next major.
+ */
 export function createStreamingPlayer(): StreamingAudioPlayer {
 	return new StreamingAudioPlayer();
 }

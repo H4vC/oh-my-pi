@@ -845,7 +845,10 @@ export class TinyTitleClient {
 
 export const tinyTitleClient = new TinyTitleClient();
 
-/** Alias for the shared tiny-model worker client (titles + generic chat completions). */
+/**
+ * Alias for the shared tiny-model worker client (titles + generic chat completions).
+ * @deprecated Same singleton as {@link tinyTitleClient}; use it instead. Will be removed in the next major.
+ */
 export const tinyModelClient = tinyTitleClient;
 
 /** Drop this process's worker connections; the workers themselves keep serving others until idle. */

@@ -94,7 +94,11 @@ export function isTtsLocalModelKey(value: string): value is TtsLocalModelKey {
 	return getTtsLocalModelSpec(value) !== undefined;
 }
 
-/** Resolve a model key (or the default) to its Hugging Face repo id. */
+/**
+ * Resolve a model key (or the default) to its Hugging Face repo id.
+ *
+ * @deprecated Unused; use `getTtsLocalModelSpec(key)?.repo`. Will be removed in the next major.
+ */
 export function resolveTtsRepo(modelKey: string | undefined): string {
 	const fallbackKey = TTS_LOCAL_MODELS[0].key;
 	const spec = (modelKey && getTtsLocalModelSpec(modelKey)) || getTtsLocalModelSpec(fallbackKey);

@@ -263,6 +263,8 @@ export async function discoverAdvisorConfigs(cwd: string, agentDir?: string): Pr
  * Resolve the `WATCHDOG.yml` path for a scope: `project` → `<projectDir>/WATCHDOG.yml`
  * (discovered by the project-level walk), `user` → `<agentDir>/WATCHDOG.yml` (the
  * user-level candidate).
+ *
+ * @deprecated Ignores an existing `WATCHDOG.yaml`; use {@link resolveAdvisorConfigEditPath}. Will be removed in the next major.
  */
 export function advisorConfigFilePath(
 	scope: AdvisorConfigScope,

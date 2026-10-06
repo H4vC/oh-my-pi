@@ -83,16 +83,31 @@ const NON_ASCII_RE = /[^\x00-\x7F]/;
 /** Distinct placeholder prefixes whose regex verdict is memoized; forged prefixes beyond this are just re-tested. */
 const MAX_PREFIX_REGEX_MEMO = 4096;
 
-/** Per-string results reused within one {@link SecretObfuscator.batch}. */
+/**
+ * Budget of the per-string scan cache, in characters of cached text plus
+ * {@link SCAN_CACHE_ENTRY_CHARS} per entry. Covers a full 1M-token context
+ * (both SDK passes) with headroom; beyond it the oldest entries are evicted.
+ */
+const MAX_SCAN_CACHE_CHARS = 8 * 1024 * 1024;
+/** Fixed charge per cached string, so many short strings cannot grow the map unbounded. */
+const SCAN_CACHE_ENTRY_CHARS = 64;
+
+/**
+ * Per-string scan results, kept across calls in a bounded cache. Each field is
+ * validated against exactly the state it depends on, so a hit is always what a
+ * fresh scan would compute.
+ */
 interface TextScan {
-	/** Registry revision the entry was computed under; stale entries are recomputed. */
-	revision: number;
 	/** Regex values in the raw text (a pure function of the text: regex entries never change). */
-	initialValues: readonly string[];
-	/** No configured literal and no `$$` occurs (depends on the literal mappings). */
+	readonly initialValues: readonly string[];
+	/** No configured literal and no `$$` occurs, under the literal mappings of `literalStamp`. */
 	literalFree: boolean;
-	/** Standalone collection result, i.e. after replace simulation; filled on first use. */
-	collectedValues: readonly string[] | undefined;
+	/** Literal-mapping stamp (plain + replace mapping versions) `literalFree` was computed under. */
+	literalStamp: number;
+	/** Standalone collection result, i.e. after replace simulation, valid at registry revision `collectedRevision`. */
+	collectedValues: readonly string[];
+	/** Registry revision `collectedValues` was computed under; -1 before the first standalone collection. */
+	collectedRevision: number;
 }
 
 interface RegexScanMemo {
@@ -125,11 +140,12 @@ function buildLiteralDetector(literals: readonly string[], flags?: string): RegE
  * Invariant: every piece of state redaction reads either never changes after
  * construction (regex entries, a readonly field of a readonly array) or lives
  * in a collection bound to `#revision` (`TrackedMap`, `TrackedSet`,
- * `SecretValueSet` with a revision), whose writes bump it. The short-lived
- * reuse inside one batch or call (per-string scans, the regex scan memo,
- * sorted literal caches) is keyed by `#revision.value`, so a mint partway
- * through can never leave a stale result in use. No redaction result is kept
- * across batches.
+ * `SecretValueSet` with a revision), whose writes bump it. Reused results are
+ * keyed by the state they read: the per-string scan cache by the text alone
+ * (regex values), the literal-mapping versions (literal verdicts) or
+ * `#revision.value` (collected values), and the regex scan memo and sorted
+ * literal caches likewise, so a mint can never leave a stale result in use.
+ * Redacted output itself is never cached.
  */
 export class SecretObfuscator {
 	/** Registry version; see the class invariant. Declared first: the tracked fields below bind to it. */
@@ -203,8 +219,14 @@ export class SecretObfuscator {
 	/** `i`-flag form of the folded probes, set only when every folded probe is ASCII; see {@link #foldedProbeHit}. */
 	#asciiFoldedProbeDetector: RegExp | undefined;
 
-	/** Per-string scan results of the {@link batch} in progress, if any; dropped when it ends. */
-	#batchScans: Map<string, TextScan> | undefined;
+	/**
+	 * Per-string scan results kept across calls, so history re-sent on every
+	 * request is scanned once. Bounded by {@link MAX_SCAN_CACHE_CHARS}; Map
+	 * insertion order makes eviction FIFO.
+	 */
+	readonly #scanCache = new Map<string, TextScan>();
+	/** Charged size of `#scanCache`; see {@link MAX_SCAN_CACHE_CHARS}. */
+	#scanCacheChars = 0;
 
 	/** Placeholder ranges and expanded scan view of the last text `#collectRegexMatches` scanned. */
 	#lastRegexScan: RegexScanMemo | undefined;
@@ -540,18 +562,11 @@ export class SecretObfuscator {
 	}
 
 	/**
-	 * Run `run` as one outbound batch (collect, then redact, over one message
-	 * list) so each string is scanned once for both. Nothing outlives the batch.
-	 * Nested calls join the outer batch.
+	 * Run `run` and return its result.
+	 * @deprecated Per-string scans are now cached across calls, so batching is a no-op; call `run` directly. Will be removed in the next major.
 	 */
 	batch<T>(run: () => T): T {
-		if (this.#batchScans !== undefined) return run();
-		this.#batchScans = new Map();
-		try {
-			return run();
-		} finally {
-			this.#batchScans = undefined;
-		}
+		return run();
 	}
 
 	/**
@@ -818,13 +833,19 @@ export class SecretObfuscator {
 		}
 	}
 
-	/** Deep-walk an object, deobfuscating string values for LIVE paths (keyed placeholders only). */
+	/**
+	 * Deep-walk an object, deobfuscating string values for LIVE paths (keyed placeholders only).
+	 * @deprecated Unused duplicate of the JSON walk; use `deobfuscateToolArguments` (secrets/message-transform) or `mapJsonStrings(value, s => obfuscator.deobfuscate(s))` (secrets/placeholder-scan). Will be removed in the next major.
+	 */
 	deobfuscateObject<T>(obj: T): T {
 		if (!this.#hasAny) return obj;
 		return deepWalkStrings(obj, s => this.deobfuscate(s));
 	}
 
-	/** Deep-walk an object, obfuscating all string values. */
+	/**
+	 * Deep-walk an object, obfuscating all string values.
+	 * @deprecated Unused duplicate of the JSON walk; use `obfuscateToolArguments` (secrets/message-transform) or `mapJsonStrings(value, s => obfuscator.obfuscate(s))` (secrets/placeholder-scan). Will be removed in the next major.
+	 */
 	obfuscateObject<T>(obj: T): T {
 		if (!this.#hasAny) return obj;
 		return deepWalkStrings(obj, s => this.obfuscate(s));
@@ -1200,49 +1221,73 @@ export class SecretObfuscator {
 		return this.#collectStandalone(text).values;
 	}
 
+	/** Changes whenever a plain or replace literal mapping is written (both versions only grow). */
+	get #literalStamp(): number {
+		return this.#plainMappings.version + this.#replaceMappings.version;
+	}
+
 	/**
-	 * Raw regex scan and literal check for `text`, shared by every collection
-	 * and redaction of the same string within a {@link batch}.
+	 * Raw regex scan and literal check for `text`, cached across calls: history
+	 * re-sent on every request is scanned once. Regex values are a pure function
+	 * of the text; the literal verdict is recomputed after a literal mapping
+	 * write (e.g. lazy key resolution).
 	 */
 	#scanText(text: string): TextScan {
-		const scans = this.#batchScans;
-		const cached = scans?.get(text);
-		if (cached !== undefined && cached.revision === this.#revision.value) return cached;
+		const literalStamp = this.#literalStamp;
+		const cached = this.#scanCache.get(text);
+		if (cached !== undefined) {
+			if (cached.literalStamp !== literalStamp) {
+				cached.literalFree = this.#isLiteralFree(text);
+				cached.literalStamp = literalStamp;
+			}
+			return cached;
+		}
 		// Clean text (the common case) is ruled out in one combined pass.
 		const mayNeedRedaction = this.#mayNeedRedaction(text);
 		const rawValues = this.#collectRegexSecretValues(text, mayNeedRedaction ? undefined : false);
 		const scan: TextScan = {
-			revision: this.#revision.value,
 			initialValues: rawValues.size === 0 ? NO_VALUES : [...rawValues],
 			literalFree: !mayNeedRedaction || this.#isLiteralFree(text),
-			collectedValues: undefined,
+			literalStamp,
+			collectedValues: NO_VALUES,
+			collectedRevision: -1,
 		};
-		scans?.set(text, scan);
+		this.#cacheScan(text, scan);
 		return scan;
+	}
+
+	/** Insert into `#scanCache`, evicting the oldest entries past {@link MAX_SCAN_CACHE_CHARS}. */
+	#cacheScan(text: string, scan: TextScan): void {
+		const charge = text.length + SCAN_CACHE_ENTRY_CHARS;
+		if (charge > MAX_SCAN_CACHE_CHARS) return;
+		this.#scanCache.set(text, scan);
+		this.#scanCacheChars += charge;
+		if (this.#scanCacheChars <= MAX_SCAN_CACHE_CHARS) return;
+		for (const key of this.#scanCache.keys()) {
+			this.#scanCache.delete(key);
+			this.#scanCacheChars -= key.length + SCAN_CACHE_ENTRY_CHARS;
+			if (this.#scanCacheChars <= MAX_SCAN_CACHE_CHARS) return;
+		}
 	}
 
 	/**
 	 * Standalone collection (no current/shared values in play): the raw scan
-	 * plus replace simulation. Within a batch the result is computed once per
-	 * string and registry revision; the simulation can mint (e.g. resolve the
-	 * key), in which case it is not reused.
+	 * plus replace simulation, cached per string and registry revision. The
+	 * simulation can mint (e.g. resolve the key), in which case it is not reused.
 	 */
 	#collectStandalone(text: string): { values: ReadonlySet<string>; literalFree: boolean } {
 		const scan = this.#scanText(text);
 		if (scan.initialValues.length === 0 && scan.literalFree)
 			return { values: EMPTY_SECRET_VALUES, literalFree: true };
-		const values = new Set(scan.initialValues);
-		const reusable =
-			this.#batchScans !== undefined &&
-			this.#currentRegexSecretValues.size === 0 &&
-			this.#sharedRegexSecretValues.size === 0;
-		if (reusable && scan.collectedValues !== undefined && scan.revision === this.#revision.value) {
+		const revision = this.#revision.value;
+		const reusable = this.#currentRegexSecretValues.size === 0 && this.#sharedRegexSecretValues.size === 0;
+		if (reusable && scan.collectedRevision === revision) {
 			return { values: new Set(scan.collectedValues), literalFree: scan.literalFree };
 		}
-		const revision = this.#revision.value;
-		const collected = this.#collectAfterReplaceSimulation(text, values);
-		if (reusable && scan.revision === revision && this.#revision.value === revision) {
+		const collected = this.#collectAfterReplaceSimulation(text, new Set(scan.initialValues));
+		if (reusable && this.#revision.value === revision) {
 			scan.collectedValues = [...collected];
+			scan.collectedRevision = revision;
 		}
 		return { values: collected, literalFree: scan.literalFree };
 	}

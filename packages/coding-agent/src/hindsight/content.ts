@@ -177,6 +177,19 @@ export function truncateRecallQuery(query: string, latestQuery: string, maxChars
 	return latestOnly;
 }
 
+/**
+ * Compose a recall query from `latestQuery` plus prior turns and truncate it to
+ * the configured budget ({@link composeRecallQuery} + {@link truncateRecallQuery}).
+ */
+export function buildRecallQuery(
+	latestQuery: string,
+	messages: HindsightMessage[],
+	options: { recallContextTurns: number; recallMaxQueryChars: number },
+): string {
+	const query = composeRecallQuery(latestQuery, messages, options.recallContextTurns);
+	return truncateRecallQuery(query, latestQuery, options.recallMaxQueryChars);
+}
+
 export interface RetentionTranscript {
 	transcript: string | null;
 	messageCount: number;

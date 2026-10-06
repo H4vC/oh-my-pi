@@ -2,6 +2,7 @@ import type { IsoBackendKind } from "@oh-my-pi/pi-natives";
 import type { IsolationHandle, WorktreeBaseline } from "../task/worktree";
 import { captureBaseline, cleanupIsolation, ensureIsolation, getRepoRoot } from "../task/worktree";
 
+/** @deprecated Remediation workspaces are not wired into any command or tool. Will be removed in the next major. */
 export interface SecurityRemediationRequest {
 	cwd: string;
 	findingIds: string[];
@@ -9,6 +10,7 @@ export interface SecurityRemediationRequest {
 	preferredBackend?: IsoBackendKind;
 }
 
+/** @deprecated Remediation workspaces are not wired into any command or tool. Will be removed in the next major. */
 export interface SecurityRemediationWorkspace {
 	id: string;
 	repositoryRoot: string;
@@ -20,7 +22,10 @@ export interface SecurityRemediationWorkspace {
 	cleanup(): Promise<void>;
 }
 
-/** Source checkout a remediation workspace is copied from, with its dirty-state baseline. */
+/**
+ * Source checkout a remediation workspace is copied from, with its dirty-state baseline.
+ * @deprecated Remediation workspaces are not wired into any command or tool. Will be removed in the next major.
+ */
 export interface SecurityRemediationContext {
 	repoRoot: string;
 	baseline: WorktreeBaseline;
@@ -31,6 +36,7 @@ async function prepareRemediationContext(cwd: string): Promise<SecurityRemediati
 	return { repoRoot, baseline: await captureBaseline(repoRoot) };
 }
 
+/** @deprecated Remediation workspaces are not wired into any command or tool. Will be removed in the next major. */
 export interface SecurityRemediationDependencies {
 	prepareContext?: (cwd: string) => Promise<SecurityRemediationContext>;
 	createIsolation?: (repositoryRoot: string, id: string, preferred?: IsoBackendKind) => Promise<IsolationHandle>;
@@ -60,6 +66,7 @@ function repoBaselineDirty(baseline: WorktreeBaseline): string[] {
 	return dirty;
 }
 
+/** @deprecated Remediation workspaces are not wired into any command or tool. Will be removed in the next major. */
 export function assertSecurityRemediationBaselineClean(baseline: WorktreeBaseline): void {
 	const dirty = repoBaselineDirty(baseline);
 	if (dirty.length === 0) return;
@@ -71,6 +78,7 @@ export function assertSecurityRemediationBaselineClean(baseline: WorktreeBaselin
 	);
 }
 
+/** @deprecated Remediation workspaces are not wired into any command or tool; use `ensureIsolation` from `task/worktree` directly. Will be removed in the next major. */
 export async function prepareSecurityRemediationWorkspace(
 	request: SecurityRemediationRequest,
 	dependencies: SecurityRemediationDependencies = {},

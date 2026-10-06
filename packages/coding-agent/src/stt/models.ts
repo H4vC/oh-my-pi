@@ -115,6 +115,7 @@ export type SttModelKey = (typeof STT_MODELS)[number]["key"];
 /** A concrete entry from {@link STT_MODELS}; `key` is the literal tier union. */
 export type SttModel = (typeof STT_MODELS)[number];
 
+/** @deprecated Unused; use `STT_MODELS.map(model => model.key)`. Will be removed in the next major. */
 export const STT_MODEL_VALUES = [
 	"whisper-base",
 	"whisper-small",

@@ -49,6 +49,9 @@ export function createMemoryRuntimeContext(context: MemoryBackendOperationContex
 	};
 }
 
+/**
+ * @deprecated Thin forwarder; use `createMemoryRuntimeContext({ agentDir, cwd, session })`. Will be removed in the next major.
+ */
 export function createSessionMemoryRuntimeContext(
 	session: AgentSession,
 	agentDir: string,

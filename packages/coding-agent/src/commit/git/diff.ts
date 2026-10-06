@@ -1,5 +1,6 @@
 import type { DiffHunk, FileDiff, FileHunks, NumstatEntry } from "../../commit/types";
 
+/** @deprecated Unused; use the native `repo.numstat()` from `@oh-my-pi/pi-natives/vcs`. Will be removed in the next major. */
 export function parseNumstat(output: string): NumstatEntry[] {
 	const entries: NumstatEntry[] = [];
 	for (const line of output.split("\n")) {

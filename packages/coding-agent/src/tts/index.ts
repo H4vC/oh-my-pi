@@ -1,3 +1,7 @@
+/**
+ * @deprecated Barrel module; import the leaf modules under `tts/` (e.g. `tts/downloader`, `tts/models`) instead. Will be removed in the next major.
+ * @module
+ */
 export * from "./downloader";
 export * from "./models";
 export * from "./runtime";

@@ -5,11 +5,13 @@ import { sttClient } from "./asr-client";
 import type { SttProgressStatus } from "./asr-protocol";
 import { resolveSttModelSpec } from "./models";
 
+/** @deprecated Only used by the deprecated `ensureSTTDependencies`; use `downloadSttModel`. Will be removed in the next major. */
 export interface DownloadProgress {
 	stage: string;
 	percent?: number;
 }
 
+/** @deprecated Only used by the deprecated `ensureSTTDependencies`; use `downloadSttModel`. Will be removed in the next major. */
 export interface EnsureOptions {
 	modelId?: string;
 	signal?: AbortSignal;
@@ -24,15 +26,17 @@ export interface EnsureOptions {
  * decoder shards), so it advances monotonically toward completion.
  */
 export interface SttDownloadProgress {
+	/** @deprecated No readers; use `percent`/`label`. Will be removed in the next major. */
 	status: SttProgressStatus;
 	/** Integer 0–100 aggregated across files. */
 	percent: number;
-	/** Bytes downloaded so far across all files. */
+	/** Bytes downloaded so far across all files. @deprecated No readers; use `percent`. Will be removed in the next major. */
 	loaded: number;
-	/** Total bytes across all files seen so far. */
+	/** Total bytes across all files seen so far. @deprecated No readers; use `percent`. Will be removed in the next major. */
 	total: number;
-	/** The file currently downloading, when known. */
+	/** The file currently downloading, when known. @deprecated No readers. Will be removed in the next major. */
 	file?: string;
+	/** @deprecated No readers; use `label`. Will be removed in the next major. */
 	repo: string;
 	label: string;
 }
@@ -127,6 +131,7 @@ export async function downloadSttModel(
 
 // ── Public API ─────────────────────────────────────────────────────
 
+/** @deprecated Unused; use `downloadSttModel(key, onProgress, { signal })`. Will be removed in the next major. */
 export async function ensureSTTDependencies(options?: EnsureOptions): Promise<void> {
 	await downloadSttModel(
 		resolveSttModelSpec(options?.modelId).key,

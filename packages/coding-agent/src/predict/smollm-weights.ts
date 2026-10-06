@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { getTinyModelsCacheDir, isEnoent, logger, withFileLock } from "@oh-my-pi/pi-utils";
 import { withDownload } from "../downloads/activity";
+import { readReadyMarker } from "../tiny/mlx-runtime";
 import { downloadFile } from "../utils/tools-manager";
 
 /**
@@ -88,15 +89,6 @@ export function getSmolLmModelDir(): string {
 	return path.join(getTinyModelsCacheDir(), "predict", SMOLLM_REPO.replace("/", "--"));
 }
 
-async function readReadyMarker(dir: string): Promise<string | null> {
-	try {
-		return (await Bun.file(path.join(dir, READY_MARKER)).text()).trim();
-	} catch (error) {
-		if (isEnoent(error)) return null;
-		throw error;
-	}
-}
-
 async function sha256File(filePath: string): Promise<string> {
 	const hasher = new Bun.CryptoHasher("sha256");
 	for await (const chunk of Bun.file(filePath).stream()) hasher.update(chunk);
@@ -145,7 +137,7 @@ async function fetchVerified(
 
 /** Whether the pinned weights are fully downloaded and verified (one small file read). */
 export async function smolLmWeightsReady(): Promise<boolean> {
-	return (await readReadyMarker(getSmolLmModelDir())) === READY_STAMP;
+	return (await readReadyMarker(getSmolLmModelDir(), READY_MARKER)) === READY_STAMP;
 }
 
 /** Options for {@link ensureSmolLmWeights}. */
@@ -166,10 +158,10 @@ export interface EnsureSmolLmWeightsOptions {
 export async function ensureSmolLmWeights(options: EnsureSmolLmWeightsOptions = {}): Promise<string> {
 	const { signal, onProgress } = options;
 	const dir = getSmolLmModelDir();
-	if ((await readReadyMarker(dir)) === READY_STAMP) return dir;
+	if ((await readReadyMarker(dir, READY_MARKER)) === READY_STAMP) return dir;
 	await fs.mkdir(dir, { recursive: true });
 	return withFileLock(`${dir}.install`, async () => {
-		if ((await readReadyMarker(dir)) === READY_STAMP) return dir;
+		if ((await readReadyMarker(dir, READY_MARKER)) === READY_STAMP) return dir;
 		let finished = 0;
 		for (const file of SMOLLM_FILES) {
 			signal?.throwIfAborted();

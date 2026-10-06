@@ -1,4 +1,13 @@
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
+import { isEstimateCacheable, messageEstimateVersion } from "@oh-my-pi/pi-agent-core/compaction/message-cache";
+
+/**
+ * Fingerprints memoized by message identity, validated by the message's
+ * estimate version. Owner-side in-place rewrites (prune/shake/strip-images)
+ * bump that version via `invalidateMessageCache`, so a stale entry is
+ * recomputed; unsettled (streaming) assistants are never memoized.
+ */
+const fingerprintMemo = new WeakMap<AgentMessage, { version: number; hash: bigint | undefined }>();
 
 /**
  * Field-selective identity hash for an advisor-visible message.
@@ -20,6 +29,16 @@ import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
  * as "no identity" and fall back to always delivering/persisting.
  */
 export function fingerprintMessage(message: AgentMessage): bigint | undefined {
+	if (!isEstimateCacheable(message)) return computeFingerprint(message);
+	const version = messageEstimateVersion(message);
+	const cached = fingerprintMemo.get(message);
+	if (cached !== undefined && cached.version === version) return cached.hash;
+	const hash = computeFingerprint(message);
+	fingerprintMemo.set(message, { version, hash });
+	return hash;
+}
+
+function computeFingerprint(message: AgentMessage): bigint | undefined {
 	try {
 		// Rendered fields (from session-history-format.ts): role, content,
 		// customType, display, isError, toolResult: cancelled/exitCode/output,

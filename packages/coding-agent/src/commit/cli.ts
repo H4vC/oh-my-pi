@@ -6,6 +6,7 @@ const FLAG_ALIASES = new Map<string, string>([
 	["-m", "--model"],
 ]);
 
+/** @deprecated Unused stale copy of the `omp commit` oclif flags (`commands/commit.ts`). Will be removed in the next major. */
 export function parseCommitArgs(args: string[]): CommitCommandArgs | undefined {
 	if (args.length === 0 || args[0] !== "commit") {
 		return undefined;
@@ -67,6 +68,7 @@ export function parseCommitArgs(args: string[]): CommitCommandArgs | undefined {
 	return result;
 }
 
+/** @deprecated Unused; `omp commit --help` is rendered by oclif (`commands/commit.ts`). Will be removed in the next major. */
 export function printCommitHelp(): void {
 	const lines = [
 		"Usage:",

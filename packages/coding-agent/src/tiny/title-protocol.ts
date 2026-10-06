@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import type { WorkerProgressEvent } from "../subprocess/worker-runtime";
 import type { TinyLocalModelKey } from "./models";
 
 /**
@@ -58,32 +59,14 @@ export function tinyWorkerLogPath(runtimeDir: string, modelKey: TinyLocalModelKe
 	return path.join(runtimeDir, `${workerName(modelKey, backend)}.log`);
 }
 
-export type TinyTitleProgressStatus =
-	| "initiate"
-	| "download"
-	| "progress"
-	| "progress_total"
-	| "done"
-	| "ready"
-	| "error";
+export type TinyTitleProgressStatus = WorkerProgressEvent<TinyLocalModelKey>["status"];
 
 export interface TinyTitleProgressFileState {
 	loaded: number;
 	total: number;
 }
 
-export interface TinyTitleProgressEvent {
-	modelKey: TinyLocalModelKey;
-	status: TinyTitleProgressStatus;
-	name?: string;
-	file?: string;
-	progress?: number;
-	loaded?: number;
-	total?: number;
-	files?: Record<string, TinyTitleProgressFileState>;
-	task?: string;
-	model?: string;
-}
+export type TinyTitleProgressEvent = WorkerProgressEvent<TinyLocalModelKey>;
 
 /** Chat turn handed to a worker; the worker renders it with the model's own chat template. */
 export interface TinyChatMessage {

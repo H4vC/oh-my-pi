@@ -24,6 +24,7 @@ const MENTAL_MODEL_PAGE_SIZE = 1000;
 export type Budget = "low" | "mid" | "high" | string;
 export type TagsMatch = "any" | "all" | "any_strict" | "all_strict";
 export type UpdateMode = "replace" | "append";
+/** @deprecated Only used by the deprecated `listMemories`; use a local string union. Will be removed in the next major. */
 export type ConsolidationState = "failed" | "pending" | "done";
 
 /** Per-operation request deadlines (ms). Each falls back to a built-in default. */
@@ -74,14 +75,17 @@ export interface BankProfileResponse {
 	[key: string]: unknown;
 }
 
+/** @deprecated Only used by the deprecated `listMemories`. Will be removed in the next major. */
 export interface ListMemoriesResponse {
 	[key: string]: unknown;
 }
 
+/** @deprecated Only used by the deprecated document methods. Will be removed in the next major. */
 export interface DocumentResponse {
 	[key: string]: unknown;
 }
 
+/** @deprecated Only used by the deprecated `listDocuments`. Will be removed in the next major. */
 export interface ListDocumentsResponse {
 	[key: string]: unknown;
 }
@@ -139,6 +143,7 @@ export interface CreateBankOptions extends HindsightRequestOptions {
 	retainMission?: string;
 }
 
+/** @deprecated Only used by the deprecated `listMemories`. Will be removed in the next major. */
 export interface ListMemoriesOptions extends HindsightRequestOptions {
 	limit?: number;
 	offset?: number;
@@ -147,11 +152,13 @@ export interface ListMemoriesOptions extends HindsightRequestOptions {
 	consolidationState?: ConsolidationState;
 }
 
+/** @deprecated Only used by the deprecated `listDocuments`. Will be removed in the next major. */
 export interface ListDocumentsOptions extends HindsightRequestOptions {
 	limit?: number;
 	offset?: number;
 }
 
+/** @deprecated Only used by the deprecated `updateDocument`. Will be removed in the next major. */
 export interface UpdateDocumentOptions extends HindsightRequestOptions {
 	tags?: string[];
 }
@@ -379,6 +386,8 @@ export class HindsightApi {
 	/**
 	 * Bulk-list memory units in a bank with optional filters and pagination.
 	 * Endpoint: `GET /v1/default/banks/{bank_id}/memories/list`.
+	 *
+	 * @deprecated Unused by the coding agent; call the Hindsight REST API directly. Will be removed in the next major.
 	 */
 	async listMemories(bankId: string, options?: ListMemoriesOptions): Promise<ListMemoriesResponse> {
 		return this.#request<ListMemoriesResponse>(
@@ -398,7 +407,11 @@ export class HindsightApi {
 		);
 	}
 
-	/** Bulk-list documents in a bank. */
+	/**
+	 * Bulk-list documents in a bank.
+	 *
+	 * @deprecated Unused by the coding agent; call the Hindsight REST API directly. Will be removed in the next major.
+	 */
 	async listDocuments(bankId: string, options?: ListDocumentsOptions): Promise<ListDocumentsResponse> {
 		return this.#request<ListDocumentsResponse>(
 			"GET",
@@ -408,7 +421,11 @@ export class HindsightApi {
 		);
 	}
 
-	/** Fetch a document. Returns `null` on 404 instead of throwing. */
+	/**
+	 * Fetch a document. Returns `null` on 404 instead of throwing.
+	 *
+	 * @deprecated Unused by the coding agent; call the Hindsight REST API directly. Will be removed in the next major.
+	 */
 	async getDocument(bankId: string, documentId: string): Promise<DocumentResponse | null> {
 		return this.#request<DocumentResponse | null>(
 			"GET",
@@ -418,7 +435,11 @@ export class HindsightApi {
 		);
 	}
 
-	/** Update a document's mutable fields (currently just tags). */
+	/**
+	 * Update a document's mutable fields (currently just tags).
+	 *
+	 * @deprecated Unused by the coding agent; call the Hindsight REST API directly. Will be removed in the next major.
+	 */
 	async updateDocument(bankId: string, documentId: string, options: UpdateDocumentOptions): Promise<DocumentResponse> {
 		return this.#request<DocumentResponse>(
 			"PATCH",
@@ -431,6 +452,8 @@ export class HindsightApi {
 	/**
 	 * Delete a document and every memory derived from it. Returns `true` on
 	 * success, `false` if the document was already gone (404).
+	 *
+	 * @deprecated Unused by the coding agent; call the Hindsight REST API directly. Will be removed in the next major.
 	 */
 	async deleteDocument(bankId: string, documentId: string): Promise<boolean> {
 		const result = await this.#request<{ __deleted: boolean } | null>(

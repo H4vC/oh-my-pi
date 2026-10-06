@@ -1,8 +1,9 @@
 import * as net from "node:net";
 
 /**
- * Newline-delimited JSON framing over `node:net` sockets, shared by the tiny
- * worker daemon (both halves) and the MLX daemon client.
+ * Local-socket plumbing (Unix sockets / Windows named pipes): bounded dialing, liveness probes and
+ * newline-delimited JSON framing. Shared by the tiny worker daemon (both halves), the MLX and
+ * predict daemon clients, the IDA host, the daemon broker client and the LSP mux.
  */
 
 /** Feed socket chunks and invoke `onLine` per complete, non-blank line. */
@@ -28,22 +29,58 @@ export function writeJsonLine(socket: net.Socket, message: unknown): void {
 	socket.write(`${JSON.stringify(message)}\n`);
 }
 
-/** Dial a Unix socket or named pipe with a bounded connect; the socket is switched to UTF-8 strings. */
-export function connectJsonlSocket(endpoint: string, timeoutMs: number): Promise<net.Socket> {
+/**
+ * Dial a Unix socket or named pipe with a bounded connect. Rejects with the socket error, or with
+ * `timeoutMessage` once `timeoutMs` passes (the socket is destroyed). The returned socket carries
+ * no listeners of ours.
+ */
+export function dialSocket(
+	endpoint: string,
+	timeoutMs: number,
+	timeoutMessage = `timed out connecting to ${endpoint}`,
+): Promise<net.Socket> {
 	const { promise, resolve, reject } = Promise.withResolvers<net.Socket>();
 	const socket = net.createConnection(endpoint);
 	const timer = setTimeout(() => {
 		socket.destroy();
-		reject(new Error(`timed out connecting to ${endpoint}`));
+		reject(new Error(timeoutMessage));
 	}, timeoutMs);
-	socket.once("connect", () => {
+	const onConnect = (): void => {
 		clearTimeout(timer);
-		socket.setEncoding("utf-8");
+		socket.off("error", onError);
 		resolve(socket);
-	});
-	socket.once("error", error => {
+	};
+	const onError = (error: Error): void => {
 		clearTimeout(timer);
+		socket.off("connect", onConnect);
+		socket.destroy();
 		reject(error);
+	};
+	socket.once("connect", onConnect);
+	socket.once("error", onError);
+	return promise;
+}
+
+/** Dial a Unix socket or named pipe with a bounded connect; the socket is switched to UTF-8 strings. */
+export async function connectJsonlSocket(endpoint: string, timeoutMs: number): Promise<net.Socket> {
+	const socket = await dialSocket(endpoint, timeoutMs);
+	socket.setEncoding("utf-8");
+	// The first post-connect error is absorbed; callers report a lost peer from their close handler.
+	socket.once("error", () => {});
+	return socket;
+}
+
+/** True when something accepts a connection at `endpoint`. */
+export function endpointAlive(endpoint: string): Promise<boolean> {
+	const { promise, resolve } = Promise.withResolvers<boolean>();
+	const socket = net.createConnection(endpoint);
+	socket.once("connect", () => {
+		socket.destroy();
+		resolve(true);
+	});
+	socket.once("error", () => {
+		socket.destroy();
+		resolve(false);
 	});
 	return promise;
 }

@@ -1,8 +1,10 @@
 import * as fs from "node:fs/promises";
 import * as net from "node:net";
 import { logger, postmortem, withFileLock } from "@oh-my-pi/pi-utils";
-import { LineParser, writeJsonLine } from "./jsonl-socket";
+import { endpointAlive, LineParser, writeJsonLine } from "./jsonl-socket";
 import type { TinyWorkerRequest, TinyWorkerResponse } from "./title-protocol";
+
+export { endpointAlive } from "./jsonl-socket";
 
 const SHUTDOWN_BUDGET_MS = 2_000;
 
@@ -230,19 +232,4 @@ export class TinyWorkerServer {
 		};
 		this.#queue = this.#server.busy(() => this.#queue.then(run, run));
 	}
-}
-
-/** True when something accepts a connection at `endpoint`. */
-export function endpointAlive(endpoint: string): Promise<boolean> {
-	const { promise, resolve } = Promise.withResolvers<boolean>();
-	const socket = net.createConnection(endpoint);
-	socket.once("connect", () => {
-		socket.destroy();
-		resolve(true);
-	});
-	socket.once("error", () => {
-		socket.destroy();
-		resolve(false);
-	});
-	return promise;
 }

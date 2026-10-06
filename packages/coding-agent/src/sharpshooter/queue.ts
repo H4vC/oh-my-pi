@@ -69,26 +69,31 @@ export async function listSharpshooterDeltas(agentDir: string, cwd: string): Pro
 		throw error;
 	}
 
-	const groups: SharpshooterSessionDeltas[] = [];
-	for (const sessionId of sessionDirs) {
-		const dir = path.join(queueRoot, sessionId);
-		const names = (await fs.readdir(dir).catch(() => [] as string[]))
-			.filter(name => name.endsWith(".json"))
-			.sort((a, b) => a.localeCompare(b));
-		const deltas: QueuedSharpshooterDelta[] = [];
-		for (const name of names) {
-			const file = path.join(dir, name);
-			try {
-				const parsed = (await Bun.file(file).json()) as SharpshooterDelta;
-				if (parsed && typeof parsed === "object" && parsed.v === 1 && typeof parsed.statement === "string") {
-					deltas.push({ delta: parsed, file });
-				}
-			} catch {
-				// Torn or foreign file: leave it for manual inspection, never consume.
-			}
-		}
-		if (deltas.length > 0) groups.push({ sessionId, deltas });
-	}
+	const perSession = await Promise.all(
+		sessionDirs.map(async (sessionId): Promise<SharpshooterSessionDeltas | undefined> => {
+			const dir = path.join(queueRoot, sessionId);
+			const names = (await fs.readdir(dir).catch(() => [] as string[]))
+				.filter(name => name.endsWith(".json"))
+				.sort((a, b) => a.localeCompare(b));
+			const parsed = await Promise.all(
+				names.map(async (name): Promise<QueuedSharpshooterDelta | undefined> => {
+					const file = path.join(dir, name);
+					try {
+						const delta = (await Bun.file(file).json()) as SharpshooterDelta;
+						if (delta && typeof delta === "object" && delta.v === 1 && typeof delta.statement === "string") {
+							return { delta, file };
+						}
+					} catch {
+						// Torn or foreign file: leave it for manual inspection, never consume.
+					}
+					return undefined;
+				}),
+			);
+			const deltas = parsed.filter((item): item is QueuedSharpshooterDelta => item !== undefined);
+			return deltas.length > 0 ? { sessionId, deltas } : undefined;
+		}),
+	);
+	const groups = perSession.filter((group): group is SharpshooterSessionDeltas => group !== undefined);
 
 	groups.sort((a, b) => (a.deltas[0]?.delta.ts ?? 0) - (b.deltas[0]?.delta.ts ?? 0));
 	return groups;

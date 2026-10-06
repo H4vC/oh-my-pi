@@ -10,7 +10,7 @@ import {
 import { AssistantMessageEventStream } from "@oh-my-pi/pi-ai/utils/event-stream";
 import { registerCustomApi } from "@oh-my-pi/pi-ai/api-registry";
 import { isTinyLocalModelKey } from "./models";
-import { tinyModelClient } from "./title-client";
+import { tinyTitleClient } from "./title-client";
 import type { TinyChatMessage } from "./title-protocol";
 
 const LOCAL_INFERENCE_API = "local-inference";
@@ -116,7 +116,7 @@ async function runLocalInference(
 	}
 
 	try {
-		const text = await tinyModelClient.chat(model.id, buildLocalInferenceMessages(context), {
+		const text = await tinyTitleClient.chat(model.id, buildLocalInferenceMessages(context), {
 			maxTokens: options?.maxTokens,
 			signal: options?.signal,
 		});

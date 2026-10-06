@@ -34,7 +34,7 @@ export async function getCurrentAutoresearchBranch(_api: ExtensionAPI, workDir: 
  * will revert only run-modified paths instead of resetting to baseline.
  */
 export async function ensureAutoresearchBranch(
-	api: ExtensionAPI,
+	_api: ExtensionAPI,
 	workDir: string,
 	goal: string | null,
 ): Promise<EnsureAutoresearchBranchResult> {
@@ -70,7 +70,12 @@ export async function ensureAutoresearchBranch(
 		};
 	}
 
-	const workDirPrefix = await readGitWorkDirPrefix(api, workDir);
+	let workDirPrefix = "";
+	try {
+		workDirPrefix = repository.prefixOf(workDir) ?? "";
+	} catch {
+		// Prefix lookup failure falls back to repo-root-relative paths.
+	}
 	const dirtyPaths = collectRelativeDirtyPaths(dirtyPathsOutput, workDirPrefix);
 	const branch = (await repository.currentBranch()) ?? "";
 	const currentBranch = branch.startsWith(AUTORESEARCH_BRANCH_PREFIX) ? branch : null;
@@ -98,13 +103,7 @@ export async function ensureAutoresearchBranch(
 }
 
 export function parseWorkDirDirtyPaths(statusOutput: string, workDirPrefix: string): string[] {
-	const relativePaths: string[] = [];
-	for (const dirtyPath of parseDirtyPaths(statusOutput)) {
-		const relativePath = relativizeGitPathToWorkDir(dirtyPath, workDirPrefix);
-		if (relativePath === null) continue;
-		relativePaths.push(relativePath);
-	}
-	return relativePaths;
+	return parseWorkDirDirtyPathsWithStatus(statusOutput, workDirPrefix).map(entry => entry.path);
 }
 
 export function relativizeGitPathToWorkDir(repoRelativePath: string, workDirPrefix: string): string | null {
@@ -122,57 +121,8 @@ export function relativizeGitPathToWorkDir(repoRelativePath: string, workDirPref
 	return normalizePathSpec(normalizedPath.slice(normalizedPrefix.length + 1));
 }
 
-async function readGitWorkDirPrefix(api: ExtensionAPI, workDir: string): Promise<string> {
-	void api;
-	try {
-		return vcs.requireGit(workDir).prefixOf(workDir) ?? "";
-	} catch {
-		return "";
-	}
-}
-
 export function parseDirtyPaths(statusOutput: string): string[] {
-	if (statusOutput.includes("\0")) {
-		return parseDirtyPathsNul(statusOutput);
-	}
-	return parseDirtyPathsLines(statusOutput);
-}
-
-function parseDirtyPathsNul(statusOutput: string): string[] {
-	const unsafePaths = new Set<string>();
-	let index = 0;
-	while (index + 3 <= statusOutput.length) {
-		const statusToken = statusOutput.slice(index, index + 3);
-		index += 3;
-		const pathEnd = statusOutput.indexOf("\0", index);
-		if (pathEnd < 0) break;
-		const firstPath = statusOutput.slice(index, pathEnd);
-		index = pathEnd + 1;
-		addDirtyPath(unsafePaths, firstPath);
-		if (isRenameOrCopy(statusToken)) {
-			const secondPathEnd = statusOutput.indexOf("\0", index);
-			if (secondPathEnd < 0) break;
-			const secondPath = statusOutput.slice(index, secondPathEnd);
-			index = secondPathEnd + 1;
-			addDirtyPath(unsafePaths, secondPath);
-		}
-	}
-	return [...unsafePaths];
-}
-
-function parseDirtyPathsLines(statusOutput: string): string[] {
-	const unsafePaths = new Set<string>();
-	for (const line of statusOutput.split("\n")) {
-		const trimmedLine = line.trimEnd();
-		if (trimmedLine.length < 4) continue;
-		const rawPath = trimmedLine.slice(3).trim();
-		if (rawPath.length === 0) continue;
-		const renameParts = rawPath.split(" -> ");
-		for (const renamePart of renameParts) {
-			addDirtyPath(unsafePaths, renamePart);
-		}
-	}
-	return [...unsafePaths];
+	return parseDirtyPathsWithStatus(statusOutput).map(entry => entry.path);
 }
 
 export function normalizeStatusPath(rawPath: string): string {
@@ -209,12 +159,6 @@ function currentDateStamp(): string {
 	const month = String(now.getMonth() + 1).padStart(2, "0");
 	const day = String(now.getDate()).padStart(2, "0");
 	return `${year}${month}${day}`;
-}
-
-function addDirtyPath(paths: Set<string>, rawPath: string): void {
-	const normalizedPath = normalizeStatusPath(rawPath);
-	if (normalizedPath.length === 0) return;
-	paths.add(normalizedPath);
 }
 
 function isRenameOrCopy(statusToken: string): boolean {

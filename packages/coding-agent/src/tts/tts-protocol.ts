@@ -1,24 +1,14 @@
+import type { WorkerProgressEvent } from "../subprocess/worker-runtime";
 import type { TtsLocalModelKey } from "./models";
 
-export type TtsProgressStatus = "initiate" | "download" | "progress" | "progress_total" | "done" | "ready" | "error";
+export type TtsProgressStatus = WorkerProgressEvent<TtsLocalModelKey>["status"];
 
 export interface TtsProgressFileState {
 	loaded: number;
 	total: number;
 }
 
-export interface TtsProgressEvent {
-	modelKey: TtsLocalModelKey;
-	status: TtsProgressStatus;
-	name?: string;
-	file?: string;
-	progress?: number;
-	loaded?: number;
-	total?: number;
-	files?: Record<string, TtsProgressFileState>;
-	task?: string;
-	model?: string;
-}
+export type TtsProgressEvent = WorkerProgressEvent<TtsLocalModelKey>;
 
 export type TtsWorkerInbound =
 	| { type: "ping"; id: string }

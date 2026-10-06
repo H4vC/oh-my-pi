@@ -15,7 +15,7 @@ import type { CustomTool, CustomToolContext } from "../extensibility/custom-tool
 import ttsDescription from "../prompts/tools/tts.md" with { type: "text" };
 import { DEFAULT_TTS_VOICE, KOKORO_VOICES } from "../tts/models";
 import { ttsClient } from "../tts/tts-client";
-import { encodeWav } from "../tts/wav";
+import { encodePcm16Wav } from "../stt/wav";
 import { formatPathRelativeToCwd, resolveToCwd } from "./path-utils";
 
 import { cfgTtsLocalVoice } from "../tts/settings";
@@ -155,7 +155,7 @@ async function synthesizeLocal(
 	}
 
 	const { wavPath, substituted } = resolveLocalWavPath(outputPath);
-	const wav = encodeWav(audio.pcm, audio.sampleRate);
+	const wav = encodePcm16Wav([audio.pcm], audio.sampleRate);
 	await Bun.write(wavPath, wav);
 	const displayPath = formatPathRelativeToCwd(wavPath, cwd);
 	const note = substituted

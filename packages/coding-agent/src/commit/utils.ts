@@ -26,6 +26,7 @@ export function parseJsonPayload(text: string): unknown {
 	return JSON.parse(match[0]) as unknown;
 }
 
+/** @deprecated Unused; use {@link normalizeDetails} for the details and map the other fields directly. Will be removed in the next major. */
 export function normalizeAnalysis(parsed: {
 	type: ConventionalAnalysis["type"];
 	scope: string | null;
@@ -35,11 +36,7 @@ export function normalizeAnalysis(parsed: {
 	return {
 		type: parsed.type,
 		scope: parsed.scope?.trim() || null,
-		details: parsed.details.map(detail => ({
-			text: detail.text.trim(),
-			changelogCategory: detail.user_visible ? detail.changelog_category : undefined,
-			userVisible: detail.user_visible ?? false,
-		})),
+		details: normalizeDetails(parsed.details),
 		issueRefs: parsed.issue_refs ?? [],
 	};
 }
