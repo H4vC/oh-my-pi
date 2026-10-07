@@ -15,6 +15,7 @@ import {
 	validateJsonSchemaValue,
 } from "@oh-my-pi/pi-ai/utils/schema";
 import { isRecord } from "@oh-my-pi/pi-utils";
+import { LRUCache } from "@oh-my-pi/pi-utils/lru";
 import { jtdToJsonSchema, normalizeSchema } from "./jtd-to-json-schema";
 
 /** A validator bound to a specific output schema. */
@@ -57,6 +58,11 @@ export interface BuildOutputValidatorResult {
 	error?: string;
 }
 
+/** Builds keyed by schema object identity: agent/session output schemas are long-lived, immutable declarations. */
+const objectSchemaResults = new WeakMap<object, BuildOutputValidatorResult>();
+/** JSON-string declarations (each `JSON.parse` yields a fresh object, so identity cannot key them). */
+const stringSchemaResults = new LRUCache<string, BuildOutputValidatorResult>({ max: 32 });
+
 /**
  * Build the canonical validator for a JTD-or-JSON-Schema output declaration.
  *
@@ -66,8 +72,29 @@ export interface BuildOutputValidatorResult {
  *   No validator, but distinguishable from "no schema provided".
  * - `{}` for an absent schema (`undefined`).
  * - `{ error, normalized? }` when the schema cannot be honored (invalid syntax, `false`, malformed JTD).
+ *
+ * Results are memoized per schema object (and per JSON string) and shared across calls: the
+ * validator holds no per-call state, and callers MUST NOT mutate the returned result or schemas.
  */
 export function buildOutputValidator(schema: unknown): BuildOutputValidatorResult {
+	if (typeof schema === "string") {
+		let cached = stringSchemaResults.get(schema);
+		if (!cached) {
+			cached = buildOutputValidatorUncached(schema);
+			stringSchemaResults.set(schema, cached);
+		}
+		return cached;
+	}
+	if (schema === null || typeof schema !== "object") return buildOutputValidatorUncached(schema);
+	let cached = objectSchemaResults.get(schema);
+	if (!cached) {
+		cached = buildOutputValidatorUncached(schema);
+		objectSchemaResults.set(schema, cached);
+	}
+	return cached;
+}
+
+function buildOutputValidatorUncached(schema: unknown): BuildOutputValidatorResult {
 	const { normalized, error: normalizeError } = normalizeSchema(schema);
 	if (normalizeError) return { error: normalizeError, normalized };
 	if (normalized === undefined) return {};
