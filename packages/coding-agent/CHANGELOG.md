@@ -11,6 +11,7 @@
 ### Changed
 
 - Clarified how agents request line ranges in `read` calls with complete examples ([#13956](https://github.com/can1357/oh-my-pi/pull/13956) by [@Dante-dan](https://github.com/Dante-dan)).
+- Sped up DOCX, PPTX, XLSX and EPUB conversion and cut its memory use on media-heavy documents ([#14709](https://github.com/can1357/oh-my-pi/pull/14709) by [@H4vC](https://github.com/H4vC))
 
 ### Fixed
 
