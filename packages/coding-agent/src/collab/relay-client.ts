@@ -178,10 +178,15 @@ export class CollabSocket {
 		this.#openSocket();
 	}
 
-	send(frame: CollabFrame, targetPeer = 0): void {
+	/**
+	 * Queue one frame. A string is taken as the frame's JSON form and is sealed
+	 * as-is, so a caller that already serialized the frame (to measure or bound
+	 * it) does not pay for a second `JSON.stringify`.
+	 */
+	send(frame: CollabFrame | string, targetPeer = 0): void {
 		if (this.#closed) return;
 		try {
-			const serialized = JSON.stringify(frame);
+			const serialized = typeof frame === "string" ? frame : JSON.stringify(frame);
 			const prepared = Promise.withResolvers<void>();
 			this.#sendChain = Promise.all([this.#sendChain, prepared.promise]).then(() => {});
 			this.#enqueueSend([serialized].values(), targetPeer, Buffer.byteLength(serialized), prepared.resolve, true);
@@ -190,8 +195,11 @@ export class CollabSocket {
 		}
 	}
 
-	/** Keeps a snapshot contiguous with its welcome and ahead of subsequent live traffic. */
-	sendBatch(frames: Iterable<CollabFrame>, targetPeer = 0): void {
+	/**
+	 * Keeps a snapshot contiguous with its welcome and ahead of subsequent live
+	 * traffic. String items are pre-serialized frames, as in {@link send}.
+	 */
+	sendBatch(frames: Iterable<CollabFrame | string>, targetPeer = 0): void {
 		if (this.#closed) return;
 		this.#enqueueSend(frames[Symbol.iterator](), targetPeer, 0);
 	}
