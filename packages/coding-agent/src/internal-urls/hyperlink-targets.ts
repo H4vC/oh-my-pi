@@ -14,18 +14,31 @@ export async function resolveMarkdownLinkTargets(
 	texts: readonly string[],
 	context?: ResolveContext,
 ): Promise<ReadonlyMap<string, string>> {
+	const hrefs = new Set<string>();
+	for (const text of texts) {
+		for (const href of getMarkdownLinkUrls(text)) hrefs.add(href);
+	}
+	return resolveMarkdownLinkHrefs(hrefs, context);
+}
+
+/**
+ * Resolve already-extracted Markdown link destinations (see
+ * {@link resolveMarkdownLinkTargets}) without re-lexing the source text.
+ */
+export async function resolveMarkdownLinkHrefs(
+	hrefs: Iterable<string>,
+	context?: ResolveContext,
+): Promise<ReadonlyMap<string, string>> {
 	const targets = new Map<string, string>();
 	const urls = new Set<string>();
 	const router = InternalUrlRouter.instance();
-	for (const text of texts) {
-		for (const href of getMarkdownLinkUrls(text)) {
-			if (!href || /[\x00-\x1f\x7f]/.test(href) || /^(?:#|\?|\/\/)/.test(href)) continue;
-			const scheme = extractUriScheme(href);
-			// Rendering must not fetch remote resources or materialize secrets:
-			// only linkable schemes locate locally and cheaply.
-			if (!scheme || scheme === "file" || (router.spec(scheme)?.linkable && router.canHandle(href))) {
-				urls.add(href);
-			}
+	for (const href of hrefs) {
+		if (!href || /[\x00-\x1f\x7f]/.test(href) || /^(?:#|\?|\/\/)/.test(href)) continue;
+		const scheme = extractUriScheme(href);
+		// Rendering must not fetch remote resources or materialize secrets:
+		// only linkable schemes locate locally and cheaply.
+		if (!scheme || scheme === "file" || (router.spec(scheme)?.linkable && router.canHandle(href))) {
+			urls.add(href);
 		}
 	}
 	await Promise.all(

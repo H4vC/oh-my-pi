@@ -200,6 +200,15 @@ describe("resource links in chat markdown", () => {
 		expect(visible).not.toContain("file://");
 	});
 
+	it("stops linking a file once it is deleted", async () => {
+		const file = path.join(tempDir, "gone.txt");
+		await Bun.write(file, "x");
+		const text = "[Gone](gone.txt)";
+		expect([...(await resolveMarkdownLinkTargets([text], { cwd: tempDir })).keys()]).toEqual(["gone.txt"]);
+		await fs.rm(file);
+		expect([...(await resolveMarkdownLinkTargets([text], { cwd: tempDir })).keys()]).toEqual([]);
+	});
+
 	it("leaves missing, escaping, remote, and non-link destinations unexpanded", async () => {
 		await Bun.write(path.join(tempDir, "local", "report.json"), "{}");
 		await Bun.write(path.join(tempDir, "outside.json"), "{}");
