@@ -159,50 +159,67 @@ export class CleanseStreamParser {
 /** Splits one growing output stream into sanitized segments that parse independently. */
 class StreamCutter {
 	readonly #json: boolean;
-	/** Raw output after the last newline seen. */
-	#partial = "";
-	/** Sanitized complete lines held back while a JSON document is open. */
-	#held = "";
+	/** Raw output after the last newline seen, as received; joined once its line completes. */
+	#partial: string[] = [];
+	/** Sanitized complete lines held back while a JSON document is open; joined once it closes. */
+	#held: string[] = [];
 	// JSON scanner state at the end of #held, mirroring parseJsonValues.
 	#inDocument = false;
 	#depth = 0;
 	#inString = false;
 	#escaped = false;
+	/** Whether the current line already has non-whitespace text outside a document. */
+	#lineHasText = false;
 
 	constructor(framing: StreamFraming) {
 		this.#json = framing === "json";
 	}
 
 	push(chunk: string): string {
-		const text = this.#partial + chunk;
-		const newline = text.lastIndexOf("\n");
+		const newline = chunk.lastIndexOf("\n");
 		if (newline < 0) {
-			this.#partial = text;
+			if (chunk.length > 0) this.#partial.push(chunk);
 			return "";
 		}
-		this.#partial = text.slice(newline + 1);
+		this.#partial.push(chunk.slice(0, newline + 1));
+		const lines = this.#partial.join("");
+		this.#partial = newline + 1 < chunk.length ? [chunk.slice(newline + 1)] : [];
 		// Sanitize whole lines only: ANSI sequences never span a newline, so this
 		// equals the corresponding slice of the full sanitized output.
-		const complete = sanitizeText(text.slice(0, newline + 1));
+		const complete = sanitizeText(lines);
 		if (!this.#json) return complete;
-		const held = this.#held + complete;
-		const cut = this.#scan(held, this.#held.length);
-		this.#held = held.slice(cut);
-		return held.slice(0, cut);
+		const cut = this.#scan(complete);
+		if (cut === 0) {
+			this.#held.push(complete);
+			return "";
+		}
+		this.#held.push(complete.slice(0, cut));
+		const emitted = this.#held.join("");
+		this.#held = cut < complete.length ? [complete.slice(cut)] : [];
+		return emitted;
 	}
 
-	/** Advance the scanner over `text` from `from`; returns the offset after the last line end outside a document. */
-	#scan(text: string, from: number): number {
+	/**
+	 * Advance the scanner over newly completed `text`; returns the offset in it
+	 * after the last line end outside a document, or 0. A document opens only
+	 * at a line's first non-whitespace character, so a brace inside a plain
+	 * text diagnostic (`expected '{'`) does not hold the stream back.
+	 */
+	#scan(text: string): number {
 		let cut = 0;
-		for (let index = from; index < text.length; index += 1) {
+		for (let index = 0; index < text.length; index += 1) {
 			const char = text[index];
 			if (!this.#inDocument) {
-				if (char === "\n") cut = index + 1;
-				else if (char === "{" || char === "[") {
+				if (char === "\n") {
+					cut = index + 1;
+					this.#lineHasText = false;
+				} else if (!this.#lineHasText && (char === "{" || char === "[")) {
 					this.#inDocument = true;
 					this.#depth = 1;
 					this.#inString = false;
 					this.#escaped = false;
+				} else if (char !== " " && char !== "\t" && char !== "\r") {
+					this.#lineHasText = true;
 				}
 				continue;
 			}

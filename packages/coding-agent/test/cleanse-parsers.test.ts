@@ -12,7 +12,7 @@ interface ParserFixture {
 	kind: CleanseParserKind;
 	stdout: string;
 	stderr: string;
-	expected: Partial<CleanseDiagnostic>[];
+	expected: CleanseDiagnostic[];
 }
 
 // Golden outputs pinned from the per-tool parsers; every parser kind has at least one case.
@@ -893,7 +893,7 @@ describe("cleanse parser fixtures", () => {
 				stdout: fixture.stdout,
 				stderr: fixture.stderr,
 			});
-			expect(diagnostics).toEqual(fixture.expected as CleanseDiagnostic[]);
+			expect(diagnostics).toEqual(fixture.expected);
 		});
 	}
 });
@@ -949,5 +949,13 @@ describe("cleanse incremental parsing", () => {
 		const split = document.indexOf("\n", document.indexOf("location"));
 		expect(parser.push(document.slice(0, split + 1), "")).toEqual([]);
 		expect(parser.push(document.slice(split + 1), "")).toMatchObject([{ file: "a.py", code: "F401" }]);
+	});
+
+	test("streams a plain-text diagnostic that contains a brace without waiting for a closing one", () => {
+		const parser = new CleanseStreamParser("go", context);
+		const line = "main.go:4:1: error: expected '{'\n";
+		const full = parseCleanseDiagnostics("go", { ...context, stdout: "", stderr: line });
+		expect(full.length).toBeGreaterThan(0);
+		expect(parser.push("", line)).toEqual(full);
 	});
 });
