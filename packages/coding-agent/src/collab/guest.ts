@@ -506,6 +506,10 @@ export class CollabGuestLink {
 			...this.#ctx.pendingTools.values(),
 			...this.#ctx.eventController.takeDisplaceableComponents(),
 		];
+		// Drop turn-scoped controller state (coalesced message_update timer,
+		// in-flight anchors) so a pending pre-boundary snapshot cannot flush
+		// into the replacement transcript.
+		this.#ctx.eventController.resetTranscriptAnchors();
 		this.#clearTransientUi();
 		this.#clearAgentMirror();
 		this.state = pending.state;
@@ -921,6 +925,8 @@ export class CollabGuestLink {
 	async #resumeLocalSession(): Promise<void> {
 		this.#ctx.statusLine.setCollabStatus(null);
 		this.#flushPendingTranscripts();
+		// A pending coalesced mirror message_update must not flush after leave.
+		this.#ctx.eventController.resetTranscriptAnchors();
 		this.#clearAgentMirror();
 		this.#ctx.syncRunningSubagentBadge();
 		this.#ctx.resetObserverRegistry();

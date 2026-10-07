@@ -1587,8 +1587,9 @@ export class EventController {
 			}
 
 			// Update working message with the intent of the LAST intent-bearing
-			// streamed tool call. Setting every call's intent in order would
-			// ping-pong the working line between calls on each flush.
+			// streamed tool call. Scanning in reverse skips the redundant
+			// intermediate setWorkingMessage calls a forward pass would make
+			// (only the last one survives the flush anyway).
 			const blocks = this.ctx.streamingMessage.content;
 			for (let index = blocks.length - 1; index >= 0; index--) {
 				const block = blocks[index];
