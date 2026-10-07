@@ -59,8 +59,6 @@ export interface StatusLineSession {
 	getAnthropicSlowModeLabel?(): string | undefined;
 	getPrewalkState?(): unknown;
 	getAsyncJobSnapshot(): { running: readonly { type: string; agentId?: string }[] } | null | undefined;
-	/** Count-only variant of `getAsyncJobSnapshot().running`; the status line falls back to the snapshot when absent. */
-	countRunningAsyncJobs?(include: (job: { type: string; agentId?: string }) => boolean): number;
 	getGoalModeState(): { goal?: { status: string; tokensUsed: number; tokenBudget?: number } } | undefined;
 	getAdvisorStatusOverview?(): { configured: boolean; advisors: readonly { status: string; yielded: boolean }[] };
 	getAdvisorCost?(): number;

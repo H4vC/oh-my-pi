@@ -163,18 +163,23 @@ describe("StatusLineComponent context breakdown", () => {
 	});
 
 	it("re-queries when streaming tool-call arguments grow in place", () => {
-		const args: Record<string, unknown> = { path: "a.ts" };
+		const payload = { text: "x" };
+		const args: Record<string, unknown> = { path: "a.ts", payload };
 		const tail = { role: "assistant", content: [{ type: "toolCall", name: "write", arguments: args }] };
 		const { session, usageCalls } = makeSession({ messages: [userMessage("hi"), tail] });
 		const comp = statusLines.track(new StatusLineComponent(session, statusLineHost));
 
 		comp.getCachedContextBreakdown();
-		args.content = "streamed file body".repeat(8);
+		const body = "streamed file body".repeat(8);
+		args.content = body;
 		comp.getCachedContextBreakdown();
-		args.content = `${args.content as string} and more`;
+		args.content = `${body} and more`;
+		comp.getCachedContextBreakdown();
+		// A nested field growing in place changes the serialized size too.
+		payload.text = "x".repeat(40);
 		comp.getCachedContextBreakdown();
 
-		expect(usageCalls()).toBe(3);
+		expect(usageCalls()).toBe(4);
 	});
 
 	it("re-queries when the message array is replaced (branch switch / rebuild)", () => {

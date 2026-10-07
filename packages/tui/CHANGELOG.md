@@ -4,8 +4,6 @@
 
 ### Changed
 
-- Model mentions (`^`), `/switch` completions, and model picker search stay responsive on every keystroke with large model catalogs ([#14595](https://github.com/can1357/oh-my-pi/pull/14595) by [@H4vC](https://github.com/H4vC))
-- Reduced status-line work: the `pr` segment re-checks at most once per 60 s, 80 ms repaints happen only with the animated `pi` segment, and git refreshes follow cache expiry instead of a 1 s poll ([#14691](https://github.com/can1357/oh-my-pi/pull/14691) by [@H4vC](https://github.com/H4vC))
 - Sped up Markdown lexing of large documents (532 KB: ~29 ms → ~19 ms) ([#14667](https://github.com/can1357/oh-my-pi/pull/14667) by [@H4vC](https://github.com/H4vC))
 - Sped up `OutputSink` on many single-line chunks (100k chunks: ~1.3–9 s → ~15 ms) ([#14679](https://github.com/can1357/oh-my-pi/pull/14679) by [@H4vC](https://github.com/H4vC))
 - Reduced CPU spent redrawing AST, grep, LSP, MCP and generic tool result cards ([#14684](https://github.com/can1357/oh-my-pi/pull/14684) by [@H4vC](https://github.com/H4vC))
@@ -15,6 +13,7 @@
 - Sped up `@` path completion in folders with many symlinks ([#14687](https://github.com/can1357/oh-my-pi/pull/14687) by [@H4vC](https://github.com/H4vC))
 - Sped up model hub search (~4×) and session tree, settings and extension-dashboard search (~2×) on large lists ([#14687](https://github.com/can1357/oh-my-pi/pull/14687) by [@H4vC](https://github.com/H4vC))
 - Reduced idle agent transcript viewer file I/O ([#14688](https://github.com/can1357/oh-my-pi/pull/14688) by [@H4vC](https://github.com/H4vC))
+- Reduced status-line work: fast repaints and brand-fade frames happen only with the animated `pi` segment, and git refreshes follow cache expiry instead of a 1 s poll ([#14691](https://github.com/can1357/oh-my-pi/pull/14691) by [@H4vC](https://github.com/H4vC))
 
 ### Fixed
 

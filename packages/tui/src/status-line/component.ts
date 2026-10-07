@@ -150,15 +150,6 @@ const GIT_STATUS_TTL_MS = 10_000;
 const JJ_REFRESH_TTL_MS = 5000;
 const JJ_COMMAND_TIMEOUT_MS = 5_000;
 const WATCHER_FAILURE_POLL_TTL_MS = 5000;
-/**
- * Floor between PR re-lookups triggered by generic activity
- * ({@link StatusLineComponent.invalidate}). A tool may open, close, or merge a
- * PR without moving HEAD, so activity still refreshes the `pr` segment — but
- * each refresh spawns `gh pr view` plus a GitHub API round-trip, and
- * invalidate() fires on nearly every agent event. Branch/repo changes bypass
- * the floor via {@link StatusLineComponent.invalidateGitCaches}.
- */
-const PR_ACTIVITY_REFRESH_MS = 60_000;
 /** Brand-color fade duration across working-state edges (rust omp's `BRAND_FADE`). */
 const BRAND_FADE_MS = 450;
 /** Repaint cadence while the brand fade is in flight (rust omp's `FADE_FRAME`). */
@@ -227,19 +218,23 @@ function reportMatchesExactIdentity(report: UsageReport, identity: OAuthAccountI
 
 /**
  * Serialized length of tool-call arguments, memoized per arguments object.
- * Streaming providers may grow the same object in place, so each entry keeps
- * a cheap shape check (key count plus summed top-level string lengths) and is
- * recomputed when it differs, without re-serializing the whole (possibly
- * multi-KB edit/write) payload on every status-line rebuild.
+ * Streaming providers may grow the same object in place (at any depth), so
+ * each entry keeps a shape check — key/element counts plus string and number
+ * lengths over the whole tree — and is recomputed when it differs, without
+ * re-serializing the whole (possibly multi-KB edit/write) payload on every
+ * status-line rebuild.
  */
 const toolArgumentsLengthCache = new WeakMap<object, { check: number; length: number }>();
 
-function toolArgumentsShapeCheck(args: object): number {
-	let check = 0;
-	for (const key in args) {
-		const value = (args as Record<string, unknown>)[key];
-		check += 1 + (typeof value === "string" ? value.length : 0);
-	}
+/** Past this depth the check stops descending; JSON.stringify rejects real cycles anyway. */
+const SHAPE_CHECK_MAX_DEPTH = 32;
+
+function toolArgumentsShapeCheck(value: unknown, depth = 0): number {
+	if (typeof value === "string") return value.length + 1;
+	if (typeof value === "number" || typeof value === "bigint") return String(value).length + 1;
+	if (value === null || typeof value !== "object" || depth >= SHAPE_CHECK_MAX_DEPTH) return 1;
+	let check = 1;
+	for (const child of Object.values(value)) check += 1 + toolArgumentsShapeCheck(child, depth + 1);
 	return check;
 }
 
@@ -771,15 +766,10 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 	// than poison the fresh cache or advance its throttle.
 	#jjCacheGeneration = 0;
 
-	// PR lookup caching (invalidated on branch/repo context changes; generic
-	// activity re-checks at most every PR_ACTIVITY_REFRESH_MS)
+	// PR lookup caching (invalidated on branch/repo context changes)
 	#cachedPr: { number: number; url: string } | null | undefined = undefined;
 	#cachedPrContext: PrCacheContext | undefined = undefined;
 	#prLookupInFlight = false;
-	/** When the last PR lookup settled; anchors {@link PR_ACTIVITY_REFRESH_MS}. */
-	#prSettledAt = 0;
-	/** Generic activity ({@link invalidate}) since the last PR lookup settled. */
-	#prActivityPending = false;
 	#defaultBranch?: string;
 	#defaultBranchCwd: string | undefined = undefined;
 	#lastTokensPerSecond: number | null = null;
@@ -1008,16 +998,13 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 	 * badge represents that same agent. Bash and eval jobs always count.
 	 */
 	runningBackgroundJobCount(): number {
-		const include = (job: { type: string; agentId?: string }): boolean =>
-			job.type !== "task" || job.agentId === undefined || !this.#runningSubagentIds.has(job.agentId);
-		if (this.session.countRunningAsyncJobs) return this.session.countRunningAsyncJobs(include);
-		const running = this.session.getAsyncJobSnapshot()?.running;
-		if (!running) return 0;
-		let count = 0;
-		for (const job of running) {
-			if (include(job)) count++;
-		}
-		return count;
+		return (
+			this.session
+				.getAsyncJobSnapshot()
+				?.running.filter(
+					job => job.type !== "task" || job.agentId === undefined || !this.#runningSubagentIds.has(job.agentId),
+				).length ?? 0
+		);
 	}
 
 	/**
@@ -1323,7 +1310,7 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 	 * a 40ms frame timer so the fade keeps animating after the working loader
 	 * (the usual repaint driver) has stopped.
 	 */
-	#brandFgAnsi(working: boolean, sessionAccentEnabled: boolean): string {
+	#brandFgAnsi(working: boolean, sessionAccentEnabled: boolean, brandVisible: boolean): string {
 		const sessionName = sessionAccentEnabled ? this.session.sessionManager?.getSessionName() : undefined;
 		const idleHex = theme.getColorHex("dim");
 		const workingHex =
@@ -1337,7 +1324,8 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 				startedAt: now,
 			};
 			this.#brandWorking = working;
-			this.#startBrandFadeTimer();
+			// Only a visible `pi` segment needs fade frames; other bars stay quiet.
+			if (brandVisible) this.#startBrandFadeTimer();
 		}
 		const hex = this.#sampleBrandHex(working ? workingHex : idleHex, now);
 		return getSessionAccentAnsi(hex) ?? theme.getFgAnsi(working ? "accent" : "dim");
@@ -1446,10 +1434,9 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 		// event, re-introducing the render-path spawn churn the async resolve
 		// was designed to avoid. Explicit Git/repository invalidation (watcher
 		// HEAD-move, cwd/repo switch) goes through {@link invalidateGitCaches}.
-		// A tool may open, close, or merge a PR without moving HEAD, so ordinary
-		// activity marks the settled PR stale; #lookupPr re-checks it once
-		// PR_ACTIVITY_REFRESH_MS has passed since the last lookup settled.
-		this.#prActivityPending = true;
+		// A tool may open, close, or merge a PR without moving HEAD. Expire the
+		// settled PR context on ordinary activity while leaving HEAD work intact.
+		this.#cachedPrContext = undefined;
 	}
 	#invalidateSessionCaches(): void {
 		this.#clearUsageStartTimer();
@@ -1801,18 +1788,6 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 		const branch = this.#getBranchLabel(activeRepoCache, this.#resolveRepository(activeRepoCache));
 		const currentContext = branch ? createPrCacheContext(branch, this.#cachedBranchRepoId ?? null) : null;
 
-		// Generic activity (invalidate) may have opened or merged a PR: expire the
-		// settled lookup, but only once the floor since it settled has passed.
-		if (this.#prActivityPending) {
-			const refreshAt = this.#prSettledAt + PR_ACTIVITY_REFRESH_MS;
-			if (Date.now() >= refreshAt) {
-				this.#prActivityPending = false;
-				this.#cachedPrContext = undefined;
-			} else {
-				this.#noteVcsStaleAt(refreshAt);
-			}
-		}
-
 		if (canReuseCachedPr(this.#cachedPr, this.#cachedPrContext, currentContext)) {
 			return this.#cachedPr ?? null;
 		}
@@ -1875,7 +1850,6 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 				setCachedPr(null);
 			} finally {
 				this.#prLookupInFlight = false;
-				this.#prSettledAt = Date.now();
 				if (!this.#disposed) {
 					this.#invalidateStatusLineRenderCache();
 					this.#onBranchChange?.();
@@ -2494,7 +2468,9 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 		const gitPr = includePr ? this.#lookupPr(activeRepoCache) : null;
 		const compactionSpeculation = this.session.compactionSpeculation ?? "idle";
 		this.#syncSpeculationBlink(compactionSpeculation);
-		const sessionAccentEnabled = this.#resolveSettings().sessionAccent !== false;
+		const settings = this.#resolveSettings();
+		const sessionAccentEnabled = settings.sessionAccent !== false;
+		const brandVisible = settings.leftSegments.includes("pi") || settings.rightSegments.includes("pi");
 		const turnElapsedMs = this.getTurnElapsedMs();
 		return {
 			session: this.session,
@@ -2533,7 +2509,7 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 			activeMs: this.getActiveMs(),
 			turnElapsedMs,
 			now: new Date(nowMs),
-			brandFgAnsi: this.#brandFgAnsi(turnElapsedMs !== null, sessionAccentEnabled),
+			brandFgAnsi: this.#brandFgAnsi(turnElapsedMs !== null, sessionAccentEnabled, brandVisible),
 			git: {
 				branch: gitBranch,
 				status: gitStatus,
