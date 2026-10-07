@@ -11,6 +11,11 @@
 - Fixed Ultrafast service-tier turns being billed at standard rates; GPT-6 Astra now carries its published Ultrafast premium (6x on the OpenAI API, 8x included usage on Codex), and the premium-request counter counts them ([#14471](https://github.com/can1357/oh-my-pi/pull/14471) by [@eggpeat](https://github.com/eggpeat)).
 - Fixed Vertex AI on Windows ignoring credentials from `gcloud auth application-default login`, which gcloud writes to `%APPDATA%\gcloud\application_default_credentials.json` rather than `~/.config/gcloud` ([#14549](https://github.com/can1357/oh-my-pi/pull/14549) by [@jorgoose](https://github.com/jorgoose))
 - Fixed `auth.accountPolicies` and `/session pin` being unable to select a Cursor account by email: Cursor logins now store the account email, and accounts stored earlier gain it at their next token refresh ([#14511](https://github.com/can1357/oh-my-pi/pull/14511) by [@will-bogusz](https://github.com/will-bogusz))
+- Fixed Cursor provider leaking conversation checkpoints, blob stores and abort listeners after requests end ([#14669](https://github.com/can1357/oh-my-pi/pull/14669) by [@H4vC](https://github.com/H4vC))
+
+### Changed
+
+- Sped up Cursor and Devin streaming ([#14669](https://github.com/can1357/oh-my-pi/pull/14669) by [@H4vC](https://github.com/H4vC))
 
 ## [18.6.3] - 2026-10-06
 

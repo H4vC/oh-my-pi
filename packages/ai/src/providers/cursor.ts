@@ -183,6 +183,7 @@ import {
 	sanitizeText,
 } from "@oh-my-pi/pi-utils";
 import { classifyJsonPrefix } from "@oh-my-pi/pi-utils/json-parse";
+import { LRUCache } from "@oh-my-pi/pi-utils/lru";
 import * as AIError from "../error";
 import { parseToolCallArguments } from "../utils/tool-call-arguments";
 import type {
@@ -227,6 +228,7 @@ import { connectProxiedSocket, getProxyForUrl, wrapFetchForProxy } from "../util
 import { createRequestDebugSession, isRequestDebugEnabled, type RequestDebugResponseLog } from "../utils/request-debug";
 import { sanitizeSchemaForCursor, toolWireSchema } from "../utils/schema";
 import { formatConnectEndStreamError, hasRetryableCursorErrorDetail } from "./connect-error-detail";
+import { CONNECT_END_STREAM_FLAG, ConnectFrameDecoder, frameConnectMessage } from "./connect-frame";
 import mcpExternalHandoffMessage from "./cursor-external-tool-handoff.md" with { type: "text" };
 import {
 	buildMcpStateResult,
@@ -260,7 +262,7 @@ import {
 	piTimeout,
 	shellTimeoutSeconds,
 } from "./cursor/exec-modern";
-import { frameConnectMessage, handleInteractionQuery, protoUnknownFields } from "./cursor/interaction-query";
+import { handleInteractionQuery, protoUnknownFields } from "./cursor/interaction-query";
 
 export const CURSOR_API_URL = CURSOR_DEFAULT_BASE_URL;
 export { CURSOR_CLIENT_VERSION };
@@ -349,8 +351,14 @@ const CURSOR_MAX_STREAM_RETRIES = 5;
 const CURSOR_RETRY_BASE_DELAY_MS = 500;
 const NOT_IMPLEMENTED = `Not implemented by this client`;
 
-const conversationStateCache = new Map<string, ConversationStateStructure>();
-const conversationBlobStores = new Map<string, Map<string, Uint8Array>>();
+/**
+ * Per-conversation checkpoint and blob store. Bounded: each blob store holds the
+ * serialized history, and an evicted conversation rebuilds from `context`
+ * exactly like the first request after a restart.
+ */
+const CURSOR_CONVERSATION_CACHE_MAX = 32;
+const conversationStateCache = new LRUCache<string, ConversationStateStructure>({ max: CURSOR_CONVERSATION_CACHE_MAX });
+const conversationBlobStores = new LRUCache<string, Map<string, Uint8Array>>({ max: CURSOR_CONVERSATION_CACHE_MAX });
 const warnedCursorKimiK3ReplayMessages = new Set<string>();
 /**
  * Base conversation id → rotated wire id (#8345). Cursor's backend can pin a
@@ -419,8 +427,6 @@ interface CursorTransportRequest extends CursorGrpcRequest {
 	/** Exact discovery id eligible for a retry because the normalized effort payload was serialized unchanged. */
 	fallbackWireModelId?: string;
 }
-
-const CONNECT_END_STREAM_FLAG = 0b00000010;
 
 interface CursorLogEntry {
 	ts: number;
@@ -1051,20 +1057,24 @@ function streamCursorWithWireMode(
 		// Once aborted, the Agent finalizes from the abort error and discards
 		// late results regardless, so skipping the rest of the drain loses
 		// nothing that could still be delivered.
-		let abortSettled: Promise<void> | undefined;
 		const drainInFlightDispatches = async (): Promise<void> => {
 			const signal = options?.signal;
-			while (inFlightDispatches.size > 0) {
-				if (signal?.aborted) return;
-				const settled = Promise.all(inFlightDispatches);
-				if (!signal) {
-					await settled;
-					continue;
+			if (!signal) {
+				while (inFlightDispatches.size > 0) await Promise.all(inFlightDispatches);
+				return;
+			}
+			if (inFlightDispatches.size === 0 || signal.aborted) return;
+			const { promise: aborted, resolve } = Promise.withResolvers<void>();
+			const onAbort = (): void => resolve();
+			signal.addEventListener("abort", onAbort, { once: true });
+			try {
+				while (inFlightDispatches.size > 0 && !signal.aborted) {
+					await Promise.race([Promise.all(inFlightDispatches), aborted]);
 				}
-				abortSettled ??= new Promise<void>(resolve =>
-					signal.addEventListener("abort", () => resolve(), { once: true }),
-				);
-				await Promise.race([settled, abortSettled]);
+			} finally {
+				// The request signal outlives this stream (it spans the agent's tool
+				// loop); a lingering listener would pin this request's whole scope.
+				signal.removeEventListener("abort", onAbort);
 			}
 		};
 
@@ -1119,6 +1129,14 @@ function streamCursorWithWireMode(
 		let serializedFallbackWireModelId: string | undefined;
 		let activeBlobStore: Map<string, Uint8Array> | undefined;
 		let originalRequestId: string | undefined;
+		// Removed in `finally`: the request signal outlives this stream, and a
+		// listener left on it would retain this request's scope (request bytes,
+		// output, blob store) until the caller's whole prompt ends.
+		let onTransportAbort: (() => void) | undefined;
+		// A call without conversation/session id mints a one-off conversation that
+		// no later request can address; its cache entries are released at the end.
+		const ephemeralConversation =
+			!retryContext && options?.conversationId === undefined && options?.sessionId === undefined;
 		try {
 			const apiKey = options?.apiKey;
 			if (!apiKey) {
@@ -1227,7 +1245,7 @@ function streamCursorWithWireMode(
 
 			if (!retryContext) stream.push({ type: "start", partial: output });
 
-			let pendingBuffer: Buffer = Buffer.alloc(0);
+			const frameDecoder = new ConnectFrameDecoder();
 			const previousState = retryContext?.blockState;
 			let currentTextBlock = previousState?.currentTextBlock ?? null;
 			let currentThinkingBlock = previousState?.currentThinkingBlock ?? null;
@@ -1299,18 +1317,7 @@ function streamCursorWithWireMode(
 						log?.write(chunk);
 					});
 				}
-				// Steady state drains fully per chunk; alias a fresh transport chunk
-				// instead of copying it through Buffer.concat (see aws-eventstream.ts).
-				pendingBuffer = pendingBuffer.length === 0 ? chunk : Buffer.concat([pendingBuffer, chunk]);
-
-				while (pendingBuffer.length >= 5) {
-					const flags = pendingBuffer[0];
-					const msgLen = pendingBuffer.readUInt32BE(1);
-					if (pendingBuffer.length < 5 + msgLen) break;
-
-					const messageBytes = pendingBuffer.subarray(5, 5 + msgLen);
-					pendingBuffer = pendingBuffer.subarray(5 + msgLen);
-
+				for (const { flags, payload: messageBytes } of frameDecoder.decode(chunk)) {
 					if (flags & CONNECT_END_STREAM_FLAG) {
 						const endError = parseConnectEndStream(messageBytes);
 						if (endError) {
@@ -1423,12 +1430,13 @@ function streamCursorWithWireMode(
 			});
 
 			if (options?.signal) {
-				options.signal.addEventListener("abort", () => {
+				onTransportAbort = () => {
 					runTransport?.close();
 					void closeDebugLog().finally(() => {
 						settleH2(new AIError.AbortError());
 					});
-				});
+				};
+				options.signal.addEventListener("abort", onTransportAbort, { once: true });
 			}
 
 			runTransport.write(frameConnectMessage(requestBytes));
@@ -1689,6 +1697,9 @@ function streamCursorWithWireMode(
 				if (currentRotated) successfulRotatedConversationIds.delete(currentRotated);
 				rotatedConversationIds.set(baseConversationId, rotated);
 				freshRotatedConversationIds.add(rotated);
+				// The poisoned id is never addressed again; release its side state.
+				conversationStateCache.delete(conversationId);
+				conversationBlobStores.delete(conversationId);
 				logger.debug("cursor conversation rotated", {
 					base: baseConversationId,
 					from: conversationId,
@@ -1717,6 +1728,18 @@ function streamCursorWithWireMode(
 			}
 			runTransport?.close();
 			h2Client?.close();
+			if (onTransportAbort) options?.signal?.removeEventListener("abort", onTransportAbort);
+			if (ephemeralConversation && baseConversationId !== undefined) {
+				const rotated = rotatedConversationIds.get(baseConversationId);
+				for (const id of [baseConversationId, rotated]) {
+					if (id === undefined) continue;
+					conversationStateCache.delete(id);
+					conversationBlobStores.delete(id);
+					successfulRotatedConversationIds.delete(id);
+					freshRotatedConversationIds.delete(id);
+				}
+				rotatedConversationIds.delete(baseConversationId);
+			}
 		}
 	})();
 
@@ -1735,6 +1758,19 @@ export type ToolCallState = ToolCall & {
 	[kStreamingEnvelopeId]?: string;
 	[kCursorExecResolved]?: true;
 };
+
+/**
+ * Content index of a streamed block. Blocks are stamped with their index on
+ * push and Cursor never reorders `output.content`, so this is O(1) per delta;
+ * the identity check keeps a foreign block resolvable.
+ */
+function streamedBlockIndex(
+	output: AssistantMessage,
+	block: AssistantMessage["content"][number] & { [kStreamingBlockIndex]: number },
+): number {
+	const index = block[kStreamingBlockIndex];
+	return output.content[index] === block ? index : output.content.indexOf(block);
+}
 
 export interface BlockState {
 	currentTextBlock: (TextContent & { [kStreamingBlockIndex]: number }) | null;
@@ -4450,7 +4486,7 @@ export function flushOpenToolCalls(
 	const openBlocks = new Set<ToolCallState>(state.openToolCalls.values());
 	if (state.currentToolCall) openBlocks.add(state.currentToolCall);
 	for (const block of openBlocks) {
-		const idx = output.content.indexOf(block);
+		const idx = streamedBlockIndex(output, block);
 		const partialJson = block[kStreamingPartialJson];
 		if (partialJson !== undefined) {
 			block.arguments = parseToolCallArguments(partialJson);
@@ -4857,7 +4893,7 @@ export function mergeCursorMcpToolCallArgs(
 function endCurrentTextBlock(output: AssistantMessage, stream: AssistantMessageEventStream, state: BlockState): void {
 	const block = state.currentTextBlock;
 	if (!block) return;
-	const idx = output.content.indexOf(block);
+	const idx = streamedBlockIndex(output, block);
 	stream.push({
 		type: "text_end",
 		contentIndex: idx,
@@ -4874,7 +4910,7 @@ function endCurrentThinkingBlock(
 ): void {
 	const block = state.currentThinkingBlock;
 	if (!block) return;
-	const idx = output.content.indexOf(block);
+	const idx = streamedBlockIndex(output, block);
 	stream.push({
 		type: "thinking_end",
 		contentIndex: idx,
@@ -4996,7 +5032,7 @@ export function processInteractionUpdate(
 			stream.push({ type: "text_start", contentIndex: output.content.length - 1, partial: output });
 		}
 		state.currentTextBlock!.text += delta;
-		const idx = output.content.indexOf(state.currentTextBlock!);
+		const idx = streamedBlockIndex(output, state.currentTextBlock!);
 		stream.push({ type: "text_delta", contentIndex: idx, delta, partial: output });
 	} else if (updateCase === "thinkingDelta") {
 		state.setFirstTokenTime();
@@ -5012,7 +5048,7 @@ export function processInteractionUpdate(
 			stream.push({ type: "thinking_start", contentIndex: output.content.length - 1, partial: output });
 		}
 		state.currentThinkingBlock!.thinking += delta;
-		const idx = output.content.indexOf(state.currentThinkingBlock!);
+		const idx = streamedBlockIndex(output, state.currentThinkingBlock!);
 		stream.push({ type: "thinking_delta", contentIndex: idx, delta, partial: output });
 	} else if (updateCase === "thinkingCompleted") {
 		endCurrentThinkingBlock(output, stream, state);
@@ -5150,7 +5186,7 @@ export function processInteractionUpdate(
 			if (target?.[kStreamingBlockKind] === "cursor-edit") {
 				const current = stringToolArg(target.arguments, "stream_content") ?? "";
 				target.arguments = { ...target.arguments, stream_content: current + editDelta };
-				const idx = output.content.indexOf(target);
+				const idx = streamedBlockIndex(output, target);
 				stream.push({ type: "toolcall_delta", contentIndex: idx, delta: editDelta, partial: output });
 				return;
 			}
@@ -5180,7 +5216,7 @@ export function processInteractionUpdate(
 				target.arguments = throttled.value;
 				target[kStreamingLastParseLen] = throttled.parsedLen;
 			}
-			const idx = output.content.indexOf(target);
+			const idx = streamedBlockIndex(output, target);
 			stream.push({ type: "toolcall_delta", contentIndex: idx, delta: chunk, partial: output });
 		}
 	} else if (updateCase === "toolCallCompleted") {
@@ -5319,7 +5355,7 @@ export function processInteractionUpdate(
 					});
 				}
 			}
-			const idx = output.content.indexOf(settled);
+			const idx = streamedBlockIndex(output, settled);
 			clearStreamingPartialJson(settled);
 			stream.push({ type: "toolcall_end", contentIndex: idx, toolCall: settled, partial: output });
 			releaseStreamedCall(state, settled);
