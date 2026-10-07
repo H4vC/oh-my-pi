@@ -49,6 +49,8 @@ interface CachedArchiveReader {
 	reader: ArchiveReader;
 	ino: number;
 	mtimeMs: number;
+	/** Change time: moves on every write and permission change and cannot be set back, unlike mtime. */
+	ctimeMs: number;
 	size: number;
 	entryCount: number;
 }
@@ -56,7 +58,8 @@ interface CachedArchiveReader {
 /**
  * Recently opened archives, so paging through members does not re-read and
  * re-index the archive per read. Bounded by count and by total indexed entries;
- * an entry is reused only while the file's identity (inode, mtime, size) holds.
+ * an entry is reused only while the file's identity (inode, mtime, ctime, size)
+ * holds, so a rewrite or a permission change reopens the archive.
  */
 const archiveReaderCache = new LRUCache<string, CachedArchiveReader>({
 	max: 4,
@@ -71,7 +74,13 @@ async function openArchiveCached(absolutePath: string): Promise<ArchiveReader> {
 		.catch(() => null);
 	if (!stat) return openArchive(absolutePath);
 	const cached = archiveReaderCache.get(absolutePath);
-	if (cached && cached.ino === stat.ino && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+	if (
+		cached &&
+		cached.ino === stat.ino &&
+		cached.mtimeMs === stat.mtimeMs &&
+		cached.ctimeMs === stat.ctimeMs &&
+		cached.size === stat.size
+	) {
 		return cached.reader;
 	}
 	const reader = await openArchive(absolutePath);
@@ -85,6 +94,7 @@ async function openArchiveCached(absolutePath: string): Promise<ArchiveReader> {
 		reader,
 		ino: stat.ino,
 		mtimeMs: stat.mtimeMs,
+		ctimeMs: stat.ctimeMs,
 		size: stat.size,
 		entryCount,
 	});

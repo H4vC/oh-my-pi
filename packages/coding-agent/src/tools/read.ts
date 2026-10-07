@@ -405,14 +405,32 @@ function collectLineWindowFromBuffer(
 	return window;
 }
 
+/** What a seek offset was measured against; a file that no longer matches is rescanned from byte zero. */
+interface SeekFileIdentity {
+	ino: number;
+	size: number;
+	mtimeMs: number;
+	ctimeMs: number;
+}
+
+function sameSeekFileIdentity(identity: SeekFileIdentity, stat: SeekFileIdentity): boolean {
+	return (
+		identity.ino === stat.ino &&
+		identity.size === stat.size &&
+		identity.mtimeMs === stat.mtimeMs &&
+		identity.ctimeMs === stat.ctimeMs
+	);
+}
+
 interface StreamFileLinesOptions {
 	includeTerminalNewline?: boolean;
 	stopScanAfterCollect?: boolean;
 	/**
 	 * Start scanning at byte `byte`, which begins 0-indexed line `line` (`line <= startLine`).
 	 * Lines before `startLine` contribute nothing but their count, so skipping them is exact.
+	 * Ignored (full scan) when the opened file no longer matches `identity`.
 	 */
-	seek?: { line: number; byte: number };
+	seek?: { line: number; byte: number; identity: SeekFileIdentity };
 }
 
 async function streamLinesFromFile(
@@ -544,6 +562,14 @@ async function streamLinesFromFile(
 
 	try {
 		fileHandle = await fs.open(filePath, "r");
+		// Offsets from an earlier scan only hold for the same, unchanged file.
+		if (seek && !sameSeekFileIdentity(seek.identity, await fileHandle.stat())) {
+			lineIndex = 0;
+			position = 0;
+			sawAnyByte = false;
+			endedWithNewline = false;
+			setupLineState();
+		}
 
 		while (true) {
 			throwIfAborted(signal);
@@ -669,7 +695,10 @@ async function resolveFileTailSelector(
 	let position = 0;
 	let lastByte = -1;
 	const handle = await fs.open(filePath, "r");
+	let identity: SeekFileIdentity;
 	try {
+		const stat = await handle.stat();
+		identity = { ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs };
 		while (true) {
 			throwIfAborted(signal);
 			const { bytesRead } = await handle.read(chunk, 0, chunk.length, position);
@@ -685,6 +714,8 @@ async function resolveFileTailSelector(
 	} finally {
 		await handle.close();
 	}
+	// A write during the scan leaves offsets that the identity no longer vouches for.
+	if (position !== identity.size) identity = { ...identity, ino: -1 };
 	// Mirror the streamer's final-line rule: an empty file, an unterminated last
 	// line, or (raw mode) the empty segment after a terminal newline is a line.
 	const endsWithNewline = lastByte === LF_BYTE;
@@ -693,7 +724,9 @@ async function resolveFileTailSelector(
 	return {
 		sel: resolveTailSelector(parsed, totalLines),
 		seekTo: line =>
-			line > 0 && line <= newlines && newlines - line < keep ? { line, byte: starts[line % keep] } : undefined,
+			line > 0 && line <= newlines && newlines - line < keep
+				? { line, byte: starts[line % keep], identity }
+				: undefined,
 	};
 }
 
