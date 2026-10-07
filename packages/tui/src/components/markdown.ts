@@ -6,6 +6,7 @@ import {
 	type TokenizerAndRendererExtension,
 	type TokenizerThis,
 	type Tokens,
+	type TokensList,
 } from "@oh-my-pi/pi-utils/marked";
 import {
 	type MathBlockOpener,
@@ -679,7 +680,7 @@ const mathBlockExtension: TokenizerAndRendererExtension = {
 // starts at offset 0" guards keep fenced/indented `\begin{cases}` code blocks
 // for marked's own code rules.
 const BARE_ENV_BEGIN = /(?:^|\n)[ \t]{0,3}\\begin\{([A-Za-z]+\*?)\}/;
-const BLANK_LINE_RE = /\n[ \t]*\n/g;
+const BLANK_LINE_RE = /\n[ \t]*\n/;
 
 /** Where a search for an `\end{…}` closer in a lexer source started, and what it found. */
 interface EnvCloserSearch {
@@ -723,9 +724,9 @@ function bareMathEnvBlockLength(context: TokenizerThis, src: string): number {
 	if (closer === -1) return 0;
 	const endAt = closer - base;
 	// The `\end` must close before any blank line (i.e. within the same block).
-	BLANK_LINE_RE.lastIndex = beginLineStart;
-	const blank = BLANK_LINE_RE.exec(src);
-	if (blank !== null && blank.index + blank[0].length <= endAt) return 0;
+	// Scan only up to the closer: the rest of the document is irrelevant here, and
+	// scanning it per block is quadratic across consecutive environments.
+	if (BLANK_LINE_RE.test(src.slice(beginLineStart, endAt))) return 0;
 	let blockEnd = endAt + endToken.length;
 	while (src[blockEnd] === " " || src[blockEnd] === "\t") blockEnd++;
 	if (src[blockEnd] === "\n") blockEnd++;
@@ -1169,8 +1170,14 @@ function stableBlockBoundary(
 	return { end, count };
 }
 
-/** @internal exported for tests — the windowed lexer's first-probe window size. */
-export const LEX_WINDOW_BYTES = 2 * 1024;
+/**
+ * Lex a whole document with the renderer's rules (math, custom rules,
+ * strikethrough). Callers that split a document along its blocks (table
+ * charts) lex through this so they see the blocks Markdown renders.
+ */
+export function lexDocument(text: string): TokensList {
+	return markdownParser.lexer(text);
+}
 
 /** A hyperlink as the renderer sees it: inline `[text](href)`, `<autolink>`, bare GFM URL, or reference link. */
 export interface MarkdownLink {

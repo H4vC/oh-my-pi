@@ -2737,6 +2737,14 @@ describe("large documents", () => {
 				return unit.repeat(Math.ceil(bytes / unit.length));
 			},
 		],
+		// Consecutive closed bare environments with no blank line between them.
+		[
+			"consecutive closed bare math environments",
+			bytes => {
+				const unit = "\\begin{align}\na &= b\n\\end{align}\n";
+				return unit.repeat(Math.ceil(bytes / unit.length));
+			},
+		],
 	];
 	for (const [name, doc] of displayMathScans) {
 		it(`lexes ${name} in time proportional to the document`, () => {

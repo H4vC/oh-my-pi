@@ -5,6 +5,15 @@
 ### Changed
 
 - Sped up markdown lexing (`@oh-my-pi/pi-utils/marked`) from quadratic to linear in document size (199 KB: 1.6 s → 35 ms) ([#14667](https://github.com/can1357/oh-my-pi/pull/14667) by [@H4vC](https://github.com/H4vC))
+- Reduced vterm memory use ~5× and sped up parsing ~4× and resize reflow ~7× ([#14666](https://github.com/can1357/oh-my-pi/pull/14666) by [@H4vC](https://github.com/H4vC))
+- Sped up terminal styling, streaming tool-argument parsing and log writes ([#14665](https://github.com/can1357/oh-my-pi/pull/14665) by [@H4vC](https://github.com/H4vC))
+
+### Fixed
+
+- Fixed `ptree` retaining all drained stderr for a child's lifetime, so long-lived children (LSP, DAP, daemons) no longer grow the heap ([#14664](https://github.com/can1357/oh-my-pi/pull/14664) by [@H4vC](https://github.com/H4vC))
+- Fixed `ConcatSink` readers (`readLines`/`readJsonl`/SSE) holding peak-size buffers for the stream's life ([#14664](https://github.com/can1357/oh-my-pi/pull/14664) by [@H4vC](https://github.com/H4vC))
+- Fixed unbounded growth of the `prompt.compile` template cache ([#14664](https://github.com/can1357/oh-my-pi/pull/14664) by [@H4vC](https://github.com/H4vC))
+- Fixed `fetchWithRetry` leaking the discarded response body when retrying a 429/5xx ([#14664](https://github.com/can1357/oh-my-pi/pull/14664) by [@H4vC](https://github.com/H4vC))
 
 ## [18.6.3] - 2026-10-06
 
