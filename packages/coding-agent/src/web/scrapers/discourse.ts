@@ -156,6 +156,7 @@ export const handleDiscourse: SpecialHandler = async (
 
 		const title = topic.title || topic.fancy_title;
 		if (!title) return null;
+		// Only negatives gate requests; a positive overwrites a negative a concurrent request recorded.
 		discourseBases.record(baseUrl, true);
 
 		const fetchedAt = new Date().toISOString();

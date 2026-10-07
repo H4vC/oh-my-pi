@@ -32,13 +32,23 @@ export function isNonJsonApiResponse(result: LoadPageResult): boolean {
 	return isConclusiveProbeStatus(result.status) && tryParseJson(result.content) === null;
 }
 
+/** How long a negative verdict stands; a transient non-JSON error page must not disable a host for good. */
+const NEGATIVE_VERDICT_TTL_MS = 10 * 60_000;
+
+interface ProbeVerdict {
+	verdict: Promise<boolean>;
+	/** `performance.now()` deadline; positive and still-pending verdicts never expire. */
+	expiresAt: number;
+}
+
 /**
  * Bounded per-origin memo of platform-detection verdicts, negatives included,
  * so generic URL shapes (`/@user`, `/post/N`, `/t/slug/N`) do not re-probe a
  * known host on every fetch. Concurrent lookups share one in-flight probe.
+ * Negative verdicts expire after {@link NEGATIVE_VERDICT_TTL_MS}.
  */
 export class PlatformProbeCache {
-	readonly #verdicts: LRUCache<string, Promise<boolean>>;
+	readonly #verdicts: LRUCache<string, ProbeVerdict>;
 
 	constructor(max = PLATFORM_PROBE_CACHE_LIMIT) {
 		this.#verdicts = new LRUCache({ max });
@@ -46,7 +56,11 @@ export class PlatformProbeCache {
 
 	/** Memoized (possibly still pending) verdict for `origin`. */
 	get(origin: string): Promise<boolean> | undefined {
-		return this.#verdicts.get(origin);
+		const entry = this.#verdicts.get(origin);
+		if (!entry) return undefined;
+		if (performance.now() < entry.expiresAt) return entry.verdict;
+		this.#verdicts.delete(origin);
+		return undefined;
 	}
 
 	/**
@@ -55,29 +69,34 @@ export class PlatformProbeCache {
 	 * lookup probes again.
 	 */
 	resolve(origin: string, probe: () => Promise<boolean | undefined>): Promise<boolean> {
-		const cached = this.#verdicts.get(origin);
+		const cached = this.get(origin);
 		if (cached) return cached;
-		const pending: Promise<boolean> = probe().then(
+		const entry: ProbeVerdict = { verdict: Promise.resolve(false), expiresAt: Number.POSITIVE_INFINITY };
+		entry.verdict = probe().then(
 			verdict => {
-				if (verdict === undefined) this.#forget(origin, pending);
+				if (verdict === undefined) this.#forget(origin, entry);
+				else if (!verdict) entry.expiresAt = performance.now() + NEGATIVE_VERDICT_TTL_MS;
 				return verdict ?? false;
 			},
 			(error: unknown) => {
-				this.#forget(origin, pending);
+				this.#forget(origin, entry);
 				throw error;
 			},
 		);
-		this.#verdicts.set(origin, pending);
-		return pending;
+		this.#verdicts.set(origin, entry);
+		return entry.verdict;
 	}
 
 	/** Memoize a verdict learned from a regular request to `origin`. */
 	record(origin: string, verdict: boolean): void {
-		this.#verdicts.set(origin, Promise.resolve(verdict));
+		this.#verdicts.set(origin, {
+			verdict: Promise.resolve(verdict),
+			expiresAt: verdict ? Number.POSITIVE_INFINITY : performance.now() + NEGATIVE_VERDICT_TTL_MS,
+		});
 	}
 
-	#forget(origin: string, verdict: Promise<boolean>): void {
-		if (this.#verdicts.peek(origin) === verdict) this.#verdicts.delete(origin);
+	#forget(origin: string, entry: ProbeVerdict): void {
+		if (this.#verdicts.peek(origin) === entry) this.#verdicts.delete(origin);
 	}
 }
 

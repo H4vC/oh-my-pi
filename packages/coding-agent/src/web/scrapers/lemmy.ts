@@ -181,6 +181,7 @@ export const handleLemmy: SpecialHandler = async (
 		if (postData === null) lemmyOrigins.record(baseUrl, false);
 		const postView = postData?.post_view;
 		if (!postView) return null;
+		// Only negatives gate requests; a positive overwrites a negative a concurrent request recorded.
 		lemmyOrigins.record(baseUrl, true);
 
 		const commentsData = tryParseJson<LemmyCommentListResponse>(commentsResult.content);
