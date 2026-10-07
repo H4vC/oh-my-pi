@@ -15,7 +15,7 @@ import { Args, Command, Flags } from "@oh-my-pi/pi-utils/cli";
 import { sayHelp as commandHelp } from "../cli/command-help";
 import { ModelRegistry } from "../config/model-registry";
 import { Settings } from "../config/settings";
-import { discoverAuthStorage } from "../sdk";
+import { discoverAuthStorage } from "../session/auth-discovery";
 import { TTS_LOCAL_VOICE_VALUES } from "../tts/models";
 import { SpeakableStream } from "../tts/speakable";
 import { StreamingAudioPlayer } from "../tts/streaming-player";

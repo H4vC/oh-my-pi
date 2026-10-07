@@ -4,7 +4,7 @@ import { formatModelString, resolveCliModel } from "../config/model-resolver";
 import { Settings } from "../config/settings";
 import { IrcBus } from "../irc/bus";
 import { MAIN_AGENT_ID } from "../registry/agent-registry";
-import { discoverAuthStorage } from "../sdk";
+import { discoverAuthStorage } from "../session/auth-discovery";
 import { SessionManager } from "../session/session-manager";
 import { reserveStructuredSubagentId, runStructuredSubagent } from "../task/structured-subagent";
 import type { AgentProgress } from "@oh-my-pi/pi-tui/tools/task";

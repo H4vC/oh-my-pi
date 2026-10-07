@@ -10,7 +10,7 @@ import { tokenHelp as commandHelp } from "../cli/command-help";
 import { isAuthenticated, ModelRegistry } from "../config/model-registry";
 import { refreshStoredManagedMcpOAuthCredential } from "../mcp/oauth-credentials";
 import { isManagedMCPOAuthCredentialId, mcpOAuthCredentialProfile } from "../mcp/oauth-flow";
-import { discoverAuthStorage } from "../sdk";
+import { discoverAuthStorage } from "../session/auth-discovery";
 import type { AuthStorage } from "../session/auth-storage";
 import { getAvailableAuthMethods } from "../web/search/providers/perplexity-auth";
 
