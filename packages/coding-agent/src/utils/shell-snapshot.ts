@@ -11,25 +11,20 @@ import * as path from "node:path";
 import { getSafeProjectCwd, logger, postmortem } from "@oh-my-pi/pi-utils";
 import fnEnvHelper from "./shell-snapshot-fn-env.sh" with { type: "text" };
 
-interface CachedSnapshot {
-	path: string;
-	/** `performance.now()` of the last check that the file still exists. */
-	checkedAt: number;
-}
-
 interface SnapshotFailure {
 	/** rc file `mtime:size` when the attempt failed; a change re-arms creation. */
 	rcStamp: string;
+	/** Hash of the environment the rc ran with; a different environment re-arms creation. */
+	envStamp: number | bigint;
 	retryAt: number;
 }
 
-const cachedSnapshots = new Map<string, CachedSnapshot>();
+/** Snapshot path per shell; re-checked for existence on every hit. */
+const cachedSnapshots = new Map<string, string>();
 const inflightSnapshots = new Map<string, Promise<string | null>>();
 const failedSnapshots = new Map<string, SnapshotFailure>();
 const SNAPSHOT_TIMEOUT_MS = 2_000;
-/** Re-check that a cached snapshot file still exists at most this often. */
-const SNAPSHOT_REVALIDATE_MS = 5_000;
-/** A failed (slow or broken rc) snapshot is retried after this long unless the rc file changes first. */
+/** A failed (slow or broken rc) snapshot is retried after this long unless the rc file or environment changes first. */
 const SNAPSHOT_FAILURE_RETRY_MS = 60_000;
 
 /**
@@ -237,8 +232,9 @@ function rcFileStamp(rcFile: string): string {
  * Returns the path to the snapshot file, or null if creation failed.
  *
  * Concurrent callers share one in-flight creation. A failure is remembered
- * for {@link SNAPSHOT_FAILURE_RETRY_MS} (or until the rc file changes), so a
- * slow or broken rc costs one spawn instead of one per bash call.
+ * for {@link SNAPSHOT_FAILURE_RETRY_MS} (or until the rc file or the
+ * environment changes), so a slow or broken rc costs one spawn instead of one
+ * per bash call.
  *
  * `timeoutMs` is configurable so callers exercising failure handling do not
  * have to wait out the production startup budget.
@@ -256,12 +252,8 @@ export async function getOrCreateSnapshot(
 	const cacheKey = shell;
 	const cached = cachedSnapshots.get(cacheKey);
 	if (cached) {
-		const now = performance.now();
-		if (now - cached.checkedAt < SNAPSHOT_REVALIDATE_MS) return cached.path;
-		if (fs.existsSync(cached.path)) {
-			cached.checkedAt = now;
-			return cached.path;
-		}
+		// A cleaned-up snapshot must be recreated, never handed to the shell.
+		if (fs.existsSync(cached)) return cached;
 		cachedSnapshots.delete(cacheKey);
 	}
 
@@ -271,7 +263,13 @@ export async function getOrCreateSnapshot(
 	const rcFile = getShellConfigFile(shell, env);
 	const failure = failedSnapshots.get(cacheKey);
 	if (failure) {
-		if (performance.now() < failure.retryAt && rcFileStamp(rcFile) === failure.rcStamp) return null;
+		if (
+			performance.now() < failure.retryAt &&
+			rcFileStamp(rcFile) === failure.rcStamp &&
+			Bun.hash(JSON.stringify(env)) === failure.envStamp
+		) {
+			return null;
+		}
 		failedSnapshots.delete(cacheKey);
 	}
 
@@ -280,10 +278,11 @@ export async function getOrCreateSnapshot(
 	const creation = attempt.then(snapshotPath => {
 		inflightSnapshots.delete(cacheKey);
 		if (snapshotPath) {
-			cachedSnapshots.set(cacheKey, { path: snapshotPath, checkedAt: performance.now() });
+			cachedSnapshots.set(cacheKey, snapshotPath);
 		} else {
 			failedSnapshots.set(cacheKey, {
 				rcStamp: rcFileStamp(rcFile),
+				envStamp: Bun.hash(JSON.stringify(env)),
 				retryAt: performance.now() + SNAPSHOT_FAILURE_RETRY_MS,
 			});
 		}
@@ -388,7 +387,7 @@ async function createSnapshot(
 }
 
 postmortem.register("shell-snapshot", () => {
-	for (const { path: snapshotPath } of cachedSnapshots.values()) {
+	for (const snapshotPath of cachedSnapshots.values()) {
 		fs.unlinkSync(snapshotPath);
 	}
 	cachedSnapshots.clear();

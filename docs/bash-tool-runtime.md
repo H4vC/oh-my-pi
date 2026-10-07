@@ -165,7 +165,7 @@ If the selected shell includes `bash`, it attempts `getOrCreateSnapshot()`:
 
 - snapshot captures aliases/functions/options from user rc,
 - snapshot creation is best-effort,
-- failure falls back to no snapshot; a failed snapshot is retried after 60 s, or sooner when the rc file's mtime or size changes.
+- failure falls back to no snapshot; a failed snapshot is retried after 60 s, or sooner when the rc file's mtime or size or the shell environment changes.
 
 If `prefix` is configured, it wraps the command after any direnv unset prefix.
 
