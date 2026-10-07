@@ -58,10 +58,12 @@ export interface BuildOutputValidatorResult {
 	error?: string;
 }
 
-/** Builds keyed by schema object identity: agent/session output schemas are long-lived, immutable declarations. */
-const objectSchemaResults = new WeakMap<object, BuildOutputValidatorResult>();
-/** JSON-string declarations (each `JSON.parse` yields a fresh object, so identity cannot key them). */
-const stringSchemaResults = new LRUCache<string, BuildOutputValidatorResult>({ max: 32 });
+/**
+ * Builds keyed by the declaration's content (JSON strings verbatim, objects by
+ * their serialization), so a reused schema object that was edited in place
+ * gets a fresh validator.
+ */
+const schemaResults = new LRUCache<string, BuildOutputValidatorResult>({ max: 32 });
 
 /**
  * Build the canonical validator for a JTD-or-JSON-Schema output declaration.
@@ -73,23 +75,25 @@ const stringSchemaResults = new LRUCache<string, BuildOutputValidatorResult>({ m
  * - `{}` for an absent schema (`undefined`).
  * - `{ error, normalized? }` when the schema cannot be honored (invalid syntax, `false`, malformed JTD).
  *
- * Results are memoized per schema object (and per JSON string) and shared across calls: the
- * validator holds no per-call state, and callers MUST NOT mutate the returned result or schemas.
+ * Results are memoized per schema content and shared across calls: the
+ * validator holds no per-call state, and callers MUST NOT mutate the returned result.
  */
 export function buildOutputValidator(schema: unknown): BuildOutputValidatorResult {
-	if (typeof schema === "string") {
-		let cached = stringSchemaResults.get(schema);
-		if (!cached) {
-			cached = buildOutputValidatorUncached(schema);
-			stringSchemaResults.set(schema, cached);
+	let key: string | undefined;
+	if (typeof schema === "string") key = `s${schema}`;
+	else if (schema !== null && typeof schema === "object") {
+		try {
+			key = `o${JSON.stringify(schema)}`;
+		} catch {
+			// Unserializable (cyclic) declarations are rejected by the build itself.
 		}
-		return cached;
 	}
-	if (schema === null || typeof schema !== "object") return buildOutputValidatorUncached(schema);
-	let cached = objectSchemaResults.get(schema);
+	if (key === undefined) return buildOutputValidatorUncached(schema);
+	let cached = schemaResults.get(key);
 	if (!cached) {
-		cached = buildOutputValidatorUncached(schema);
-		objectSchemaResults.set(schema, cached);
+		// Build from a private copy: the cached result must not alias an object the caller may edit later.
+		cached = buildOutputValidatorUncached(typeof schema === "string" ? schema : JSON.parse(key.slice(1)));
+		schemaResults.set(key, cached);
 	}
 	return cached;
 }

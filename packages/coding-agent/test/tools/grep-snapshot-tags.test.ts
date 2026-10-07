@@ -51,7 +51,7 @@ describe("grep hashline snapshot tags", () => {
 		expect(getEditStore(session).headHash(filePath)).toBe(second!);
 	});
 
-	it("re-reads a just-written file on every search instead of memoizing its racy stat", async () => {
+	it("re-mints the tag of a settled file rewritten in place with its mtime restored", async () => {
 		const session: ToolSession = {
 			cwd,
 			hasUI: false,
@@ -60,20 +60,24 @@ describe("grep hashline snapshot tags", () => {
 			settings: Settings.isolated(),
 		};
 		const filePath = path.join(cwd, "a.txt");
-		await Bun.write(filePath, "needle one\n");
-		const store = getEditStore(session);
-		const recorded: string[] = [];
-		const recordSnapshotFile = store.recordSnapshotFile.bind(store);
-		store.recordSnapshotFile = (file: string) => {
-			recorded.push(file);
-			return recordSnapshotFile(file);
-		};
+		const pinnedMtime = new Date("2024-01-01T00:00:00Z");
+		await Bun.write(filePath, "needle one\nfiller\n");
+		await fs.utimes(filePath, pinnedMtime, pinnedMtime);
+		await Bun.write(path.join(cwd, "b.txt"), "needle two\n");
+		// Let the file age past the racy-timestamp window so its stat is trusted and memoized.
+		await Bun.sleep(2_100);
 		const tool = new GrepTool(session);
+		const tagOf = (text: string): string | undefined => /^#+ a\.txt#([0-9a-z]+)$/im.exec(text)?.[1];
 
-		await tool.execute("first", { pattern: "needle", path: "." });
-		await tool.execute("second", { pattern: "needle", path: "." });
+		const first = tagOf(textOf(await tool.execute("first", { pattern: "needle", path: "." })));
+		expect(first).toBeDefined();
+		// Same size and the same mtime: only the change time reveals the rewrite.
+		await Bun.write(filePath, "needle uno\nfiller\n");
+		await fs.utimes(filePath, pinnedMtime, pinnedMtime);
+		const second = tagOf(textOf(await tool.execute("second", { pattern: "needle", path: "." })));
 
-		// A stat inside the timestamp-granularity window cannot prove the bytes are unchanged.
-		expect(recorded.filter(file => path.resolve(file) === path.resolve(filePath))).toHaveLength(2);
-	});
+		expect(second).toBeDefined();
+		expect(second).not.toBe(first);
+		expect(getEditStore(session).headHash(filePath)).toBe(second!);
+	}, 10_000);
 });
