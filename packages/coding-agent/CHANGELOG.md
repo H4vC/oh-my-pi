@@ -11,6 +11,7 @@
 ### Changed
 
 - Clarified how agents request line ranges in `read` calls with complete examples ([#13956](https://github.com/can1357/oh-my-pi/pull/13956) by [@Dante-dan](https://github.com/Dante-dan)).
+- Reduced edit and `write` CPU on large files; edit auto-repair gives up after 32 parses instead of stalling the turn ([#14700](https://github.com/can1357/oh-my-pi/pull/14700) by [@H4vC](https://github.com/H4vC))
 
 ### Fixed
 
