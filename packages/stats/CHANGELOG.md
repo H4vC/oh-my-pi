@@ -6,6 +6,8 @@
 
 - Dashboard pages refetch only when stats data actually changed, including commits from other omp processes ([#14723](https://github.com/can1357/oh-my-pi/pull/14723) by [@H4vC](https://github.com/H4vC))
 - Sped up session syncs, stats database opening, package import and the `/usage`, models and timeseries endpoints ([#14723](https://github.com/can1357/oh-my-pi/pull/14723) by [@H4vC](https://github.com/H4vC))
+- Trace polls revalidate with `If-None-Match`, so unchanged traces are not re-downloaded ([#14724](https://github.com/can1357/oh-my-pi/pull/14724) by [@H4vC](https://github.com/H4vC))
+- Cancelled abandoned dashboard requests, e.g. large traces when switching sessions or closing a drawer mid-load ([#14724](https://github.com/can1357/oh-my-pi/pull/14724) by [@H4vC](https://github.com/H4vC))
 
 ## [18.7.0] - 2026-10-06
 
@@ -13,11 +15,6 @@
 
 - Fixed Ultrafast turns not being counted toward the Premium Requests statistic.
 - Fixed the desktop stats dashboard menu button so it no longer appears unnecessarily or dims the page without opening navigation.
-
-### Changed
-
-- Reduced dashboard refetching: syncs that change nothing no longer trigger reloads, and unchanged traces are not re-downloaded ([#14724](https://github.com/can1357/oh-my-pi/pull/14724) by [@H4vC](https://github.com/H4vC))
-- Cancelled abandoned dashboard requests (e.g. large traces when switching sessions) and bounded the in-memory trace cache ([#14724](https://github.com/can1357/oh-my-pi/pull/14724) by [@H4vC](https://github.com/H4vC))
 
 ## [18.6.0] - 2026-10-03
 
