@@ -40,10 +40,9 @@ const LEGEND: Array<{ kind: TraceSpanKind; label: string }> = [
 ];
 
 export function TraceView({ file, active, onBack }: TraceViewProps) {
-	// Polls revalidate by ETag: an unchanged trace keeps its object identity, so nothing re-lays out.
-	const query = useQuery(
+	const query = useQuery<SessionTrace>(
 		["trace", file],
-		({ signal, previous }) => getSessionTrace(file, signal, previous as SessionTrace | undefined),
+		({ signal }, previous) => getSessionTrace(file, signal, previous),
 		{ pollMs: 15000, enabled: active },
 	);
 	// A previous session's trace must never render under this file's header.
@@ -368,7 +367,6 @@ export function TraceView({ file, active, onBack }: TraceViewProps) {
 									scale={scale}
 									viewport={effectiveViewport}
 									onViewportChange={setViewport}
-									selection={selection}
 									selected={selected}
 									onSelect={selectAndOpen}
 									matchIds={matchIds}
