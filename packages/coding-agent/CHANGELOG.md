@@ -11,6 +11,9 @@
 ### Changed
 
 - Clarified how agents request line ranges in `read` calls with complete examples ([#13956](https://github.com/can1357/oh-my-pi/pull/13956) by [@Dante-dan](https://github.com/Dante-dan)).
+- Reduced LSP traffic: `didSave` includes text only when requested ([#14710](https://github.com/can1357/oh-my-pi/pull/14710) by [@H4vC](https://github.com/H4vC))
+- Limited LSP clients to 64 open documents; idle least-recently-used ones are closed ([#14710](https://github.com/can1357/oh-my-pi/pull/14710) by [@H4vC](https://github.com/H4vC))
+- Sped up LSP/DAP messaging, speculative eval planning and subagent output streaming ([#14710](https://github.com/can1357/oh-my-pi/pull/14710) by [@H4vC](https://github.com/H4vC))
 
 ### Fixed
 
