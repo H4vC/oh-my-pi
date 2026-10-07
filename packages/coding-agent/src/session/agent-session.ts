@@ -664,11 +664,6 @@ type PersistedAssistantMessage = AssistantMessage & { [kPersistedSessionEntryId]
 
 const INTERRUPTED_THINKING_MIN_CHARS = 60;
 const SESSION_CWD_CHANGE_REJECTED = Symbol("sessionCwdChangeRejected");
-/**
- * Queued extension `message_update` events beyond which consecutive deltas of
- * one block are merged. Below it every delta is delivered as its own event.
- */
-const MESSAGE_UPDATE_COALESCE_BACKLOG = 64;
 
 /**
  * Translate a `power.sleepPrevention` mode into `PowerAssertion.start` options,
@@ -683,28 +678,6 @@ export function powerAssertionOptions(mode: "off" | "idle" | "display" | "system
 		system: mode === "system",
 		user: mode === "system",
 	};
-}
-
-/**
- * Merge two queued `message_update` events when both are deltas of the same
- * block of the same assistant message: the result carries the concatenated
- * delta and the newer snapshot. Lets a slow extension handler drain one
- * combined delta instead of a backlog that pins every per-token snapshot.
- */
-function coalesceMessageUpdates(previous: AgentSessionEvent, next: AgentSessionEvent): AgentSessionEvent | undefined {
-	if (previous.type !== "message_update" || next.type !== "message_update") return undefined;
-	const before = previous.assistantMessageEvent;
-	const after = next.assistantMessageEvent;
-	if (
-		(after.type !== "text_delta" && after.type !== "thinking_delta" && after.type !== "toolcall_delta") ||
-		(before.type !== "text_delta" && before.type !== "thinking_delta" && before.type !== "toolcall_delta") ||
-		before.type !== after.type ||
-		before.contentIndex !== after.contentIndex ||
-		before.partial.timestamp !== after.partial.timestamp
-	) {
-		return undefined;
-	}
-	return { ...next, assistantMessageEvent: { ...after, delta: before.delta + after.delta } };
 }
 
 export class AgentSession implements SettingsScope {
@@ -2786,22 +2759,6 @@ export class AgentSession implements SettingsScope {
 	}
 
 	/**
-	 * Count running async jobs under the same owner scope as
-	 * {@link getAsyncJobSnapshot}'s `running` list, without building the
-	 * snapshot. `include` narrows which jobs count; omitted, all count.
-	 */
-	countRunningAsyncJobs(include?: (job: { type: string; agentId?: string }) => boolean): number {
-		const manager = this.#asyncJobManager;
-		if (!manager) return 0;
-		const ownerFilter = this.#agentId ? { ownerId: this.#agentId } : undefined;
-		let count = 0;
-		for (const job of manager.getRunningJobs(ownerFilter)) {
-			if (!include || include(job)) count++;
-		}
-		return count;
-	}
-
-	/**
 	 * Inspect one async job this session owns: its command, live pids, exit
 	 * status and output. Undefined when the job is unknown, owned by another
 	 * agent, or evicted.
@@ -3186,14 +3143,7 @@ export class AgentSession implements SettingsScope {
 	#drainingExtensionEvents = false;
 
 	#queueExtensionEvent(event: AgentSessionEvent): void {
-		const queue = this.#queuedExtensionEvents;
-		// Only a backlog (a slow handler) merges deltas; otherwise each delta is its own event.
-		const merged =
-			queue.length >= MESSAGE_UPDATE_COALESCE_BACKLOG
-				? coalesceMessageUpdates(queue[queue.length - 1], event)
-				: undefined;
-		if (merged) queue[queue.length - 1] = merged;
-		else queue.push(event);
+		this.#queuedExtensionEvents.push(event);
 		if (this.#drainingExtensionEvents) return;
 		this.#drainingExtensionEvents = true;
 		queueMicrotask(() => void this.#drainExtensionEvents());
