@@ -428,7 +428,7 @@ export class Terminal {
 			return;
 		}
 		const cellWidth = Math.min(2, width);
-		this.#placeCell({ chars: grapheme, width: cellWidth, attrs: this.#attrs }, cellWidth);
+		this.#placeCell(Object.freeze({ chars: grapheme, width: cellWidth, attrs: this.#attrs }), cellWidth);
 	}
 
 	#putAscii(code: number): void {
@@ -477,8 +477,8 @@ export class Terminal {
 		if (!line) return;
 		while (column >= 0 && line.cells[column]?.width === 0) column--;
 		const cell = line.cells[column];
-		// Cells may be shared; replace instead of mutating.
-		if (cell?.chars) line.cells[column] = { chars: cell.chars + mark, width: cell.width, attrs: cell.attrs };
+		// Cells are frozen and may be shared; replace instead of mutating.
+		if (cell?.chars) line.cells[column] = Object.freeze({ chars: cell.chars + mark, width: cell.width, attrs: cell.attrs });
 	}
 
 	#lineFeed(wrapped: boolean): void {
