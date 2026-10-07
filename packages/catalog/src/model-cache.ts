@@ -54,7 +54,11 @@ interface CacheRowMeta {
 	updated_at: number;
 	authoritative: number;
 	static_fingerprint: string;
-	/** `Bun.hash` of `models`; empty for rows written before the column existed (never equal). */
+	/**
+	 * `Bun.hash` of `models`; empty for rows written before the column existed
+	 * (never equal). An in-place `UPDATE` of `models` that leaves the hash
+	 * untouched resets it to empty (`model_cache_models_hash_reset` trigger).
+	 */
 	models_hash: string;
 	header_omitted_model_ids: string;
 	unrestorable_header_model_ids: string;
@@ -243,6 +247,17 @@ function initializeDb(db: Database): void {
 		)
 	`);
 	migrateCacheSchema(db);
+	// `models_hash` is the only payload-change detector for the read memo and the
+	// unchanged-write skip. Writers here replace whole rows; this keeps an
+	// in-place edit of `models` by any other tool or binary from reusing a stale hash.
+	db.run(`
+		CREATE TRIGGER IF NOT EXISTS model_cache_models_hash_reset
+		AFTER UPDATE OF models ON model_cache
+		WHEN NEW.models_hash = OLD.models_hash
+		BEGIN
+			UPDATE model_cache SET models_hash = '' WHERE provider_id = NEW.provider_id;
+		END
+	`);
 }
 
 function closeSharedDb(): void {
