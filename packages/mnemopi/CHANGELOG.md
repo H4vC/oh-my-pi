@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Sped up the recall vector stage ~12× by storing embeddings as binary; older databases stay compatible ([#14722](https://github.com/can1357/oh-my-pi/pull/14722) by [@H4vC](https://github.com/H4vC))
+- Sped up fact recall and lexical relevance scoring on large memories ([#14722](https://github.com/can1357/oh-my-pi/pull/14722) by [@H4vC](https://github.com/H4vC))
+
+### Fixed
+
+- Fixed embedding-model rebuilds timing out and killing the embedding worker on large memory banks ([#14722](https://github.com/can1357/oh-my-pi/pull/14722) by [@H4vC](https://github.com/H4vC))
+
 ## [18.5.1] - 2026-10-03
 
 ### Changed

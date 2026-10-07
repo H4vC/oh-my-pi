@@ -1,21 +1,31 @@
 import { normalizedRecallWeights, polyphonicRecallEnabled, temporalHalflifeHours } from "../../config";
 import { hasCjk, matchesWordForm } from "../../util/regex";
+import { tableExists, tableHasColumn } from "../../util/sqlite";
 import { embedQuery } from "../embeddings";
 import { mmrRerank } from "../mmr";
 import { type OrchestratedRecallResult, orchestrateRecall } from "../orchestrator";
 import { POLYPHONIC_MAX_COMBINED_SCORE } from "../polyphonic-recall";
 import { isQueryCacheEnabled, QueryCache } from "../query-cache";
 import { adjustWeights, classifyIntent } from "../query-intent";
+import {
+	backfillEmbeddingBlobs,
+	dotProduct,
+	type LegacyEmbedding,
+	type StoredEmbeddingRow,
+	storedEmbeddingColumns,
+	storedUnitEmbedding,
+	unitQuery,
+} from "../stored-embeddings";
 import { getSynonyms, STOP_WORDS as QUERY_STOP_WORDS } from "../synonyms";
 import { extractTemporal } from "../temporal-parser";
-import { cosineSimilarity } from "../vector-math";
 import type { BeamMemoryState, RecallEnhancedOptions, RecallOptions, RecallResult } from "./types";
 
 type DbValue = string | number | null | Uint8Array;
 type Row = Record<string, unknown>;
 type TierLabel = "working" | "episodic";
 
-type RecallOptionsInternal = RecallOptions & {
+/** Internal recall options. `queryEmbedding` also takes the provider's Float32Array as-is. */
+type RecallOptionsInternal = Omit<RecallOptions, "queryEmbedding"> & {
 	source?: string | null;
 	topic?: string | null;
 	veracity?: string | null;
@@ -25,7 +35,7 @@ type RecallOptionsInternal = RecallOptions & {
 	vecWeight?: number;
 	ftsWeight?: number;
 	importanceWeight?: number;
-	queryEmbedding?: readonly number[] | null;
+	queryEmbedding?: readonly number[] | Float32Array | null;
 	useSynonyms?: boolean;
 	useIntent?: boolean;
 	useMmr?: boolean;
@@ -34,6 +44,8 @@ type RecallOptionsInternal = RecallOptions & {
 	currentSensitive?: boolean;
 	updateRecallCounts?: boolean;
 };
+
+type EnhancedOptionsInternal = Omit<RecallEnhancedOptions, "queryEmbedding"> & RecallOptionsInternal;
 
 type CandidateSignals = {
 	fts: number;
@@ -102,6 +114,13 @@ export function clipRecallContent(
 }
 
 const DEFAULT_LIMIT = 500;
+/**
+ * Upper bound on the text `lexicalGroupRelevance` tokenizes per memory candidate
+ * that FTS did not match. Retained transcripts reach tens of KB and up to ~1000
+ * candidates are scored per recall; FTS-matched candidates scan the full text so a
+ * hit past the window still passes the relevance gate.
+ */
+const LEXICAL_SCAN_MAX_CHARS = 16_384;
 const STOP_WORDS = new Set([
 	"a",
 	"an",
@@ -389,25 +408,9 @@ function queryAll(beam: BeamMemoryState, sql: string, params: readonly DbValue[]
 	return beam.db.query(sql).all(...params) as Row[];
 }
 
-function queryGet(beam: BeamMemoryState, sql: string, params: readonly DbValue[] = []): Row | null {
-	return (beam.db.query(sql).get(...params) as Row | null) ?? null;
-}
-
-function tableExists(beam: BeamMemoryState, table: string): boolean {
-	return (
-		queryGet(beam, "SELECT 1 FROM sqlite_master WHERE type IN ('table', 'virtual table') AND name = ?", [table]) !==
-		null
-	);
-}
-
-function factsHaveScopeColumn(beam: BeamMemoryState): boolean {
-	const rows = queryAll(beam, "PRAGMA table_info(facts)");
-	return rows.some(row => asString(row.name) === "scope");
-}
-
 function factVisibilityWhere(beam: BeamMemoryState, tableAlias: string): { where: string; params: DbValue[] } {
 	const prefix = tableAlias.length === 0 ? "" : `${tableAlias}.`;
-	const scope = factsHaveScopeColumn(beam)
+	const scope = tableHasColumn(beam.db, "facts", "scope")
 		? `(${prefix}session_id = ? OR ${prefix}scope = 'global')`
 		: `${prefix}session_id = ?`;
 	// A fact is a derivative of the working_memory row it was extracted from: once that row is
@@ -490,7 +493,7 @@ function ftsRows(
 	limit: number,
 	useSynonyms = true,
 ): Row[] {
-	if (!tableExists(beam, table)) return [];
+	if (!tableExists(beam.db, table)) return [];
 	try {
 		// Superseded rows stay in the FTS mirrors (their content never changed) but must not
 		// occupy LIMIT slots — visibility filtering would drop them AFTER they displaced live rows.
@@ -542,51 +545,38 @@ function normalizeRanks(rows: readonly Row[], key: string): Map<string | number,
 	return out;
 }
 
-function parseEmbedding(raw: unknown): number[] | null {
-	if (typeof raw !== "string") return null;
-	try {
-		const parsed = JSON.parse(raw) as unknown;
-		if (!Array.isArray(parsed)) return null;
-		// oxlint-disable-next-line unicorn/no-new-array -- length preallocation
-		const vector = new Array<number>(parsed.length);
-		for (let i = 0; i < parsed.length; i += 1) {
-			const value = Number(parsed[i]);
-			if (!Number.isFinite(value)) return null;
-			vector[i] = value;
-		}
-		return vector;
-	} catch {
-		return null;
-	}
-}
-
 function vectorSimilarities(
 	beam: BeamMemoryState,
 	memoryIds: readonly string[],
-	queryEmbedding: readonly number[] | null | undefined,
+	queryEmbedding: readonly number[] | Float32Array | null | undefined,
 ): Map<string, number> {
 	const out = new Map<string, number>();
 	if (
 		queryEmbedding == null ||
 		queryEmbedding.length === 0 ||
 		memoryIds.length === 0 ||
-		!tableExists(beam, "memory_embeddings")
+		!tableExists(beam.db, "memory_embeddings")
 	) {
 		return out;
 	}
+	// Unit query · unit stored vector is the cosine (zero-padded across a dimension
+	// mismatch); a zero-norm query scores every embedded row 0.
+	const queryUnit = unitQuery(queryEmbedding);
+	const columns = storedEmbeddingColumns(beam.db, "");
+	const legacy: LegacyEmbedding[] = [];
 	for (let offset = 0; offset < memoryIds.length; offset += 500) {
 		const chunk = memoryIds.slice(offset, offset + 500);
-		const rows = queryAll(
-			beam,
-			`SELECT memory_id, embedding_json FROM memory_embeddings WHERE memory_id IN (${placeholders(chunk.length)})`,
-			chunk,
-		);
+		const rows = beam.db
+			.query(`SELECT ${columns} FROM memory_embeddings WHERE memory_id IN (${placeholders(chunk.length)})`)
+			.all(...chunk) as StoredEmbeddingRow[];
 		for (const row of rows) {
-			const vector = parseEmbedding(row.embedding_json);
+			const vector = storedUnitEmbedding(row, legacy);
 			const id = asString(row.memory_id);
-			if (vector !== null && id.length > 0) out.set(id, Math.max(0, cosineSimilarity(queryEmbedding, vector)));
+			if (vector === null || id.length === 0) continue;
+			out.set(id, queryUnit === null ? 0 : Math.max(0, dotProduct(queryUnit, vector)));
 		}
 	}
+	backfillEmbeddingBlobs(beam.db, legacy);
 	return out;
 }
 
@@ -674,7 +664,12 @@ function scoreCandidate(
 ): RecallResult | null {
 	const content = asString(candidate.row.content);
 	const searchableContent = asString(candidate.row.embed_text) || content;
-	const lexical = lexicalGroupRelevance(queryGroups, searchableContent);
+	const lexical = lexicalGroupRelevance(
+		queryGroups,
+		searchableContent.length > LEXICAL_SCAN_MAX_CHARS && !candidate.signals.ftsMatched
+			? searchableContent.slice(0, LEXICAL_SCAN_MAX_CHARS)
+			: searchableContent,
+	);
 	const minRel = minimumRelevance(queryTokens);
 	if (lexical < minRel && candidate.signals.dense < 0.65) return null;
 	const [vecWeight, ftsWeight, importanceWeight] = weights;
@@ -797,26 +792,20 @@ function dedupCrossTierSummaryLinks(beam: BeamMemoryState, results: readonly Rec
 		`SELECT id, summary_of FROM episodic_memory WHERE id IN (${placeholders(episodicIds.length)})`,
 		episodicIds,
 	);
-	const dropWorking = new Set<string>();
 	const dropEpisodic = new Set<string>();
 	for (const row of summaryRows) {
 		const episodicId = asString(row.id);
-		const episodicScore = episodicScores.get(episodicId);
-		if (episodicScore === undefined) continue;
+		if (!episodicScores.has(episodicId)) continue;
 		const covered = asString(row.summary_of)
 			.split(",")
-			.map(id => id.trim())
-			.filter(id => id.length > 0 && workingScores.has(id));
-		if (covered.length === 0) continue;
-		dropEpisodic.add(episodicId);
+			.some(id => {
+				const trimmed = id.trim();
+				return trimmed.length > 0 && workingScores.has(trimmed);
+			});
+		if (covered) dropEpisodic.add(episodicId);
 	}
-	if (dropWorking.size === 0 && dropEpisodic.size === 0) return [...results];
-	return results.filter(result => {
-		const tier = result.tier_label ?? result.tier;
-		if (tier === "working") return !dropWorking.has(result.id);
-		if (tier === "episodic") return !dropEpisodic.has(result.id);
-		return true;
-	});
+	if (dropEpisodic.size === 0) return [...results];
+	return results.filter(result => (result.tier_label ?? result.tier) !== "episodic" || !dropEpisodic.has(result.id));
 }
 
 function rerankRecallResults(results: readonly RecallResult[], lambdaParam: number, topK: number): RecallResult[] {
@@ -897,8 +886,6 @@ function collectMemoryCandidates(
 	else if (options.includeWorking !== false) candidates.push(...fallbackCandidates(beam, "working", options));
 	if (emRowids.length > 0) candidates.push(...fetchCandidates(beam, "episodic", emRowids, emFts, emVec, options));
 	else candidates.push(...fallbackCandidates(beam, "episodic", options));
-	if (candidates.length === 0) return candidates;
-	void useSynonyms;
 	return candidates;
 }
 
@@ -918,10 +905,8 @@ export async function recall(
 	if (temporalOptions.queryEmbedding === undefined) {
 		// Honour `null` (explicit "no embedding"); `undefined` means "derive from query text".
 		// `embedQuery()` returns null when embeddings are disabled or no provider is configured,
-		// so this is a no-op when the user has not wired one up. Float32Array → number[]
-		// because RecallOptions exposes the narrower public shape.
-		const derived = query.length > 0 ? await embedQuery(query) : null;
-		temporalOptions.queryEmbedding = derived === null ? null : Array.from(derived);
+		// so this is a no-op when the user has not wired one up.
+		temporalOptions.queryEmbedding = query.length > 0 ? await embedQuery(query) : null;
 	}
 	let weights = normalizedRecallWeights(
 		options.vecWeight ?? beam.config.vecWeight,
@@ -1011,7 +996,7 @@ export async function recallEnhanced(
 	beam: BeamMemoryState,
 	query: string,
 	topK = 40,
-	options: RecallEnhancedOptions & RecallOptionsInternal = {},
+	options: EnhancedOptionsInternal = {},
 ): Promise<RecallResult[]> {
 	const polyphonic = polyphonicRecallEnabled(process.env, beam.config?.polyphonicRecall);
 	const cacheEnabled = isQueryCacheEnabled(options.useCache !== false, process.env, beam.config?.enhancedRecall);
@@ -1021,10 +1006,9 @@ export async function recallEnhanced(
 	// ranking and the polyphonic vector voice. Same three-state contract as `recall()`.
 	let queryEmbedding = options.queryEmbedding;
 	if (queryEmbedding === undefined) {
-		const derived = query.length > 0 ? await embedQuery(query) : null;
-		queryEmbedding = derived === null ? null : Array.from(derived);
+		queryEmbedding = query.length > 0 ? await embedQuery(query) : null;
 	}
-	const runOptions: RecallEnhancedOptions & RecallOptionsInternal = {
+	const runOptions: EnhancedOptionsInternal = {
 		...options,
 		queryEmbedding,
 		updateRecallCounts: false,
@@ -1032,6 +1016,7 @@ export async function recallEnhanced(
 	const countRecalls = options.updateRecallCounts !== false;
 
 	let cache: QueryCache<RecallResult> | null = null;
+	let cacheEmbedding: readonly number[] | null = null;
 	let token = "";
 	let scope = "";
 	if (cacheEnabled) {
@@ -1040,6 +1025,7 @@ export async function recallEnhanced(
 			ttlSeconds: ENHANCED_RECALL_CACHE_TTL_SECONDS,
 		});
 		cache = beam.caches.queryCache;
+		cacheEmbedding = queryEmbedding instanceof Float32Array ? Array.from(queryEmbedding) : queryEmbedding;
 		// Explicit hooks invalidate on this beam's own writes; the token also catches writes
 		// no hook covers (sleep, graph ingest) and commits from other connections.
 		token = databaseWriteToken(beam);
@@ -1048,9 +1034,9 @@ export async function recallEnhanced(
 			beam.caches.queryCacheToken = token;
 		}
 		scope = enhancedRecallCacheScope(beam, topK, options, polyphonic);
-		const cached = cache.get(query, queryEmbedding, scope);
+		const cached = cache.get(query, cacheEmbedding, scope);
 		if (cached !== null) {
-			const results = structuredClone(cached) as RecallResult[];
+			const results = cloneCachedValue(cached) as RecallResult[];
 			if (countRecalls) countRecallsKeepingCache(beam, results, runOptions, token);
 			return results;
 		}
@@ -1062,16 +1048,32 @@ export async function recallEnhanced(
 	// A write committed while recall awaited may be missing from this ranking: skip the
 	// put and keep the stale token so the next lookup starts from an empty cache.
 	const cacheable = cache !== null && databaseWriteToken(beam) === token;
-	if (cacheable) cache?.put(query, structuredClone(results), queryEmbedding, scope);
+	if (cacheable) cache?.put(query, cloneCachedValue(results) as RecallResult[], cacheEmbedding, scope);
 	if (countRecalls) countRecallsKeepingCache(beam, results, runOptions, cacheable ? token : null);
 	return results;
+}
+
+/**
+ * Deep copy of cached recall rows that shares string payloads. `structuredClone` copied
+ * every multi-KB `content` / `embed_text` / `metadata_json` string on both put and get;
+ * strings are immutable, so sharing them is safe, while plain objects and arrays are
+ * still copied so a caller mutating a result never corrupts the cache.
+ */
+function cloneCachedValue(value: unknown): unknown {
+	if (value === null || typeof value !== "object") return value;
+	if (Array.isArray(value)) return value.map(cloneCachedValue);
+	const proto = Object.getPrototypeOf(value);
+	if (proto !== Object.prototype && proto !== null) return structuredClone(value);
+	const out: Record<string, unknown> = {};
+	for (const key of Object.keys(value)) out[key] = cloneCachedValue((value as Record<string, unknown>)[key]);
+	return out;
 }
 
 async function linearRecallEnhanced(
 	beam: BeamMemoryState,
 	query: string,
 	topK: number,
-	options: RecallEnhancedOptions & RecallOptionsInternal,
+	options: EnhancedOptionsInternal,
 ): Promise<RecallResult[]> {
 	const useSynonyms = options.useSynonyms !== false;
 	const enhancedOptions: RecallOptionsInternal = {
@@ -1104,7 +1106,7 @@ async function polyphonicRecallEnhanced(
 	beam: BeamMemoryState,
 	query: string,
 	topK: number,
-	options: RecallEnhancedOptions & RecallOptionsInternal,
+	options: EnhancedOptionsInternal,
 ): Promise<RecallResult[]> {
 	if (topK <= 0) return [];
 	// A wider pool than requested so filters applied below still leave `topK` rows.
@@ -1197,7 +1199,7 @@ function countRecallsKeepingCache(
 function enhancedRecallCacheScope(
 	beam: BeamMemoryState,
 	topK: number,
-	options: RecallEnhancedOptions & RecallOptionsInternal,
+	options: EnhancedOptionsInternal,
 	polyphonic: boolean,
 ): string {
 	const scope: Record<string, unknown> = {
@@ -1286,9 +1288,9 @@ export function formatContext(beam: BeamMemoryState, results: readonly RecallRes
 }
 
 export function factRecall(beam: BeamMemoryState, query: string, topK = 30): FactRecallResult[] {
-	if (topK <= 0 || !tableExists(beam, "facts")) return [];
+	if (topK <= 0 || !tableExists(beam.db, "facts")) return [];
 	let matched: Row[] = [];
-	if (tableExists(beam, "fts_facts")) {
+	if (tableExists(beam.db, "fts_facts")) {
 		try {
 			const visibility = factVisibilityWhere(beam, "facts");
 			matched = queryAll(
@@ -1306,17 +1308,29 @@ export function factRecall(beam: BeamMemoryState, query: string, topK = 30): Fac
 		}
 	}
 	if (matched.length === 0) {
-		const seen = new Set<number>();
-		for (const token of expandedTokens(query).slice(0, 6)) {
-			const visibility = factVisibilityWhere(beam, "");
+		const patterns = expandedTokens(query)
+			.slice(0, 6)
+			.map(token => `%${token}%`);
+		if (patterns.length > 0) {
+			// One scan of `facts` for all tokens instead of one full scan per token: CROSS JOIN
+			// pins `facts` as the outer loop, and ROW_NUMBER keeps each token's first `topK`
+			// matches in rowid order, the same per-token cap the per-token queries applied.
+			const visibility = factVisibilityWhere(beam, "f");
 			const rows = queryAll(
 				beam,
-				`SELECT rowid
-				 FROM facts
-				 WHERE (subject LIKE ? OR predicate LIKE ? OR object LIKE ?) AND ${visibility.where}
-				 LIMIT ?`,
-				[`%${token}%`, `%${token}%`, `%${token}%`, ...visibility.params, topK],
+				`WITH tokens(idx, pattern) AS (VALUES ${patterns.map(() => "(?, ?)").join(", ")})
+				 SELECT rowid FROM (
+				   SELECT f.rowid AS rowid, t.idx AS idx,
+				          ROW_NUMBER() OVER (PARTITION BY t.idx ORDER BY f.rowid) AS rn
+				   FROM facts f CROSS JOIN tokens t
+				   WHERE (f.subject LIKE t.pattern OR f.predicate LIKE t.pattern OR f.object LIKE t.pattern)
+				     AND ${visibility.where}
+				 )
+				 WHERE rn <= ?
+				 ORDER BY idx, rowid`,
+				[...patterns.flatMap((pattern, idx) => [idx, pattern]), ...visibility.params, topK],
 			);
+			const seen = new Set<number>();
 			for (const row of rows) {
 				const rowid = asNumber(row.rowid);
 				if (rowid > 0 && !seen.has(rowid)) {

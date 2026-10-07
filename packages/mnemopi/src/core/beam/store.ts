@@ -3,12 +3,13 @@ import { logger } from "@oh-my-pi/pi-utils";
 import { transaction } from "../../db";
 import { toUtcIso } from "../../util/datetime";
 import { generateId } from "../../util/ids";
+import { tableExists } from "../../util/sqlite";
 import { currentEmbeddingModel, embeddingsDisabled } from "../embeddings";
 import { EpisodicGraph } from "../episodic-graph";
 import { countExtractedFactCategories, extractFactCategoriesSafe } from "../extraction";
 import { getMnemopiRuntimeOptions, withMnemopiRuntimeOptions } from "../runtime-options";
 import { storeExtractedFactCategories } from "./consolidate";
-import { type EmbedItem, scheduleEmbedding, vecAvailable, vecInsert } from "./helpers";
+import { type EmbedItem, scheduleEmbedding, scheduleSequentialEmbedding, vecAvailable, vecInsert } from "./helpers";
 import type {
 	BeamEvent,
 	BeamMemoryState,
@@ -153,16 +154,10 @@ function invalidateCaches(beam: BeamMemoryState): void {
 }
 
 function findDuplicate(beam: BeamMemoryState, content: string): string | null {
-	using statement = beam.db.prepare("SELECT id FROM working_memory WHERE content = ? AND session_id = ? LIMIT 1");
-	const row = statement.get(content, beam.sessionId) as { id: string } | null;
+	const row = beam.db
+		.query("SELECT id FROM working_memory WHERE content = ? AND session_id = ? LIMIT 1")
+		.get(content, beam.sessionId) as { id: string } | null;
 	return row?.id ?? null;
-}
-
-function tableExists(db: BeamMemoryState["db"], table: string): boolean {
-	using statement = db.prepare(
-		"SELECT 1 FROM sqlite_master WHERE type IN ('table','virtual table') AND name = ? LIMIT 1",
-	);
-	return statement.get(table) !== null;
 }
 
 /** Tables whose rows point back to a `working_memory` id via `source_memory_id`. */
@@ -232,7 +227,7 @@ function trimWorkingMemory(beam: BeamMemoryState): void {
 	const ttlHours = beam.config.workingMemoryTtlHours;
 	const cutoff = toUtcIso(new Date(Date.now() - ttlHours * 3_600_000));
 	transaction(beam.db, () => {
-		using selectStatement = beam.db.prepare(`
+		const selectStatement = beam.db.query(`
 			SELECT id FROM working_memory
 			WHERE session_id = ?
 			  AND consolidated_at IS NULL
@@ -351,8 +346,8 @@ const EMBED_REBUILD_BATCH = 128;
  * its vector dimension changes too, so the previously-stored vectors are no
  * longer comparable. On a mismatch we wipe every stored vector — the
  * `memory_embeddings` table, the `episodic_memory.binary_vector` column, and the
- * sqlite-vec `vec_episodes` index — then enqueue all live memories for
- * background re-embedding under the new model via `scheduleEmbedding`.
+ * sqlite-vec `vec_episodes` index — then re-embed all live memories under the new
+ * model in one tracked background task (see `scheduleSequentialEmbedding`).
  *
  * Runs once per store open; a fresh store (no embeddings) or an already-current
  * store is a no-op. The destructive wipe is skipped whenever it could not be
@@ -367,14 +362,6 @@ export function reconcileEmbeddingModel(beam: BeamMemoryState): void {
 	const active = currentEmbeddingModel().trim();
 	if (active === "") return;
 
-	// Re-embed in bounded batches so a corpus-wide rebuild never issues one giant
-	// embedding request; each batch is its own tracked background task.
-	const rebuild = (items: readonly EmbedItem[]): void => {
-		for (let offset = 0; offset < items.length; offset += EMBED_REBUILD_BATCH) {
-			scheduleEmbedding(beam, items.slice(offset, offset + EMBED_REBUILD_BATCH));
-		}
-	};
-
 	// Stop at the first row whose stamped model differs from the active one
 	// (NULL/unstamped counts as a mismatch via `IS NOT`).
 	const mismatch = beam.db.query("SELECT 1 FROM memory_embeddings WHERE model IS NOT ? LIMIT 1").get(active);
@@ -382,13 +369,6 @@ export function reconcileEmbeddingModel(beam: BeamMemoryState): void {
 		const staleModels = beam.db
 			.query("SELECT DISTINCT model FROM memory_embeddings WHERE model IS NOT ?")
 			.all(active) as { model: string | null }[];
-		const live = beam.db
-			.query(`
-				SELECT id AS memoryId, COALESCE(embed_text, content) AS content FROM working_memory WHERE superseded_by IS NULL
-				UNION ALL
-				SELECT id AS memoryId, content FROM episodic_memory WHERE superseded_by IS NULL
-			`)
-			.all() as EmbedItem[];
 
 		transaction(beam.db, () => {
 			beam.db.run("DELETE FROM memory_embeddings");
@@ -402,12 +382,13 @@ export function reconcileEmbeddingModel(beam: BeamMemoryState): void {
 			}
 		});
 
+		const count = countMissingEmbeddings(beam, active);
 		logger.info("mnemopi: embedding model changed, rebuilding", {
 			from: staleModels.map(row => row.model ?? "(unstamped)"),
 			to: active,
-			count: live.length,
+			count,
 		});
-		rebuild(live);
+		if (count > 0) scheduleSequentialEmbedding(beam, missingEmbeddingBatches(beam, active));
 		return;
 	}
 
@@ -415,18 +396,65 @@ export function reconcileEmbeddingModel(beam: BeamMemoryState): void {
 	// exit after the wipe) can leave live memories with no active-model embedding. Treating an
 	// empty/partial table as "reconciled" would strand them FTS-only, so re-enqueue any live
 	// row still missing an active-model embedding.
-	const missing = beam.db
+	const missing = countMissingEmbeddings(beam, active);
+	if (missing === 0) return;
+	logger.info("mnemopi: resuming interrupted embedding rebuild", { to: active, count: missing });
+	scheduleSequentialEmbedding(beam, missingEmbeddingBatches(beam, active));
+}
+
+// Correlated NOT EXISTS probes the `memory_embeddings` primary key per row; the
+// `id NOT IN (SELECT …)` form builds a list subquery over the whole table first.
+const MISSING_WORKING_EMBEDDING = `w.superseded_by IS NULL
+	AND NOT EXISTS (SELECT 1 FROM memory_embeddings e WHERE e.memory_id = w.id AND e.model = ?)`;
+const MISSING_EPISODIC_EMBEDDING = `m.superseded_by IS NULL
+	AND NOT EXISTS (SELECT 1 FROM memory_embeddings e WHERE e.memory_id = m.id AND e.model = ?)`;
+
+function countMissingEmbeddings(beam: BeamMemoryState, model: string): number {
+	const row = beam.db
 		.query(`
-			SELECT id AS memoryId, COALESCE(embed_text, content) AS content FROM working_memory
-			WHERE superseded_by IS NULL AND id NOT IN (SELECT memory_id FROM memory_embeddings WHERE model = ?)
-			UNION ALL
-			SELECT id AS memoryId, content FROM episodic_memory
-			WHERE superseded_by IS NULL AND id NOT IN (SELECT memory_id FROM memory_embeddings WHERE model = ?)
+			SELECT (SELECT COUNT(*) FROM working_memory w WHERE ${MISSING_WORKING_EMBEDDING})
+			     + (SELECT COUNT(*) FROM episodic_memory m WHERE ${MISSING_EPISODIC_EMBEDDING}) AS count
 		`)
-		.all(active, active) as EmbedItem[];
-	if (missing.length === 0) return;
-	logger.info("mnemopi: resuming interrupted embedding rebuild", { to: active, count: missing.length });
-	rebuild(missing);
+		.get(model, model) as { count: number } | null;
+	return row?.count ?? 0;
+}
+
+/**
+ * Page live memories lacking an active-model embedding, working tier then episodic,
+ * by keyset so only one batch of content is ever held. Rows embedded meanwhile (e.g.
+ * by a concurrent `remember()`) drop out of later pages on their own.
+ */
+function missingEmbeddingBatches(beam: BeamMemoryState, model: string): () => EmbedItem[] {
+	let workingDone = false;
+	let workingCursor = "";
+	let episodicCursor = 0;
+	return () => {
+		if (!workingDone) {
+			const rows = beam.db
+				.query(`
+					SELECT w.id AS memoryId, COALESCE(w.embed_text, w.content) AS content FROM working_memory w
+					WHERE w.id > ? AND ${MISSING_WORKING_EMBEDDING}
+					ORDER BY w.id LIMIT ?
+				`)
+				.all(workingCursor, model, EMBED_REBUILD_BATCH) as EmbedItem[];
+			const last = rows.at(-1);
+			if (last !== undefined) {
+				workingCursor = last.memoryId;
+				return rows;
+			}
+			workingDone = true;
+		}
+		const rows = beam.db
+			.query(`
+				SELECT m.rowid AS cursor, m.id AS memoryId, m.content AS content FROM episodic_memory m
+				WHERE m.rowid > ? AND ${MISSING_EPISODIC_EMBEDDING}
+				ORDER BY m.rowid LIMIT ?
+			`)
+			.all(episodicCursor, model, EMBED_REBUILD_BATCH) as (EmbedItem & { cursor: number })[];
+		const last = rows.at(-1);
+		if (last !== undefined) episodicCursor = last.cursor;
+		return rows;
+	};
 }
 
 export function remember(beam: BeamMemoryState, content: string, options: StoreRememberOptions = {}): string {
@@ -444,104 +472,116 @@ export function remember(beam: BeamMemoryState, content: string, options: StoreR
 	const metadata = options.metadata ?? null;
 	const embedText = embeddingText(content, options);
 
-	const existingId = findDuplicate(beam, content);
-	if (existingId !== null) {
+	// `extractText` lets a caller decouple "what gets stored" from "what facts are
+	// mined". coding-agent retains full multi-author transcripts but wants
+	// fact/entity heuristics to read only the user-authored turns (issue #3372).
+	const extractionSource = options.extractText ?? options.extract_text ?? content;
+
+	// One commit for the row, its annotations, graph links and the trim instead of one
+	// autocommit (and WAL fsync) per statement. Events and background tasks fire after
+	// the commit so listeners and other connections see the stored row.
+	const stored = transaction(beam.db, (): { id: string; duplicate: boolean } => {
+		const existingId = findDuplicate(beam, content);
+		if (existingId !== null) {
+			beam.db.run(
+				`
+					UPDATE working_memory
+					SET importance = MAX(importance, ?), timestamp = ?, source = ?,
+						valid_until = COALESCE(?, valid_until),
+						scope = COALESCE(?, scope),
+						author_id = COALESCE(?, author_id),
+						author_type = COALESCE(?, author_type),
+						channel_id = COALESCE(?, channel_id),
+						memory_type = COALESCE(?, memory_type),
+						veracity = CASE WHEN ? != 'unknown' THEN ? ELSE veracity END,
+						trust_tier = COALESCE(?, trust_tier),
+						embed_text = COALESCE(?, embed_text),
+						consolidated_at = NULL
+					WHERE id = ? AND session_id = ?
+				`,
+				[
+					importance,
+					timestamp,
+					source,
+					validUntil,
+					scope,
+					authorId,
+					authorType,
+					channelId,
+					memoryType,
+					veracity,
+					veracity,
+					trustTier,
+					storedEmbeddingText(content, embedText),
+					existingId,
+					beam.sessionId,
+				],
+			);
+			return { id: existingId, duplicate: true };
+		}
+
+		const memoryId = options.memoryId ?? options.memory_id ?? generateId(content, new Date(timestamp));
 		beam.db.run(
 			`
-				UPDATE working_memory
-				SET importance = MAX(importance, ?), timestamp = ?, source = ?,
-					valid_until = COALESCE(?, valid_until),
-					scope = COALESCE(?, scope),
-					author_id = COALESCE(?, author_id),
-					author_type = COALESCE(?, author_type),
-					channel_id = COALESCE(?, channel_id),
-					memory_type = COALESCE(?, memory_type),
-					veracity = CASE WHEN ? != 'unknown' THEN ? ELSE veracity END,
-					trust_tier = COALESCE(?, trust_tier),
-					embed_text = COALESCE(?, embed_text),
-					consolidated_at = NULL
-				WHERE id = ? AND session_id = ?
+				INSERT INTO working_memory
+				(id, content, embed_text, source, timestamp, session_id, importance, metadata_json, valid_until, scope,
+				 author_id, author_type, channel_id, veracity, memory_type, trust_tier)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			`,
 			[
-				importance,
-				timestamp,
+				memoryId,
+				content,
+				storedEmbeddingText(content, embedText),
 				source,
+				timestamp,
+				beam.sessionId,
+				importance,
+				metadataJson(metadata),
 				validUntil,
 				scope,
 				authorId,
 				authorType,
 				channelId,
+				veracity,
 				memoryType,
-				veracity,
-				veracity,
 				trustTier,
-				storedEmbeddingText(content, embedText),
-				existingId,
-				beam.sessionId,
 			],
 		);
+		addTemporalAnnotations(beam, memoryId, timestamp, source);
+		proactiveLinkIfEnabled(
+			beam,
+			memoryId,
+			extractionSource,
+			Boolean(options.extractEntities ?? options.extract_entities),
+		);
+		trimWorkingMemory(beam);
+		return { id: memoryId, duplicate: false };
+	});
+
+	if (stored.duplicate) {
 		emitEvent(beam, "MEMORY_UPDATED", {
-			memoryId: existingId,
+			memoryId: stored.id,
 			content,
 			source,
 			importance,
 			metadata: metadata ?? undefined,
 		});
-		if (embedText !== content) scheduleEmbedding(beam, [{ memoryId: existingId, content: embedText }]);
+		if (embedText !== content) scheduleEmbedding(beam, [{ memoryId: stored.id, content: embedText }]);
 		invalidateCaches(beam);
-		return existingId;
+		return stored.id;
 	}
 
-	const memoryId = options.memoryId ?? options.memory_id ?? generateId(content, new Date(timestamp));
-	beam.db.run(
-		`
-			INSERT INTO working_memory
-			(id, content, embed_text, source, timestamp, session_id, importance, metadata_json, valid_until, scope,
-			 author_id, author_type, channel_id, veracity, memory_type, trust_tier)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`,
-		[
-			memoryId,
-			content,
-			storedEmbeddingText(content, embedText),
-			source,
-			timestamp,
-			beam.sessionId,
-			importance,
-			metadataJson(metadata),
-			validUntil,
-			scope,
-			authorId,
-			authorType,
-			channelId,
-			veracity,
-			memoryType,
-			trustTier,
-		],
-	);
-	addTemporalAnnotations(beam, memoryId, timestamp, source);
-	// `extractText` lets a caller decouple "what gets stored" from "what facts are
-	// mined". coding-agent retains full multi-author transcripts but wants
-	// fact/entity heuristics to read only the user-authored turns (issue #3372).
-	const extractionSource = options.extractText ?? options.extract_text ?? content;
-	proactiveLinkIfEnabled(
-		beam,
-		memoryId,
-		extractionSource,
-		Boolean(options.extractEntities ?? options.extract_entities),
-	);
-	trimWorkingMemory(beam);
 	emitEvent(beam, "MEMORY_ADDED", {
-		memoryId,
+		memoryId: stored.id,
 		content,
 		source,
 		importance,
 		metadata: metadata ?? undefined,
 	});
-	scheduleEmbedding(beam, [{ memoryId, content: embedText }]);
-	if (options.extract === true) scheduleFactExtraction(beam, memoryId, extractionSource);
+	scheduleEmbedding(beam, [{ memoryId: stored.id, content: embedText }]);
+	if (options.extract === true) scheduleFactExtraction(beam, stored.id, extractionSource);
 	invalidateCaches(beam);
-	return memoryId;
+	return stored.id;
 }
 
 export function rememberBatch(
@@ -557,7 +597,7 @@ export function rememberBatch(
 	const trustTier = normalizeTrustTier(options.trustTier ?? "IMPORTED", "imported");
 
 	transaction(beam.db, () => {
-		using statement = beam.db.prepare(`
+		const statement = beam.db.query(`
 			INSERT INTO working_memory
 			(id, content, embed_text, source, timestamp, session_id, importance, metadata_json,
 			 author_id, author_type, channel_id, memory_type, veracity, trust_tier, scope)
@@ -622,7 +662,7 @@ export function rememberBatch(
 
 export function getContext(beam: BeamMemoryState, limit = 10): Row[] {
 	const now = toUtcIso();
-	using statement = beam.db.prepare(`
+	const statement = beam.db.query(`
 		SELECT id, content, source, timestamp, importance, scope
 		FROM working_memory
 		WHERE (session_id = ? OR scope = 'global')
@@ -738,7 +778,7 @@ export function updateWorking(
 }
 
 export function get(beam: BeamMemoryState, memoryId: string): Row | null {
-	using workingStatement = beam.db.prepare(`
+	const workingStatement = beam.db.query(`
 		SELECT id, content, source, timestamp, session_id,
 			   importance, metadata_json, veracity, created_at
 		FROM working_memory
@@ -747,7 +787,7 @@ export function get(beam: BeamMemoryState, memoryId: string): Row | null {
 	const working = workingStatement.get(memoryId) as Row | null | undefined;
 	if (working != null) return { ...working, metadata: working.metadata_json, memory_store: "working" };
 
-	using episodicStatement = beam.db.prepare(`
+	const episodicStatement = beam.db.query(`
 		SELECT id, content, source, timestamp, session_id,
 			   importance, metadata_json, veracity, created_at
 		FROM episodic_memory
@@ -828,7 +868,7 @@ export function scratchpadWrite(beam: BeamMemoryState, content: string): string 
 }
 
 export function scratchpadRead(beam: BeamMemoryState): Row[] {
-	using statement = beam.db.prepare(`
+	const statement = beam.db.query(`
 		SELECT id, content, created_at, updated_at
 		FROM scratchpad
 		WHERE session_id = ?

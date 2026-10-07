@@ -640,6 +640,17 @@ describe("beam recall free functions", () => {
 		expect(fullHit?.content).toBe(long);
 		expect(fullHit?.truncated).toBe(false);
 	});
+
+	it("keeps a full-text match whose terms sit past the lexical scan window", async () => {
+		const beam = makeBeam();
+		const filler = "unrelated filler sentence about weather patterns. ".repeat(400);
+		const content = `${filler}zircon quarantine protocol activated`;
+		expect(content.length).toBeGreaterThan(16_384);
+		insertWorking(beam, "wm-deep", content);
+
+		const results = await recall(beam, "zircon quarantine protocol", 5);
+		expect(results.some(row => row.id === "wm-deep")).toBe(true);
+	});
 });
 
 describe("fact recall respects source lifecycle", () => {

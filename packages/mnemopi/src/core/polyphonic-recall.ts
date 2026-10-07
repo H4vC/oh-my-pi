@@ -5,6 +5,15 @@ import { closeQuietly, type DatabasePath, openDatabase } from "../db";
 import { backfillConsolidatedFacts, ensureVeracityConsolidator } from "./beam/consolidate";
 import type { BeamMemoryState, JsonValue, Metadata, RecallResult, RecallTierLabel } from "./beam/types";
 import { EpisodicGraph } from "./episodic-graph";
+import {
+	backfillEmbeddingBlobs,
+	dotProduct,
+	type LegacyEmbedding,
+	type StoredEmbeddingRow,
+	storedEmbeddingColumns,
+	storedUnitEmbedding,
+	unitFloat32,
+} from "./stored-embeddings";
 import { VeracityConsolidator } from "./veracity-consolidation";
 
 export type PolyphonicVoice = "hybrid" | "vector" | "graph" | "fact" | "temporal";
@@ -100,9 +109,7 @@ interface MemoryHydrationRow {
 	readonly tier_name: "working" | "episodic";
 }
 
-interface EmbeddingRow {
-	readonly memory_id: string;
-	readonly embedding_json: string;
+interface EmbeddingRow extends StoredEmbeddingRow {
 	readonly embedding_tier: "working" | "episodic";
 }
 
@@ -180,37 +187,6 @@ function parseMetadata(raw: string | null): Metadata {
 		// Malformed metadata must not make recall fail.
 	}
 	return {};
-}
-
-function normalizeVector(vector: readonly number[] | Float32Array): Float32Array | null {
-	if (vector.length === 0) return null;
-	let normSq = 0;
-	for (let i = 0; i < vector.length; i++) {
-		const value = vector[i];
-		if (value === undefined || !Number.isFinite(value)) return null;
-		normSq += value * value;
-	}
-	if (normSq === 0) return null;
-	const norm = Math.sqrt(normSq);
-	const out = new Float32Array(vector.length);
-	for (let i = 0; i < vector.length; i++) out[i] = (vector[i] as number) / norm;
-	return out;
-}
-
-function cosineAgainstUnit(unit: Float32Array, raw: unknown): number | null {
-	if (!Array.isArray(raw) || raw.length !== unit.length) return null;
-	let normSq = 0;
-	let dot = 0;
-	for (let i = 0; i < raw.length; i++) {
-		const value = raw[i];
-		if (typeof value !== "number" || !Number.isFinite(value)) return null;
-		normSq += value * value;
-		const unitValue = unit[i];
-		if (unitValue === undefined) return null;
-		dot += unitValue * value;
-	}
-	if (normSq === 0) return null;
-	return dot / Math.sqrt(normSq);
 }
 
 function extractEntities(text: string): string[] {
@@ -343,23 +319,24 @@ export class PolyphonicRecallEngine {
 		options: PolyphonicCallOptions = {},
 	): VoiceRecallResult[] {
 		if (envDisabled("MNEMOPI_VOICE_VECTOR") || queryEmbedding === null) return [];
-		const queryUnit = normalizeVector(queryEmbedding);
-		if (queryUnit === null) return [];
+		const queryUnit = unitFloat32(queryEmbedding);
+		if (queryUnit === null || queryUnit.length === 0) return [];
 		const now = new Date().toISOString();
 		const working = this.#visibility("wm", options.channelId);
 		const episodic = this.#visibility("em", options.channelId);
 		let rows: EmbeddingRow[] = [];
 		try {
+			const embeddingColumns = storedEmbeddingColumns(this.db, "me");
 			rows = this.db
 				.query(`
-					SELECT me.memory_id, me.embedding_json, 'working' AS embedding_tier
+					SELECT ${embeddingColumns}, 'working' AS embedding_tier
 					FROM memory_embeddings me
 					JOIN working_memory wm ON wm.id = me.memory_id
 					WHERE wm.superseded_by IS NULL
 						AND (wm.valid_until IS NULL OR wm.valid_until > ?)
 						AND ${working.clause}
 					UNION ALL
-					SELECT me.memory_id, me.embedding_json, 'episodic' AS embedding_tier
+					SELECT ${embeddingColumns}, 'episodic' AS embedding_tier
 					FROM memory_embeddings me
 					JOIN episodic_memory em ON em.id = me.memory_id
 					WHERE em.superseded_by IS NULL
@@ -373,15 +350,12 @@ export class PolyphonicRecallEngine {
 		}
 
 		const byId = new Map<string, VoiceRecallResult>();
+		const legacy: LegacyEmbedding[] = [];
 		for (const row of rows) {
-			let parsed: unknown;
-			try {
-				parsed = JSON.parse(row.embedding_json) as unknown;
-			} catch {
-				continue;
-			}
-			const cosine = cosineAgainstUnit(queryUnit, parsed);
-			if (cosine === null || cosine < VECTOR_VOICE_MIN_COSINE) continue;
+			const vector = storedUnitEmbedding(row, legacy);
+			if (vector === null || vector.length !== queryUnit.length) continue;
+			const cosine = dotProduct(queryUnit, vector);
+			if (cosine < VECTOR_VOICE_MIN_COSINE) continue;
 			const similarity = (cosine + 1) / 2;
 			const existing = byId.get(row.memory_id);
 			if (existing === undefined || similarity > existing.score) {
@@ -398,6 +372,7 @@ export class PolyphonicRecallEngine {
 				});
 			}
 		}
+		backfillEmbeddingBlobs(this.db, legacy);
 		return [...byId.values()].sort((a, b) => b.score - a.score || a.memoryId.localeCompare(b.memoryId)).slice(0, 20);
 	}
 	/**

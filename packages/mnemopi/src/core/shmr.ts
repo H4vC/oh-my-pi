@@ -1,7 +1,15 @@
 import type { Database } from "bun:sqlite";
 import { cosineSimilarityPairs } from "@oh-my-pi/pi-natives";
 import { logger } from "@oh-my-pi/pi-utils";
+import { tableExists } from "../util/sqlite";
 import * as embeddings from "./embeddings";
+import {
+	backfillEmbeddingBlobs,
+	type LegacyEmbedding,
+	type StoredEmbeddingRow,
+	storedEmbeddingColumns,
+	storedUnitEmbedding,
+} from "./stored-embeddings";
 import { cosineSimilarity } from "./vector-math";
 
 export { cosineSimilarity };
@@ -355,44 +363,28 @@ function dbOf(beam: BeamLike): Database {
 	return db;
 }
 
-function tableExists(db: Database, table: string): boolean {
-	return db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) !== null;
-}
-
-function parseEmbeddingJson(raw: unknown): Vector | null {
-	if (typeof raw !== "string") return null;
-	try {
-		const parsed = JSON.parse(raw) as unknown;
-		if (!Array.isArray(parsed) || parsed.length === 0) return null;
-		const out = new Float32Array(parsed.length);
-		for (let i = 0; i < parsed.length; i++) {
-			const value = Number(parsed[i]);
-			if (!Number.isFinite(value)) return null;
-			out[i] = value;
-		}
-		return out;
-	} catch {
-		return null;
-	}
-}
-
-/** Precomputed vectors from `memory_embeddings` (written by `scheduleEmbedding()`). */
+/**
+ * Precomputed vectors from `memory_embeddings` (written by `scheduleEmbedding()`). They come
+ * back unit-normalised; clustering compares by cosine, so only the harmony centroid can
+ * differ from raw vectors, and provider embeddings are unit-norm already.
+ */
 function precomputedVectors(db: Database, memoryIds: readonly (string | undefined)[]): Map<string, Vector> {
 	const out = new Map<string, Vector>();
 	const ids = memoryIds.filter((id): id is string => id !== undefined);
 	if (ids.length === 0 || !tableExists(db, "memory_embeddings")) return out;
+	const columns = storedEmbeddingColumns(db, "");
+	const legacy: LegacyEmbedding[] = [];
 	for (let offset = 0; offset < ids.length; offset += 500) {
 		const chunk = ids.slice(offset, offset + 500);
 		const rows = db
-			.query(
-				`SELECT memory_id, embedding_json FROM memory_embeddings WHERE memory_id IN (${chunk.map(() => "?").join(", ")})`,
-			)
-			.all(...chunk) as Array<{ memory_id: string; embedding_json: string | null }>;
+			.query(`SELECT ${columns} FROM memory_embeddings WHERE memory_id IN (${chunk.map(() => "?").join(", ")})`)
+			.all(...chunk) as StoredEmbeddingRow[];
 		for (const row of rows) {
-			const vector = parseEmbeddingJson(row.embedding_json);
-			if (vector !== null) out.set(row.memory_id, vector);
+			const vector = storedUnitEmbedding(row, legacy);
+			if (vector !== null && vector.length > 0) out.set(row.memory_id, vector);
 		}
 	}
+	backfillEmbeddingBlobs(db, legacy);
 	return out;
 }
 
