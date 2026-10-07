@@ -8,10 +8,9 @@ import type {
 import type { ToolSession } from "../../tools";
 import { namespaceSessionId as namespaceJavaScriptSessionId } from "../js";
 import { shadowPlanIfPresent, snapshotVmContext } from "../js/context-manager";
-import type { RuntimeCallIdentity, ShadowSnapshot } from "../js/shared/runtime";
+import type { RuntimeCallIdentity } from "../js/shared/runtime";
 import { shadowSnapshotDigest } from "../js/shared/runtime";
 import type { JsStatusEvent } from "../js/shared/types";
-import { projectJavaScriptShadowPlan } from "../js/speculation";
 import { bridgeValueFromToolResult } from "../js/tool-bridge";
 import { namespaceSessionId as namespacePythonSessionId } from "../py";
 import { shadowPlanPythonIfPresent, snapshotPythonNamespaceIfPresent } from "../py/executor";
@@ -80,12 +79,6 @@ export class EvalShadowCellSession implements ToolSpeculationStreamSession {
 	readonly #runtimeOccurrences = new Map<string, number>();
 	#occurrenceAssignment = Promise.resolve();
 	#snapshot: Readonly<Record<string, ShadowValue | unknown>> | undefined;
-	/**
-	 * First JavaScript planning snapshot. Later streamed plans project against it
-	 * instead of re-snapshotting the worker; `verifySnapshotCurrent` rejects it
-	 * before dispatch when retained state moved on.
-	 */
-	#jsPlanningSnapshot: ShadowSnapshot | undefined;
 	#lastPlan: { code: string; language: string; plan: ShadowPlan | null } | undefined;
 	/** Exact source the stream finalize verified; reconcile must see the same bytes. */
 	#finalizedCode: string | undefined;
@@ -94,8 +87,6 @@ export class EvalShadowCellSession implements ToolSpeculationStreamSession {
 	#updates = Promise.resolve();
 	#pendingPlan: { codePrefix: string; language: string } | undefined;
 	#planning = false;
-	/** Decoded code length already checked for new lines; undefined until the first code was queued. */
-	#lineGateLength: number | undefined;
 
 	constructor(options: EvalShadowCellOptions) {
 		this.#options = options;
@@ -123,15 +114,7 @@ export class EvalShadowCellSession implements ToolSpeculationStreamSession {
 		// objects); an undefined language here can only be a decoder bug — withhold.
 		if (decoded.snapshot.language === undefined) return;
 		const language = decoded.snapshot.language;
-		const { codePrefix, complete } = decoded.snapshot;
-		// Plan the first code, then only when a line completed or the buffer closed:
-		// re-planning a growing partial line repeats the same parse for no new operations.
-		if (!complete && this.#lineGateLength !== undefined && codePrefix.indexOf("\n", this.#lineGateLength) < 0) {
-			this.#lineGateLength = codePrefix.length;
-			return;
-		}
-		if (codePrefix.length > 0) this.#lineGateLength = codePrefix.length;
-		this.#pendingPlan = { codePrefix, language };
+		this.#pendingPlan = { codePrefix: decoded.snapshot.codePrefix, language };
 		if (!this.#planning) {
 			this.#planning = true;
 			this.#updates = this.#drainPlanUpdates();
@@ -339,25 +322,16 @@ export class EvalShadowCellSession implements ToolSpeculationStreamSession {
 	async #project(code: string, language: string): Promise<ShadowPlan | null> {
 		let plan: ShadowPlan | null = null;
 		if (language === "js") {
-			const snapshot = this.#jsPlanningSnapshot;
-			if (snapshot) {
-				plan = await projectJavaScriptShadowPlan(code, {
-					snapshot: snapshot.values,
-					initialGlobals: snapshot.initialGlobals,
-				});
-			} else {
-				const projected = await shadowPlanIfPresent({
-					sessionKey: namespaceJavaScriptSessionId(this.#options.sessionId),
-					cwd: this.#options.cwd,
-					sessionId: namespaceJavaScriptSessionId(this.#options.sessionId),
-					code,
-				});
-				if (projected) {
-					this.#jsPlanningSnapshot = projected.snapshot;
-					this.#snapshot ??= projected.snapshot.values;
-					this.#snapshotToken ??= { language, revision: projected.snapshot.revision, digest: projected.digest };
-					plan = projected.plan;
-				}
+			const projected = await shadowPlanIfPresent({
+				sessionKey: namespaceJavaScriptSessionId(this.#options.sessionId),
+				cwd: this.#options.cwd,
+				sessionId: namespaceJavaScriptSessionId(this.#options.sessionId),
+				code,
+			});
+			if (projected) {
+				this.#snapshot ??= projected.snapshot.values;
+				this.#snapshotToken ??= { language, revision: projected.snapshot.revision, digest: projected.digest };
+				plan = projected.plan;
 			}
 		} else if (language === "py") {
 			const projected = await shadowPlanPythonIfPresent({
