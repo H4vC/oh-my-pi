@@ -255,10 +255,14 @@ export async function discoverSystemPromptOverride(cwd?: string): Promise<System
 	const result = await loadCapability<SystemPromptFile>(systemPromptCapability.id, {
 		cwd: cwd ?? getProjectDir(),
 	});
+	return selectSystemPromptOverride(result.items);
+}
+
+function selectSystemPromptOverride(items: readonly SystemPromptFile[]): SystemPromptOverride | undefined {
 	for (const level of ["project", "user"] as const) {
-		const text = result.items.find(item => item.level === level && (item.kind ?? "text") === "text");
+		const text = items.find(item => item.level === level && (item.kind ?? "text") === "text");
 		if (text) return { kind: "text", path: text.path, content: text.content };
-		const template = result.items.find(item => item.level === level && (item.kind ?? "text") === "template");
+		const template = items.find(item => item.level === level && (item.kind ?? "text") === "template");
 		if (template) {
 			if (!template.content.trim()) {
 				logger.warn("Ignoring empty system prompt template", { path: template.path });
@@ -388,15 +392,16 @@ export async function loadSystemPromptFiles(options: LoadContextFilesOptions = {
 	const resolvedCwd = options.cwd ?? getProjectDir();
 
 	const result = await loadCapability<SystemPromptFile>(systemPromptCapability.id, { cwd: resolvedCwd });
+	return selectSystemPromptCustomization(result.items);
+}
 
-	if (result.items.length === 0) return null;
-
-	const projectLevel = result.items.find(item => item.level === "project");
+function selectSystemPromptCustomization(items: readonly SystemPromptFile[]): string | null {
+	const projectLevel = items.find(item => item.level === "project");
 	if (projectLevel) {
 		return projectLevel.content;
 	}
 
-	const userLevel = result.items.find(item => item.level === "user");
+	const userLevel = items.find(item => item.level === "user");
 	return userLevel?.content ?? null;
 }
 
@@ -685,8 +690,13 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
 	if (resolvedSystemPromptTemplate !== undefined && hasExplicitCustomPrompt) {
 		throw new Error("systemPromptTemplate cannot be combined with a literal custom system prompt");
 	}
+	// One capability load serves both the override lookup and, when no
+	// override applies, the SYSTEM.md customization below.
+	let systemPromptFiles: readonly SystemPromptFile[] | undefined;
 	if (resolvedSystemPromptTemplate === undefined && !hasExplicitCustomPrompt) {
-		const override = await discoverSystemPromptOverride(resolvedCwd);
+		systemPromptFiles = (await loadCapability<SystemPromptFile>(systemPromptCapability.id, { cwd: resolvedCwd }))
+			.items;
+		const override = selectSystemPromptOverride(systemPromptFiles);
 		if (override?.kind === "template" && override.content !== undefined) {
 			resolvedSystemPromptTemplate = override.content;
 		} else if (override?.content !== undefined) {
@@ -757,7 +767,7 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
 		hasExplicitCustomPrompt || resolvedSystemPromptTemplate !== undefined || resolvedCustomPromptInput !== undefined;
 	const systemPromptCustomizationPromise: Promise<string | null> = callerControlsCustomPrompt
 		? Promise.resolve(null)
-		: logger.time("loadSystemPromptFiles", loadSystemPromptFiles, { cwd: resolvedCwd });
+		: Promise.resolve(systemPromptFiles ? selectSystemPromptCustomization(systemPromptFiles) : null);
 	const contextFilesPromise = (async () => {
 		const primary = providedContextFiles
 			? providedContextFiles

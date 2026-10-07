@@ -1,19 +1,23 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-const contentCache = new Map<string, string | null>();
-const dirCache = new Map<string, fs.Dirent[]>();
+// Promise caches: concurrent discovery providers asking for the same path share
+// one in-flight stat/read instead of each issuing its own syscalls.
+const contentCache = new Map<string, Promise<string | null>>();
+const dirCache = new Map<string, Promise<fs.Dirent[]>>();
+
+/**
+ * Content entries hold whole file bodies and the cache lives until reset(), so
+ * cwd changes, worktrees and subagent cwds would otherwise grow it without
+ * bound. Oldest entries are evicted first; a later miss simply re-reads.
+ */
+const MAX_CONTENT_ENTRIES = 2048;
 
 function resolvePath(filePath: string): string {
 	return path.resolve(filePath);
 }
 
-export async function readFile(filePath: string): Promise<string | null> {
-	const abs = resolvePath(filePath);
-	if (contentCache.has(abs)) {
-		return contentCache.get(abs) ?? null;
-	}
-
+async function loadFile(abs: string): Promise<string | null> {
 	try {
 		// Gate on the file type first: discovery scans foreign config dirs
 		// (~/.claude, ~/.cursor, project trees), and reading a FIFO/socket/char
@@ -21,33 +25,35 @@ export async function readFile(filePath: string): Promise<string | null> {
 		// startup with zero output. `stat` follows symlinks, so symlinked
 		// context files (CLAUDE.md -> AGENTS.md) still resolve.
 		const stats = await fs.promises.stat(abs);
-		if (!stats.isFile()) {
-			contentCache.set(abs, null);
-			return null;
-		}
-		const content = await Bun.file(abs).text();
-		contentCache.set(abs, content);
-		return content;
+		if (!stats.isFile()) return null;
+		return await Bun.file(abs).text();
 	} catch {
-		contentCache.set(abs, null);
 		return null;
 	}
 }
 
-export async function readDirEntries(dirPath: string): Promise<fs.Dirent[]> {
-	const abs = resolvePath(dirPath);
-	if (dirCache.has(abs)) {
-		return dirCache.get(abs) ?? [];
+export function readFile(filePath: string): Promise<string | null> {
+	const abs = resolvePath(filePath);
+	let pending = contentCache.get(abs);
+	if (!pending) {
+		if (contentCache.size >= MAX_CONTENT_ENTRIES) {
+			const oldest = contentCache.keys().next().value;
+			if (oldest !== undefined) contentCache.delete(oldest);
+		}
+		pending = loadFile(abs);
+		contentCache.set(abs, pending);
 	}
+	return pending;
+}
 
-	try {
-		const entries = await fs.promises.readdir(abs, { withFileTypes: true });
-		dirCache.set(abs, entries);
-		return entries;
-	} catch {
-		dirCache.set(abs, []);
-		return [];
+export function readDirEntries(dirPath: string): Promise<fs.Dirent[]> {
+	const abs = resolvePath(dirPath);
+	let pending = dirCache.get(abs);
+	if (!pending) {
+		pending = fs.promises.readdir(abs, { withFileTypes: true }).catch(() => []);
+		dirCache.set(abs, pending);
 	}
+	return pending;
 }
 
 export async function readDir(dirPath: string): Promise<string[]> {

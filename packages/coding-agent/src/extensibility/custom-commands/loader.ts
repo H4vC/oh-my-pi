@@ -99,15 +99,13 @@ export async function discoverCustomCommands(
 		paths.push({ path: resolved, source });
 	};
 
+	// Missing directories need no existence pre-check: readdir's ENOENT is skipped below.
 	const commandDirs: Array<{ path: string; source: CustomCommandSource }> = [];
 	if (agentDir) {
-		const userCommandsDir = path.join(agentDir, "commands");
-		if (fs.existsSync(userCommandsDir)) {
-			commandDirs.push({ path: userCommandsDir, source: "user" });
-		}
+		commandDirs.push({ path: path.join(agentDir, "commands"), source: "user" });
 	}
 
-	for (const entry of getConfigDirs("commands", { cwd, existingOnly: true })) {
+	for (const entry of getConfigDirs("commands", { cwd })) {
 		const source = entry.level === "user" ? "user" : "project";
 		if (!commandDirs.some(d => d.path === entry.path)) {
 			commandDirs.push({ path: entry.path, source });
@@ -115,28 +113,41 @@ export async function discoverCustomCommands(
 	}
 
 	const indexCandidates = ["index.ts", "index.js", "index.mjs", "index.cjs"];
-	for (const { path: commandsDir, source } of commandDirs) {
-		let entries: fs.Dirent[];
-		try {
-			entries = await fs.promises.readdir(commandsDir, { withFileTypes: true });
-		} catch (error) {
-			if (!isEnoent(error)) {
-				logger.warn("Failed to read custom commands directory", { path: commandsDir, error: String(error) });
-			}
-			continue;
-		}
-		for (const entry of entries) {
-			if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
-			const commandDir = path.join(commandsDir, entry.name);
-
-			for (const filename of indexCandidates) {
-				const candidate = path.join(commandDir, filename);
-				if (fs.existsSync(candidate)) {
-					addPath(candidate, source);
-					break;
+	// Resolve every command directory's index file concurrently; results are
+	// appended afterwards in directory/entry order so first-seen dedupe holds.
+	const perDir = await Promise.all(
+		commandDirs.map(async ({ path: commandsDir, source }) => {
+			let entries: fs.Dirent[];
+			try {
+				entries = await fs.promises.readdir(commandsDir, { withFileTypes: true });
+			} catch (error) {
+				if (!isEnoent(error)) {
+					logger.warn("Failed to read custom commands directory", { path: commandsDir, error: String(error) });
 				}
+				return [];
 			}
-		}
+			const found = await Promise.all(
+				entries
+					.filter(entry => entry.isDirectory() && !entry.name.startsWith("."))
+					.map(async entry => {
+						const commandDir = path.join(commandsDir, entry.name);
+						const stats = await Promise.all(
+							indexCandidates.map(filename =>
+								fs.promises.stat(path.join(commandDir, filename)).then(
+									() => true,
+									() => false,
+								),
+							),
+						);
+						const index = stats.indexOf(true);
+						return index === -1 ? null : path.join(commandDir, indexCandidates[index]);
+					}),
+			);
+			return found.filter(candidate => candidate !== null).map(candidate => ({ path: candidate, source }));
+		}),
+	);
+	for (const dirPaths of perDir) {
+		for (const { path: candidate, source } of dirPaths) addPath(candidate, source);
 	}
 
 	return { paths };

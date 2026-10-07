@@ -502,20 +502,17 @@ export async function scanSkillsFromDir(
 		}
 	};
 
+	// No existence pre-check: `readFile` stats once, returns null for missing
+	// files and caches that answer, so a sync `existsSync` per skill only
+	// blocked the event loop and doubled the syscalls.
 	const work: Promise<void>[] = [];
 	if (options.includeSelf) {
-		const selfSkillPath = path.join(dir, "SKILL.md");
-		if (fs.existsSync(selfSkillPath)) {
-			work.push(loadSkill(selfSkillPath));
-		}
+		work.push(loadSkill(path.join(dir, "SKILL.md")));
 	}
 	for (const entry of entries) {
 		if (entry.name.startsWith(".")) continue;
 		if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
-		const skillPath = path.join(dir, entry.name, "SKILL.md");
-		if (fs.existsSync(skillPath)) {
-			work.push(loadSkill(skillPath));
-		}
+		work.push(loadSkill(path.join(dir, entry.name, "SKILL.md")));
 	}
 	await Promise.all(work);
 

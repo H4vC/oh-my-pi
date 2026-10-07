@@ -41,7 +41,7 @@ import { formatKeyHint } from "@oh-my-pi/pi-tui/app-keybindings";
 import type { SessionPickerOptions } from "@oh-my-pi/pi-tui/apps/session-picker";
 import { applyStartupCwd } from "./cli/startup-cwd";
 import { getLatestRelease } from "./cli/update-cli";
-import { findConfigFile } from "./config";
+import { findConfigFileAsync } from "./config";
 import { ModelRegistry } from "./config/model-registry";
 import { formatModelSelectorValue } from "@oh-my-pi/pi-tui/overlays/model-selector";
 import {
@@ -114,12 +114,7 @@ import type { ForeignSessionInfo, ForeignSessionSource, ForeignSessionStore } fr
 import { resolveResumableSession, type SessionInfo } from "./session/session-listing";
 import { ForkSourceNotFoundError, SessionManager, SessionMoveRefusedError } from "./session/session-manager";
 import { shouldShowStartupSplash } from "./startup-splash";
-import {
-	discoverSystemPromptOverride,
-	discoverTitleSystemPromptFile,
-	loadSystemPromptTemplateFile,
-	resolvePromptInput,
-} from "./system-prompt";
+import { discoverSystemPromptOverride, loadSystemPromptTemplateFile, resolvePromptInput } from "./system-prompt";
 import { createPersistedSubagentReviverFactory } from "./task/persisted-revive";
 import { createTelemetryExportConfig, initTelemetryExport, isTelemetryExportEnabled } from "./telemetry-export";
 import { cfgTelemetryOtlpExportEnabled } from "./telemetry-settings";
@@ -535,7 +530,7 @@ export function createAcpSessionFactory(args: AcpSessionFactoryOptions): AcpSess
 		// re-discover `TITLE_SYSTEM.md` against THIS session's `cwd` to keep the
 		// replan-driven title refresh consistent with the target project's
 		// policy (PR #3736 follow-up).
-		const titleSystemPromptSource = discoverTitleSystemPromptFile(cwd);
+		const titleSystemPromptSource = await discoverProjectFirstConfigFile("TITLE_SYSTEM.md", cwd);
 		const titleSystemPrompt = await resolvePromptInput(titleSystemPromptSource, "title system prompt");
 		const eventBus = new EventBus();
 		const trustedExtensions =
@@ -1280,17 +1275,16 @@ export async function createSessionManager(
 	return undefined;
 }
 
-/** Discover APPEND_SYSTEM.md file if no CLI append system prompt was provided */
-function discoverAppendSystemPromptFile(): string | undefined {
-	const projectPath = findConfigFile("APPEND_SYSTEM.md", { user: false });
-	if (projectPath) {
-		return projectPath;
-	}
-	const globalPath = findConfigFile("APPEND_SYSTEM.md", { user: true });
-	if (globalPath) {
-		return globalPath;
-	}
-	return undefined;
+/**
+ * Project-level config file first, then user-level: the APPEND_SYSTEM.md /
+ * TITLE_SYSTEM.md precedence. Async stats keep startup off sync `existsSync`.
+ */
+async function discoverProjectFirstConfigFile(subpath: string, cwd?: string): Promise<string | undefined> {
+	const [projectPath, userPath] = await Promise.all([
+		findConfigFileAsync(subpath, { user: false, cwd }),
+		findConfigFileAsync(subpath, { project: false, cwd }),
+	]);
+	return projectPath ?? userPath;
 }
 
 /** Apply resolved CLI/discovered prompt files without bypassing system prompt templates. */
@@ -1337,16 +1331,17 @@ export async function buildSessionOptions(
 		throw new Error("--system-prompt and --system-prompt-template cannot be combined");
 	}
 	const cwd = options.cwd;
-	const discoveredOverride =
+	const [discoveredOverride, appendPromptSource, titleSystemPromptSource] = await Promise.all([
 		parsed.systemPrompt === undefined && parsed.systemPromptTemplate === undefined
-			? await discoverSystemPromptOverride(cwd)
-			: undefined;
+			? discoverSystemPromptOverride(cwd)
+			: undefined,
+		parsed.appendSystemPrompt ?? discoverProjectFirstConfigFile("APPEND_SYSTEM.md"),
+		discoverProjectFirstConfigFile("TITLE_SYSTEM.md", cwd),
+	]);
 	const systemPromptSource =
 		parsed.systemPrompt ?? (discoveredOverride?.kind === "text" ? discoveredOverride.path : undefined);
 	const templatePath =
 		parsed.systemPromptTemplate ?? (discoveredOverride?.kind === "template" ? discoveredOverride.path : undefined);
-	const appendPromptSource = parsed.appendSystemPrompt ?? discoverAppendSystemPromptFile();
-	const titleSystemPromptSource = discoverTitleSystemPromptFile(cwd);
 	const [resolvedSystemPrompt, resolvedAppendPrompt, titleSystemPrompt, resolvedSystemPromptTemplate] =
 		await Promise.all([
 			discoveredOverride?.kind === "text"
@@ -1791,20 +1786,39 @@ export async function runRootCommand(
 		// session-critical database connection picks the right busy timeout.
 		// See getDbBusyTimeoutMs().
 		const isProtocolMode = mode === "rpc" || mode === "rpc-ui" || mode === "acp";
-		// Protocol modes own stdin; treating it as prompt text would consume JSON-RPC frames before their transports start.
-		const pipedInput = isProtocolMode ? undefined : await logger.time("readPipedInput", readPipedInput);
 		// Without a terminal on stdin the TUI cannot run, so such a launch is always
 		// headless: a piped or argv prompt runs like `-p`, and one with no prompt
 		// fails with a usage error instead of booting the interactive stack and
-		// exiting silently.
+		// exiting silently. Piped text implies a non-terminal stdin, so this is
+		// decided before the (possibly slow) pipe is drained.
 		const stdinIsTerminal = process.stdin.isTTY === true;
-		const autoPrint =
-			(pipedInput !== undefined || !stdinIsTerminal) && !parsedArgs.print && parsedArgs.mode === undefined;
+		const autoPrint = !stdinIsTerminal && !parsedArgs.print && parsedArgs.mode === undefined;
 		const isInteractive = !parsedArgs.print && !autoPrint && parsedArgs.mode === undefined;
 		// Before session resolution: resume, fork, and import act on these same
 		// startup-parse flags, so rejecting later would leave forked or imported
 		// transcripts (or an opened picker) behind a usage error.
 		validateGoalLaunch(parsedArgs, isInteractive);
+		// Only the interactive host renders a focusable Agent Hub / subagent session
+		// tree; declare it so headless subagent optimizations (e.g. skipping replan
+		// title refresh) can tell a focusable process from a print/RPC/eval one.
+		setInteractiveHost(isInteractive);
+		if (!isInteractive) {
+			stopPendingStartupComposer();
+		}
+		// Account routing must use the effective settings, including `--config` and
+		// `PI_CONFIG_FILES` overlays, rather than independently re-reading only the
+		// main config file during auth discovery. Neither depends on piped prompt
+		// text, so both start before stdin is drained (`producer | omp -p`).
+		const settingsPromise = deps.settings
+			? Promise.resolve(deps.settings)
+			: logger.time("settings:init", Settings.init, { cwd, configFiles: parsedArgs.config });
+		settingsPromise.catch(() => {});
+		const authStoragePromise = logger.time("discoverAuthStorage", async () =>
+			(deps.discoverAuthStorage ?? discoverAuthStorage)(undefined, { settings: await settingsPromise }),
+		);
+		authStoragePromise.catch(() => {});
+		// Protocol modes own stdin; treating it as prompt text would consume JSON-RPC frames before their transports start.
+		const pipedInput = isProtocolMode ? undefined : await logger.time("readPipedInput", readPipedInput);
 		// Without piped text the prompt must come from argv, which only the
 		// post-extension reparse can settle: an extension string flag's value
 		// (`--spawn-peer reviewer`) looks like a prompt here, and a boolean flag
@@ -1820,24 +1834,6 @@ export async function runRootCommand(
 		) {
 			exitWithoutTerminal();
 		}
-		// Only the interactive host renders a focusable Agent Hub / subagent session
-		// tree; declare it so headless subagent optimizations (e.g. skipping replan
-		// title refresh) can tell a focusable process from a print/RPC/eval one.
-		setInteractiveHost(isInteractive);
-		if (!isInteractive) {
-			stopPendingStartupComposer();
-		}
-		// Account routing must use the effective settings, including `--config` and
-		// `PI_CONFIG_FILES` overlays, rather than independently re-reading only the
-		// main config file during auth discovery.
-		const settingsPromise = deps.settings
-			? Promise.resolve(deps.settings)
-			: logger.time("settings:init", Settings.init, { cwd, configFiles: parsedArgs.config });
-		settingsPromise.catch(() => {});
-		const authStoragePromise = logger.time("discoverAuthStorage", async () =>
-			(deps.discoverAuthStorage ?? discoverAuthStorage)(undefined, { settings: await settingsPromise }),
-		);
-		authStoragePromise.catch(() => {});
 		let authStorage: AuthStorage;
 		try {
 			authStorage = await authStoragePromise;

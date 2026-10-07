@@ -5,8 +5,9 @@
  * from .agent/ and .agents/ directories at both user (~/) and project levels.
  * Project-level discovery walks up from cwd to repoRoot.
  */
+import * as fs from "node:fs";
 import * as path from "node:path";
-import { isWsl, windowsPathToWslMount } from "@oh-my-pi/pi-utils";
+import { getAgentDir, isRecord, isWsl, windowsPathToWslMount } from "@oh-my-pi/pi-utils";
 import { registerProvider } from "../capability";
 import { type ContextFile, contextFileCapability } from "../capability/context-file";
 import { readFile } from "../capability/fs";
@@ -105,6 +106,40 @@ export function getWslWindowsHomeCandidate(options: UserPathCandidateOptions = {
  */
 const wslHomeMemo = new Map<string, string | undefined>();
 
+/**
+ * The memo above lasts one process, but the probe costs up to two synchronous
+ * interop spawns ({@link HOST_PROBE_TIMEOUT_MS} each) on every WSL launch. A
+ * resolved host home is stable per distro and Windows profile, so successful
+ * answers persist under the agent dir; failures are never persisted so a
+ * transiently wedged interop pipe cannot disable the candidate for good.
+ */
+function wslHomeCachePath(): string {
+	return path.join(getAgentDir(), "cache", "wsl-host-home.json");
+}
+
+function readPersistedWslHome(key: string): string | undefined {
+	try {
+		// Sync read is forced by the synchronous candidate API; it replaces two sync spawns.
+		const data: unknown = JSON.parse(fs.readFileSync(wslHomeCachePath(), "utf8"));
+		if (isRecord(data) && data.key === key && typeof data.home === "string") return data.home;
+	} catch {
+		// Missing or unreadable cache: fall through to the live probe.
+	}
+	return undefined;
+}
+
+function resolveWslHome(env: NodeJS.ProcessEnv): string | undefined {
+	if (!isWsl(process.platform, env)) return undefined;
+	const persistKey = `${env.WSL_DISTRO_NAME ?? ""}\0${env.USERPROFILE ?? ""}`;
+	const persisted = readPersistedWslHome(persistKey);
+	if (persisted !== undefined) return persisted;
+	const resolved = getWslWindowsHomeCandidate();
+	if (resolved !== undefined) {
+		Bun.write(wslHomeCachePath(), JSON.stringify({ key: persistKey, home: resolved })).catch(() => {});
+	}
+	return resolved;
+}
+
 function getUserHomeCandidates(ctx: LoadContext): string[] {
 	const homes = [ctx.home];
 	const env = process.env;
@@ -113,7 +148,7 @@ function getUserHomeCandidates(ctx: LoadContext): string[] {
 	if (wslHomeMemo.has(key)) {
 		wslHome = wslHomeMemo.get(key);
 	} else {
-		wslHome = getWslWindowsHomeCandidate();
+		wslHome = resolveWslHome(env);
 		wslHomeMemo.set(key, wslHome);
 	}
 	if (wslHome && !homes.includes(wslHome)) homes.push(wslHome);

@@ -11,6 +11,7 @@
 ### Changed
 
 - Clarified how agents request line ranges in `read` calls with complete examples ([#13956](https://github.com/can1357/oh-my-pi/pull/13956) by [@Dante-dan](https://github.com/Dante-dan)).
+- Sped up startup: capability reads are shared, the WSL host home is cached, piped stdin no longer delays setup, and extension discovery runs concurrently ([#14699](https://github.com/can1357/oh-my-pi/pull/14699) by [@H4vC](https://github.com/H4vC))
 
 ### Fixed
 

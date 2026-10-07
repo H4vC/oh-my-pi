@@ -155,6 +155,32 @@ describe("custom tool loader", () => {
 		expect(result.errors[0]?.error).toContain("process.exit(3)");
 	});
 
+	it("runs each tool's factory before importing the next tool module", async () => {
+		const key = `__ompToolOrder${Date.now()}`;
+		const toolA = await writeTool(
+			"order-a.js",
+			[
+				`globalThis.${key} = ["import a"];`,
+				`export default () => { globalThis.${key}.push("factory a"); return []; };`,
+			].join("\n"),
+		);
+		const toolB = await writeTool(
+			"order-b.js",
+			[
+				`globalThis.${key}.push("import b");`,
+				`export default () => { globalThis.${key}.push("factory b"); return []; };`,
+			].join("\n"),
+		);
+		const globals = globalThis as Record<string, unknown>;
+		try {
+			const result = await loadCustomTools([{ path: toolA }, { path: toolB }], requireTempRoot(), []);
+			expect(result.errors).toEqual([]);
+			expect(globals[key]).toEqual(["import a", "factory a", "import b", "factory b"]);
+		} finally {
+			delete globals[key];
+		}
+	});
+
 	it("reports a tool entry missing a name instead of throwing", async () => {
 		const missingNameTool = await writeTool("missing-name.js", MISSING_NAME_SOURCE);
 

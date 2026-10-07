@@ -188,6 +188,30 @@ export function findConfigFile(subpath: string, options: GetConfigDirsOptions = 
 }
 
 /**
+ * Async {@link findConfigFile}: stats every candidate concurrently instead of
+ * blocking the event loop with sequential `existsSync` calls, then returns the
+ * highest-priority existing path.
+ */
+export async function findConfigFileAsync(
+	subpath: string,
+	options: GetConfigDirsOptions = {},
+): Promise<string | undefined> {
+	const candidates = getConfigDirs("", { ...options, existingOnly: false }).map(({ path: base }) =>
+		path.join(base, subpath),
+	);
+	const exists = await Promise.all(
+		candidates.map(filePath =>
+			fs.promises.stat(filePath).then(
+				() => true,
+				() => false,
+			),
+		),
+	);
+	const index = exists.indexOf(true);
+	return index === -1 ? undefined : candidates[index];
+}
+
+/**
  * Find the first existing config file with metadata.
  */
 export function findConfigFileWithMeta(

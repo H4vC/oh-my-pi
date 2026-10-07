@@ -345,16 +345,22 @@ export async function loadSkills(options: LoadSkillsOptions = {}): Promise<LoadS
 	const admitted = new Map<string, AdmittedBody>();
 	const collisionWarnings: SkillWarning[] = [];
 
+	// Glob patterns compile once per loadSkills call (on first use), not per skill.
+	let includeGlobs: Bun.Glob[] | undefined;
+	let ignoreGlobs: Bun.Glob[] | undefined;
+
 	// Check if skill name matches any of the include patterns
 	function matchesIncludePatterns(name: string): boolean {
 		if (includeSkills.length === 0) return true;
-		return includeSkills.some(pattern => new Bun.Glob(pattern).match(name));
+		includeGlobs ??= includeSkills.map(pattern => new Bun.Glob(pattern));
+		return includeGlobs.some(glob => glob.match(name));
 	}
 
 	// Check if skill name matches any of the ignore patterns
 	function matchesIgnorePatterns(name: string): boolean {
 		if (ignoredSkills.length === 0) return false;
-		return ignoredSkills.some(pattern => new Bun.Glob(pattern).match(name));
+		ignoreGlobs ??= ignoredSkills.map(pattern => new Bun.Glob(pattern));
+		return ignoreGlobs.some(glob => glob.match(name));
 	}
 
 	const disabledSkillNames = new Set(

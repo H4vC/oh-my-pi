@@ -598,57 +598,58 @@ export async function discoverExtensionPaths(
 	};
 
 	const ambient = options.ambient !== false;
-	if (ambient) {
+	// The scans below are independent: run them together, then append their
+	// results in the fixed precedence order so first-seen dedupe is unchanged.
+	const [discoveredModules, hookPaths, packageRootHooks, pluginPaths, configuredStats] = await Promise.all([
 		// 1. Discover extension modules via capability API (native .omp/.pi only).
 		// Scope the load to the native provider — the extension-module capability
 		// also has claude/codex/gemini/opencode providers, and their items were
 		// discarded here anyway (see #4198). The provider filter skips the walk
 		// entirely instead of running four foreign directory scans and dropping
 		// the results.
-		const discovered = await loadCapability<ExtensionModule>(extensionModuleCapability.id, {
-			...loadOptions,
-			providers: ["native"],
-		});
-		for (const ext of discovered.items) {
-			addPath(ext.path);
-		}
+		ambient
+			? loadCapability<ExtensionModule>(extensionModuleCapability.id, { ...loadOptions, providers: ["native"] })
+			: undefined,
+		// 2. Discover JS/TS hook factories and bind them through the extension
+		// runner, which owns the current runtime event bus. Non-ambient discovery
+		// scans only this invocation's configured package roots; it must not consult
+		// settings, installed packages, or process-global CLI injection state.
+		ambient && options.includeAmbientHooks !== false
+			? loadCapability<Hook>(hookCapability.id, loadOptions)
+			: undefined,
+		ambient
+			? undefined
+			: Promise.all(
+					configuredPaths.map(configuredPath => discoverHooksInPackageRoot(resolvePath(configuredPath, cwd))),
+				),
+		// 3. Discover extension entry points from installed plugins.
+		ambient ? getAllPluginExtensionPaths(cwd) : undefined,
+		// 4. Explicitly configured paths
+		Promise.all(
+			configuredPaths.map(async configuredPath => {
+				const resolved = resolvePath(configuredPath, cwd);
+				try {
+					return { resolved, stat: await fs.stat(resolved) };
+				} catch (err) {
+					if (!isEnoent(err)) throw err;
+					return { resolved, stat: null };
+				}
+			}),
+		),
+	]);
+
+	for (const ext of discoveredModules?.items ?? []) {
+		addPath(ext.path);
 	}
-
-	// 2. Discover JS/TS hook factories and bind them through the extension
-	// runner, which owns the current runtime event bus. Non-ambient discovery
-	// scans only this invocation's configured package roots; it must not consult
-	// settings, installed packages, or process-global CLI injection state.
-	if (ambient) {
-		if (options.includeAmbientHooks !== false) {
-			const hooks = await loadCapability<Hook>(hookCapability.id, loadOptions);
-			for (const hookPath of hooks.items
-				.map(hook => hook.path)
-				.filter(hookPath => isExtensionFile(path.basename(hookPath)))) {
-				addPath(hookPath);
-			}
-		}
-	} else {
-		for (const configuredPath of configuredPaths) {
-			addPaths(await discoverHooksInPackageRoot(resolvePath(configuredPath, cwd)));
-		}
+	for (const hook of hookPaths?.items ?? []) {
+		if (isExtensionFile(path.basename(hook.path))) addPath(hook.path);
 	}
-
-	// 3. Discover extension entry points from installed plugins.
-	if (ambient) {
-		addPaths(await getAllPluginExtensionPaths(cwd));
+	for (const rootHooks of packageRootHooks ?? []) {
+		addPaths(rootHooks);
 	}
+	if (pluginPaths) addPaths(pluginPaths);
 
-	// 4. Explicitly configured paths
-	for (const configuredPath of configuredPaths) {
-		const resolved = resolvePath(configuredPath, cwd);
-
-		let stat: fs1.Stats | null = null;
-		try {
-			stat = await fs.stat(resolved);
-		} catch (err) {
-			if (!isEnoent(err)) throw err;
-		}
-
+	for (const { resolved, stat } of configuredStats) {
 		if (stat?.isDirectory()) {
 			addPaths(resolveExtensionDirectory(resolved, CONFIGURED_EXTENSION_DIRECTORY_OPTIONS).files);
 			continue;
