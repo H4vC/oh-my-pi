@@ -11,6 +11,9 @@
 ### Changed
 
 - Clarified how agents request line ranges in `read` calls with complete examples ([#13956](https://github.com/can1357/oh-my-pi/pull/13956) by [@Dante-dan](https://github.com/Dante-dan)).
+- Fixed multi-second freezes after large pastes with unclosed tags in title/auto-thinking preprocessing ([#14720](https://github.com/can1357/oh-my-pi/pull/14720) by [@H4vC](https://github.com/H4vC))
+- Sped up image resizing up to ~2.6× with identical output ([#14720](https://github.com/can1357/oh-my-pi/pull/14720) by [@H4vC](https://github.com/H4vC))
+- Stopped text prediction from touching the filesystem on every keystroke while SmolLM weights download ([#14720](https://github.com/can1357/oh-my-pi/pull/14720) by [@H4vC](https://github.com/H4vC))
 
 ### Fixed
 
