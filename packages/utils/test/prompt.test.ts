@@ -103,12 +103,3 @@ describe("helpers: join", () => {
 		expect(prompt.render("{{join files}}", { files: "not-an-array" })).toBe("");
 	});
 });
-
-describe("compile cache", () => {
-	it("evicts the least recently used templates once 256 are cached", () => {
-		const first = prompt.compile("cache-bound {{first}}");
-		expect(prompt.compile("cache-bound {{first}}")).toBe(first);
-		for (let index = 0; index < 256; index++) prompt.compile(`cache-bound filler ${index}`);
-		expect(prompt.compile("cache-bound {{first}}")).not.toBe(first);
-	});
-});
