@@ -70,15 +70,6 @@ export interface ToolCardOptions {
 	ignoreTight?: boolean;
 	onInvalidate?: () => void;
 	onDispose?: () => void;
-	/**
-	 * Opt-in render memo. When set, it is called before every `render`/`describe`;
-	 * while the returned deps are element-wise identical (`Object.is`) to the
-	 * previous call's and the width is unchanged, the card reuses its last output
-	 * without running the builder. The deps MUST cover every input the builder
-	 * reads — including `spinnerFrame`, expansion and the output of any child
-	 * Component it returns. Omit to run the builder on every render (default).
-	 */
-	memoKey?: () => readonly unknown[];
 }
 
 /** Map transcript lifecycle terminology onto the output frame's visual states. */
@@ -106,43 +97,6 @@ function statusSpans(status: StatusLineOptions, theme: Theme): TspSpan[] {
 	const meta = status.meta?.map(flatten).filter(value => value.trim().length > 0) ?? [];
 	if (meta.length > 0) spans.push(span(" "), span(meta.join(theme.sep.dot), "dim"));
 	return spans;
-}
-
-/** Structural identity of the header fields `statusSpans` reads (icon/spinner live on the chip). */
-function statusKey(status: StatusLineOptions): string {
-	const meta = status.meta?.join("\u0001") ?? "";
-	const badge = status.badge ? `${status.badge.label}\u0001${status.badge.color}` : "";
-	return `${status.iconOverride ?? ""}\u0000${status.title}\u0000${status.titleColor ?? ""}\u0000${status.description ?? ""}\u0000${badge}\u0000${meta}`;
-}
-
-/** Inputs of the last plain-card join; identical inputs reuse the joined text. */
-interface PlainCardInputs {
-	width: number;
-	header: string | undefined;
-	headerMeta: string | undefined;
-	state: State | undefined;
-	applyBg: boolean | undefined;
-	sections: readonly { label?: string; lines: readonly string[]; separator?: boolean }[];
-}
-
-function samePlainInputs(previous: PlainCardInputs | undefined, next: PlainCardInputs): boolean {
-	if (
-		previous === undefined ||
-		previous.width !== next.width ||
-		previous.header !== next.header ||
-		previous.headerMeta !== next.headerMeta ||
-		previous.state !== next.state ||
-		previous.applyBg !== next.applyBg ||
-		previous.sections.length !== next.sections.length
-	) {
-		return false;
-	}
-	for (let i = 0; i < next.sections.length; i++) {
-		const a = previous.sections[i]!;
-		const b = next.sections[i]!;
-		if (a.label !== b.label || a.lines !== b.lines || a.separator !== b.separator) return false;
-	}
-	return true;
 }
 
 /** Last description of a card, reused while the snapshot's inputs are unchanged. */
@@ -181,12 +135,6 @@ export class ToolCard implements Component {
 	#lastBlockOptions?: OutputBlockOptions;
 	#plainText: Text;
 	#plainKey = "";
-	#plainInputs: PlainCardInputs | undefined;
-	#memoDeps: readonly unknown[] | undefined;
-	#memoWidth = -1;
-	#memoLines: readonly string[] | undefined;
-	#nativeMemoDeps: readonly unknown[] | undefined;
-	#nativeMemoCols = -1;
 	#renderedChildren: Component[] = [];
 	#disposed = false;
 	#native: NativeCardMemo | undefined;
@@ -201,25 +149,6 @@ export class ToolCard implements Component {
 	}
 
 	render(width: number): readonly string[] {
-		const memoDeps = this.#options.memoKey?.();
-		if (
-			memoDeps !== undefined &&
-			this.#memoLines !== undefined &&
-			this.#memoWidth === width &&
-			sameItems(this.#memoDeps, memoDeps)
-		) {
-			return this.#memoLines;
-		}
-		const lines = this.#renderSnapshot(width);
-		if (memoDeps !== undefined) {
-			this.#memoDeps = memoDeps;
-			this.#memoWidth = width;
-			this.#memoLines = lines;
-		}
-		return lines;
-	}
-
-	#renderSnapshot(width: number): readonly string[] {
 		const configuredPadding = this.#options.paddingX ?? 0;
 		const plainPadding = this.#options.ignoreTight === false ? getPaddingX(configuredPadding) : configuredPadding;
 		const defaultContentWidth =
@@ -308,17 +237,6 @@ export class ToolCard implements Component {
 			return this.#block.render(blockOptions, this.#theme);
 		}
 
-		const plainInputs: PlainCardInputs = {
-			width,
-			header,
-			headerMeta: snapshot.headerMeta,
-			state,
-			applyBg: snapshot.applyBg,
-			sections,
-		};
-		if (samePlainInputs(this.#plainInputs, plainInputs)) return this.#plainText.render(width);
-		this.#plainInputs = plainInputs;
-
 		const lines: string[] = [];
 		if (header) {
 			lines.push(snapshot.headerMeta ? `${header} ${snapshot.headerMeta}` : header);
@@ -326,7 +244,7 @@ export class ToolCard implements Component {
 		for (const section of sections) {
 			if (section.separator && lines.length > 0) lines.push("");
 			if (section.label) lines.push(section.label);
-			for (const line of section.lines) lines.push(line);
+			lines.push(...section.lines);
 		}
 		const text = lines.join("\n");
 		const key = `${width}:${text.length}:${Bun.hash(text).toString(36)}:${state ?? "info"}:${snapshot.applyBg ?? true}`;
@@ -347,24 +265,6 @@ export class ToolCard implements Component {
 	 * `section`s. The builder gets the surface width as its only width.
 	 */
 	describe(cx: DescribeContext): NativeNode {
-		const memoDeps = this.#options.memoKey?.();
-		if (
-			memoDeps !== undefined &&
-			this.#native !== undefined &&
-			this.#nativeMemoCols === cx.cols &&
-			sameItems(this.#nativeMemoDeps, memoDeps)
-		) {
-			return this.#native.node;
-		}
-		const node = this.#describeSnapshot(cx);
-		if (memoDeps !== undefined) {
-			this.#nativeMemoDeps = memoDeps;
-			this.#nativeMemoCols = cx.cols;
-		}
-		return node;
-	}
-
-	#describeSnapshot(cx: DescribeContext): NativeNode {
 		const snapshot = this.#build({ width: cx.cols, contentWidth: cx.cols, contentWidthFor: () => cx.cols });
 		const previous = this.#native;
 		const slotInputs: { label: string | undefined; separator: boolean; content: ToolCardContent }[] = [];
@@ -396,7 +296,7 @@ export class ToolCard implements Component {
 		}
 		this.#renderedChildren = nextChildren;
 
-		const head = snapshot.header ?? (snapshot.status ? statusKey(snapshot.status) : "");
+		const head = snapshot.header ?? (snapshot.status ? JSON.stringify(snapshot.status) : "");
 		if (
 			previous !== undefined &&
 			previous.head === head &&
@@ -476,10 +376,6 @@ export class ToolCard implements Component {
 		this.#block.invalidate();
 		this.#lastBlockOptions = undefined;
 		this.#plainKey = "";
-		this.#plainInputs = undefined;
-		this.#memoDeps = undefined;
-		this.#memoLines = undefined;
-		this.#nativeMemoDeps = undefined;
 		this.#plainText.invalidate();
 		for (const child of this.#renderedChildren) child.invalidate?.();
 		this.#options.onInvalidate?.();
