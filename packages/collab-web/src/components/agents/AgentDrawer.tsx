@@ -10,6 +10,8 @@ import { Transcript } from "../transcript/Transcript";
 
 const EMPTY_TOOLS: TranscriptProps["activeTools"] = new Map();
 const POLL_MS = 1200;
+/** Consecutive unchanged polls of a non-running agent before the loop stops. */
+const IDLE_POLLS_BEFORE_STOP = 4;
 
 export function AgentDrawer(props: {
 	agent: AgentSnapshot;
@@ -23,9 +25,7 @@ export function AgentDrawer(props: {
 	onClose(): void;
 }): ReactNode {
 	const { agent, progress, lifecycle, client, readOnly, host, onClose } = props;
-	/** Polled rows, appended in place; `entriesVersion` publishes each append. */
-	const entriesRef = useRef<SessionEntry[]>([]);
-	const [entriesVersion, setEntriesVersion] = useState(0);
+	const [entries, setEntries] = useState<readonly SessionEntry[]>([]);
 	const [fetchError, setFetchError] = useState<string | null>(null);
 	const [draft, setDraft] = useState("");
 	/** Resumes a stopped poll loop; null while no loop is mounted. */
@@ -44,13 +44,13 @@ export function AgentDrawer(props: {
 	// Live transcript: poll the host-side session file while the drawer is
 	// open, appending parsed JSONL entries. State resets when the agent
 	// changes; the interval and any in-flight reply are dropped on cleanup.
-	// Once the agent is not running and a poll finds the file unchanged, the
+	// Once the agent is not running, no partial JSONL line is pending, and
+	// IDLE_POLLS_BEFORE_STOP consecutive polls find the file unchanged, the
 	// loop stops; host activity for the agent resumes it (effect below).
 	// A frame-level host error is terminal: stop polling and show it (the
 	// host replies with an unchanged cursor, so retrying would loop hot).
 	useEffect(() => {
-		entriesRef.current = [];
-		setEntriesVersion(version => version + 1);
+		setEntries([]);
 		setFetchError(null);
 		if (!agent.hasSessionFile) return;
 		let disposed = false;
@@ -58,6 +58,8 @@ export function AgentDrawer(props: {
 		let inFlight = false;
 		let cursor = 0;
 		let carry = "";
+		let acc: readonly SessionEntry[] = [];
+		let idlePolls = 0;
 		let timer: Timer | null = null;
 		const stopPolling = () => {
 			if (timer !== null) {
@@ -85,11 +87,11 @@ export function AgentDrawer(props: {
 						cursor = decision.newSize;
 						carry = decision.carry;
 						if (decision.fresh.length > 0) {
-							const rows = entriesRef.current;
-							for (const entry of decision.fresh) rows.push(entry);
-							setEntriesVersion(version => version + 1);
+							acc = [...acc, ...decision.fresh];
+							setEntries(acc);
 						}
-						if (!grew && quiescentRef.current) stopPolling();
+						idlePolls = grew || !quiescentRef.current ? 0 : idlePolls + 1;
+						if (carry === "" && idlePolls >= IDLE_POLLS_BEFORE_STOP) stopPolling();
 						return;
 					}
 				}
@@ -98,6 +100,7 @@ export function AgentDrawer(props: {
 			}
 		};
 		const startPolling = () => {
+			idlePolls = 0;
 			void poll();
 			timer = setInterval(() => {
 				void poll();
@@ -199,8 +202,7 @@ export function AgentDrawer(props: {
 					<>
 						<Transcript
 							compact
-							entries={entriesRef.current}
-							entriesVersion={entriesVersion}
+							entries={entries}
 							stream={null}
 							streamDone={false}
 							activeTools={EMPTY_TOOLS}

@@ -318,7 +318,7 @@ describe("GuestClient frame apply", () => {
 			for (const text of ["a", "ab", "abc"]) {
 				client.applyFrameForTest(
 					{ t: "event", event: { type: "message_update", message: assistantMessage(text) } },
-					false,
+					{ flush: false },
 				);
 			}
 			expect(commits).toBe(0);
@@ -330,9 +330,9 @@ describe("GuestClient frame apply", () => {
 
 			client.applyFrameForTest(
 				{ t: "event", event: { type: "message_update", message: assistantMessage("abcd") } },
-				false,
+				{ flush: false },
 			);
-			client.applyFrameForTest({ t: "state", state: { ...STATE, isStreaming: true } }, false);
+			client.applyFrameForTest({ t: "state", state: { ...STATE, isStreaming: true } }, { flush: false });
 			expect(commits).toBe(2);
 			expect(client.getSnapshot().stream).toEqual(assistantMessage("abcd"));
 			vi.advanceTimersByTime(16);
@@ -371,12 +371,13 @@ describe("GuestClient frame apply", () => {
 		client.applyFrameForTest({ t: "agents", agents: [...AGENTS, sub] });
 		expect(client.getSnapshot().progress.has("Sub1")).toBe(true);
 
-		const before = client.getSnapshot().busVersion;
+		const before = client.getSnapshot().progress;
 		client.applyFrameForTest({ t: "agents", agents: AGENTS });
 		expect(client.getSnapshot().progress.has("Sub1")).toBe(true);
+		expect(client.getSnapshot().progress).toBe(before);
 		client.applyFrameForTest({ t: "agents", agents: AGENTS });
 		expect(client.getSnapshot().progress.has("Sub1")).toBe(false);
-		expect(client.getSnapshot().busVersion).toBeGreaterThan(before);
+		expect(client.getSnapshot().progress).not.toBe(before);
 	});
 
 	it("bye ends the session with a reason", () => {

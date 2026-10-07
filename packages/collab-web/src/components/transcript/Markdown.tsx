@@ -1,5 +1,6 @@
 import type { Token } from "@oh-my-pi/pi-utils/marked";
 import { Marked } from "@oh-my-pi/pi-utils/marked";
+import { listMayContinueAt } from "@oh-my-pi/pi-utils/marked-list";
 import type { ReactNode } from "react";
 import { memo, useMemo, useRef } from "react";
 import { escapeHtml } from "../../lib/format";
@@ -106,45 +107,8 @@ const NO_PREFIX: FrozenMarkdownPrefix = { source: "", html: "" };
  * it on into one block across blank lines, so nothing at or past it freezes.
  */
 const MATH_OPENER_LINE = /^ {0,3}(?:\$\$|\\\[)[ \t]*$/m;
-/** A list's marker, read from the start of its raw (see listMayContinueAt). */
-const LIST_MARKER = /^ {0,3}(?:([*+-])|\d{1,9}([.)]))/;
 /** A whitespace-only line from the sticky offset, capturing its terminator ("\n", or "" at end of text). */
 const WHITESPACE_LINE = /[^\S\n]*(\n|$)/y;
-
-/**
- * Whether a same-marker item could still continue the list `listRaw` across
- * the blank line in front of `start`, now or after any append (marked merges
- * such an item into one loose list). Mirrors the TUI Markdown component's
- * streaming-freeze rule; running out of text mid-marker answers "may continue".
- */
-function listMayContinueAt(text: string, start: number, listRaw: string): boolean {
-	const marker = LIST_MARKER.exec(listRaw);
-	if (marker === null) return true;
-	const n = text.length;
-	let i = start;
-	while (i < n && i - start < 3 && text.charCodeAt(i) === 0x20) i++;
-	if (i >= n) return true;
-	const bullet = marker[1];
-	if (bullet !== undefined) {
-		if (text[i] !== bullet) return false;
-		i++;
-	} else {
-		let digits = 0;
-		while (i < n && digits < 10) {
-			const c = text.charCodeAt(i);
-			if (c < 0x30 || c > 0x39) break;
-			digits++;
-			i++;
-		}
-		if (digits === 0 || digits > 9) return false;
-		if (i >= n) return true;
-		if (text[i] !== marker[2]) return false;
-		i++;
-	}
-	if (i >= n) return true;
-	const after = text.charCodeAt(i);
-	return after === 0x20 || after === 0x09 || after === 0x0a;
-}
 
 /**
  * Number of leading `tokens` (lexed from `src`) that end on a stable block
@@ -206,8 +170,11 @@ export function renderStreamingMarkdown(
 	try {
 		const tokens = md.lexer(rest);
 		// A reference definition resolves links anywhere, including the frozen
-		// prefix, which was lexed without it.
-		for (const _label in tokens.links) return { html: renderMarkdown(text), prefix: NO_PREFIX };
+		// prefix, which was lexed without it; with no prefix, `tokens` already
+		// lexed the whole text with its definitions.
+		for (const _label in tokens.links) {
+			return { html: base === NO_PREFIX ? md.parser(tokens) : renderMarkdown(text), prefix: NO_PREFIX };
+		}
 		const { count, end } = stableTokenCount(rest, tokens);
 		if (count === 0) return { html: base.html + md.parser(tokens), prefix: base };
 		const frozen: FrozenMarkdownPrefix = {

@@ -2,11 +2,10 @@
  * Guest-side session replica for the collab web client.
  *
  * Owns the relay socket, applies host frames in strict arrival order, and
- * exposes a {@link GuestSnapshot} through a `useSyncExternalStore`-compatible
- * subscribe/getSnapshot pair. The snapshot object gets a new reference per
- * commit; replaced collections inside it get new references too, except the
- * subagent `progress`/`lifecycle` maps, which are mutated in place and
- * versioned by `busVersion`.
+ * exposes an immutable {@link GuestSnapshot} through a
+ * `useSyncExternalStore`-compatible subscribe/getSnapshot pair. The snapshot
+ * object (and every replaced collection inside it) gets a new reference per
+ * commit, so React change detection is reference equality all the way.
  *
  * High-rate frames (streaming `message_update`, `tool_execution_update`,
  * subagent progress) are applied immediately but published at most once per
@@ -55,12 +54,10 @@ export interface GuestSnapshot {
 	entries: readonly SessionEntry[];
 	state: SessionState | null;
 	agents: readonly AgentSnapshot[];
-	/** Keyed by `payload.progress.id`. Mutated in place; changes bump `busVersion`. */
+	/** Keyed by `payload.progress.id`. */
 	progress: ReadonlyMap<string, SubagentProgressPayload>;
-	/** Keyed by `payload.id`. Mutated in place; changes bump `busVersion`. */
+	/** Keyed by `payload.id`. */
 	lifecycle: ReadonlyMap<string, SubagentLifecyclePayload>;
-	/** Incremented whenever `progress` or `lifecycle` changes. */
-	busVersion: number;
 	/** Streaming assistant ghost; held until the matching entry lands. */
 	stream: AssistantMessage | null;
 	streamDone: boolean;
@@ -142,9 +139,8 @@ export class GuestClient {
 	#pendingSnapshot: { entries: SessionEntry[]; live: SessionEntry[]; total: number } | null = null;
 	#state: SessionState | null = null;
 	#agents: readonly AgentSnapshot[] = [];
-	readonly #progress = new Map<string, SubagentProgressPayload>();
-	readonly #lifecycle = new Map<string, SubagentLifecyclePayload>();
-	#busVersion = 0;
+	#progress: ReadonlyMap<string, SubagentProgressPayload> = new Map();
+	#lifecycle: ReadonlyMap<string, SubagentLifecyclePayload> = new Map();
 	/**
 	 * Bus-map keys absent from the latest `agents` frame. Progress can arrive
 	 * before its agent is listed, so such keys survive one `agents` frame and
@@ -259,9 +255,9 @@ export class GuestClient {
 	 * `flush` (default), a commit deferred to the next animation frame is
 	 * published now, so the snapshot reflects the frame on return.
 	 */
-	applyFrameForTest(frame: HostFrame, flush = true): void {
+	applyFrameForTest(frame: HostFrame, options: { flush?: boolean } = {}): void {
 		this.#applyFrameSafe(frame);
-		if (flush && this.#cancelFrameCommit !== null) this.#commit();
+		if ((options.flush ?? true) && this.#cancelFrameCommit !== null) this.#commit();
 	}
 
 	#handleOpen(): void {
@@ -357,11 +353,8 @@ export class GuestClient {
 				this.#stream = null;
 				this.#streamDone = false;
 				this.#activeTools = new Map();
-				if (this.#progress.size > 0 || this.#lifecycle.size > 0) {
-					this.#progress.clear();
-					this.#lifecycle.clear();
-					this.#busVersion++;
-				}
+				this.#progress = new Map();
+				this.#lifecycle = new Map();
 				this.#unlistedBusIds.clear();
 				this.#working = frame.state.isStreaming;
 				this.#readOnly = frame.readOnly === true;
@@ -439,12 +432,10 @@ export class GuestClient {
 			case "bus":
 				if (frame.channel === "task:subagent:progress") {
 					const payload = frame.data as SubagentProgressPayload;
-					this.#progress.set(payload.progress.id, payload);
-					this.#busVersion++;
+					this.#progress = new Map(this.#progress).set(payload.progress.id, payload);
 				} else if (frame.channel === "task:subagent:lifecycle") {
 					const payload = frame.data as SubagentLifecyclePayload;
-					this.#lifecycle.set(payload.id, payload);
-					this.#busVersion++;
+					this.#lifecycle = new Map(this.#lifecycle).set(payload.id, payload);
 				}
 				break;
 			case "ui-request":
@@ -505,20 +496,26 @@ export class GuestClient {
 		for (const agent of this.#agents) listed.add(agent.id);
 		const previouslyUnlisted = this.#unlistedBusIds;
 		const unlisted = new Set<string>();
-		let pruned = false;
-		for (const map of [this.#progress, this.#lifecycle]) {
-			for (const id of map.keys()) {
-				if (listed.has(id)) continue;
-				if (previouslyUnlisted.has(id)) {
-					map.delete(id);
-					pruned = true;
-				} else {
-					unlisted.add(id);
+		const prune = <V>(map: ReadonlyMap<string, V>): ReadonlyMap<string, V> => {
+			let kept: Map<string, V> | null = null;
+			for (const [id, value] of map) {
+				const drop = !listed.has(id) && previouslyUnlisted.has(id);
+				if (!listed.has(id) && !drop) unlisted.add(id);
+				if (drop && kept === null) {
+					kept = new Map();
+					for (const [keptId, keptValue] of map) {
+						if (keptId === id) break;
+						kept.set(keptId, keptValue);
+					}
+				} else if (!drop && kept !== null) {
+					kept.set(id, value);
 				}
 			}
-		}
+			return kept ?? map;
+		};
+		this.#progress = prune(this.#progress);
+		this.#lifecycle = prune(this.#lifecycle);
 		this.#unlistedBusIds = unlisted;
-		if (pruned) this.#busVersion++;
 	}
 
 	#applyEvent(event: Extract<HostFrame, { t: "event" }>["event"]): void {
@@ -635,7 +632,6 @@ export class GuestClient {
 			agents: this.#agents,
 			progress: this.#progress,
 			lifecycle: this.#lifecycle,
-			busVersion: this.#busVersion,
 			stream: this.#stream,
 			streamDone: this.#streamDone,
 			activeTools: this.#activeTools,

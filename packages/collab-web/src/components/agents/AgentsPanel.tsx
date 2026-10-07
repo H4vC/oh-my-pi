@@ -78,15 +78,11 @@ const AgentRow = memo(function AgentRow(props: {
 	);
 });
 
-/**
- * Memoized: `progress`/`lifecycle` are mutated in place by the client, so
- * `busVersion` is the prop that changes when either does.
- */
+/** Memoized: the client replaces `progress`/`lifecycle` only when they change. */
 export const AgentsPanel = memo(function AgentsPanel(props: {
 	agents: readonly AgentSnapshot[];
 	progress: ReadonlyMap<string, SubagentProgressPayload>;
 	lifecycle: ReadonlyMap<string, SubagentLifecyclePayload>;
-	busVersion: number;
 	selectedId: string | null;
 	onSelect(id: string | null): void;
 }): ReactNode {

@@ -199,7 +199,6 @@ function Session({ client, onLeave, onRejoin }: SessionProps): ReactNode {
 								agents={snap.agents}
 								progress={snap.progress}
 								lifecycle={snap.lifecycle}
-								busVersion={snap.busVersion}
 								selectedId={selectedId}
 								onSelect={setSelectedId}
 							/>
