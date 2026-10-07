@@ -490,8 +490,10 @@ class SessionEntryIndex {
 	// Branch memo: getBranch() walks leaf-to-root per call (array + Set +
 	// reverse) on per-frame/per-turn paths. The branch only changes on
 	// insert/rebuild/setLeaf, so cache the array keyed on (leaf, generation).
-	// The array is shared read-only: no caller was found mutating it in place
-	// (reordering callers already .slice() first).
+	// An insert that extends the current leaf appends to the memo in place
+	// (O(1)) instead of discarding it. `branchView()` hands the memo out
+	// read-only and live: it grows when such an insert lands, while a leaf
+	// change or rebuild starts a fresh array (the old one is never mutated).
 	#generation = 0;
 	#branchCache: { leaf: string | null | undefined; generation: number; branch: SessionEntry[] } | undefined;
 
@@ -511,10 +513,26 @@ class SessionEntryIndex {
 	}
 
 	insert(entry: SessionEntry): void {
+		const previousLeaf = this.#leaf;
+		const isNew = !this.#entriesById.has(entry.id);
 		this.#entriesById.set(entry.id, entry);
 		this.#leaf = entry.id;
 		this.#generation++;
-		this.#branchCache = undefined;
+		const cache = this.#branchCache;
+		if (
+			isNew &&
+			cache !== undefined &&
+			cache.generation === this.#generation - 1 &&
+			cache.leaf === previousLeaf &&
+			entry.parentId === previousLeaf &&
+			entry.parentId !== null
+		) {
+			cache.branch.push(entry);
+			cache.leaf = entry.id;
+			cache.generation = this.#generation;
+		} else {
+			this.#branchCache = undefined;
+		}
 
 		const bucket = this.#children.get(entry.parentId);
 		if (bucket) bucket.push(entry);
@@ -582,24 +600,28 @@ class SessionEntryIndex {
 	}
 
 	pathTo(id: string | null | undefined = this.#leaf): SessionEntry[] {
-		// Fast path: the default leaf branch is memoized. The cached array
-		// stays private — callers may sort/reverse/splice the result (the
-		// return type is SessionEntry[]), so hand out a copy. Explicit fromId
-		// walks (rare) bypass the cache.
-		if (
-			(id === undefined || id === this.#leaf) &&
-			this.#branchCache !== undefined &&
-			this.#branchCache.generation === this.#generation
-		) {
-			return [...this.#branchCache.branch];
-		}
-		const leaf = id === undefined ? this.#leaf : id;
+		// The memoized default-leaf branch stays private — callers may
+		// sort/reverse/splice the result (the return type is SessionEntry[]),
+		// so hand out a copy. Explicit fromId walks (rare) bypass the cache.
+		if (id === undefined || id === this.#leaf) return this.branchView().slice();
+		return this.#walk(id);
+	}
+
+	/** The memoized active-leaf branch, without copying. Callers MUST NOT mutate it. */
+	branchView(): readonly SessionEntry[] {
+		const cache = this.#branchCache;
+		if (cache !== undefined && cache.generation === this.#generation) return cache.branch;
+		const branch = this.#walk(this.#leaf);
+		this.#branchCache = { leaf: this.#leaf, generation: this.#generation, branch };
+		return branch;
+	}
+
+	#walk(leaf: string | null): SessionEntry[] {
 		const branch: SessionEntry[] = [];
 		// Per-path visited set: a corrupt cyclic parentId chain must stop at
 		// the FIRST repeated id (a bare depth cap of `size` still duplicates
 		// entries when unrelated entries inflate the index — e.g. a self-cycle
-		// plus one unrelated entry yields [entry, entry]). The Set lives only
-		// on the miss path; hits copy the memoized array below.
+		// plus one unrelated entry yields [entry, entry]).
 		const seen = new Set<string>();
 		let cursor = leaf ? this.#entriesById.get(leaf) : undefined;
 
@@ -609,12 +631,6 @@ class SessionEntryIndex {
 			cursor = cursor.parentId ? this.#entriesById.get(cursor.parentId) : undefined;
 		}
 		branch.reverse();
-		if (id === undefined || id === this.#leaf) {
-			// Store AND return separate copies: the miss-path caller gets a
-			// mutable array it may sort/reverse/splice, while the cache keeps
-			// a private pristine copy for future hits (which also copy).
-			this.#branchCache = { leaf, generation: this.#generation, branch: [...branch] };
-		}
 		return branch;
 	}
 
@@ -3573,6 +3589,16 @@ export class SessionManager {
 	 */
 	getBranch(fromId?: string): SessionEntry[] {
 		return this.#index.pathTo(fromId ?? this.#index.leafId());
+	}
+
+	/**
+	 * The active-leaf branch (same entries as `getBranch()`) without the
+	 * defensive copy. The array is the manager's memo: never mutate it. It is
+	 * live — an entry appended to the current leaf is pushed onto it — so use
+	 * `getBranch()` when you need a snapshot that survives appends.
+	 */
+	getBranchView(): readonly SessionEntry[] {
+		return this.#index.branchView();
 	}
 
 	/**
