@@ -121,6 +121,26 @@ describe("fetchWithRetry", () => {
 			message: "Request was aborted",
 		});
 	});
+
+	it("cancels the discarded body of a retried response", async () => {
+		const responses: Response[] = [];
+		const customFetch = async () => {
+			const response =
+				responses.length === 0 ? new Response("busy", { status: 429 }) : new Response("done", { status: 200 });
+			responses.push(response);
+			return response;
+		};
+
+		const response = await fetchWithRetry("https://example.invalid/z", {
+			fetch: customFetch,
+			defaultDelayMs: 1,
+			maxAttempts: 2,
+		});
+
+		expect(await response.text()).toBe("done");
+		expect(responses).toHaveLength(2);
+		expect(responses[0]!.bodyUsed).toBe(true);
+	});
 });
 
 describe("extractRetryHint", () => {
