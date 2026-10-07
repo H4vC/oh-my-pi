@@ -25,7 +25,6 @@ import type {
 	SimpleStreamOptions,
 } from "@oh-my-pi/pi-ai";
 import { resolveApiKeyOnce } from "@oh-my-pi/pi-ai/auth-retry";
-import type { DiscoverAuthStorageOptions } from "@oh-my-pi/pi-ai/auth-broker/discover";
 import type { Dialect } from "@oh-my-pi/pi-ai/dialect";
 import { prewarmOpenAICodexResponses } from "@oh-my-pi/pi-ai/providers/openai-codex-responses";
 import { isOpenAICodexWebSocketPreferred } from "@oh-my-pi/pi-ai/providers/openai-codex-transport";
@@ -123,6 +122,11 @@ import {
 	wrapRegisteredTools,
 } from "./extensibility/extensions";
 import {
+	discoverSessionExtensionPaths,
+	loadCliExtensionProviders,
+	loadSessionExtensions,
+} from "./extensibility/extensions/session-loader";
+import {
 	createSkillDescriptionCompressor,
 	openSessionSkillDescriptionStore,
 	SkillDescriptionCatalog,
@@ -170,12 +174,8 @@ import {
 	type SecretObfuscator,
 } from "./secrets";
 import { AgentSession, type InitialRetryFallbackState, type PlanYolo, type Prewalk } from "./session/agent-session";
-import {
-	createAuthStorageSettingsSync,
-	discoverAuthStorage as discoverAuthStorageFromConfig,
-	type EffectiveSettingsScope,
-	loadEffectiveAuthAccountPolicyConfig,
-} from "./session/auth-broker-config";
+import { createAuthStorageSettingsSync } from "./session/auth-broker-config";
+import { discoverAuthStorage } from "./session/auth-discovery";
 import type { AuthStorage } from "./session/auth-storage";
 import {
 	CREDENTIAL_DISABLED_NOTICE_SOURCE,
@@ -942,40 +942,9 @@ export {
 
 // Discovery Functions
 
-/**
- * Create an AuthStorage instance.
- *
- * Default: local SQLite store at `<agentDir>/agent.db`.
- *
- * Broker mode: when `OMP_AUTH_BROKER_URL` is set, credentials are pulled from
- * a remote auth-broker over the wire. Refresh tokens never leave the broker;
- * the client receives access tokens with `refresh = "__remote__"` and calls
- * back into the broker through the {@link AuthStorageOptions.refreshOAuthCredential}
- * override to re-mint access tokens when needed.
- *
- * Account routing (`auth.accountPolicies`, `retry.usageReservePct`) comes from
- * effective settings: `options.settings` when given, else the matching global
- * instance, else a read-only load for `options.cwd`; explicit option values win.
- *
- * Delegates to {@link ./session/auth-broker-config} so the TUI and the catalog
- * generator share the same credential-discovery logic.
- */
-export async function discoverAuthStorage(
-	agentDir: string = getAgentDir(),
-	options: Omit<DiscoverAuthStorageOptions, "agentDir" | "configValueResolver"> &
-		Omit<EffectiveSettingsScope, "agentDir"> = {},
-): Promise<AuthStorage> {
-	const { settings, cwd, ...discoveryOptions } = options;
-	const policy = await loadEffectiveAuthAccountPolicyConfig({ settings, cwd, agentDir });
-	return discoverAuthStorageFromConfig(agentDir, {
-		...discoveryOptions,
-		accountPolicies: discoveryOptions.accountPolicies ?? policy.accountPolicies,
-		authStorageOptions: {
-			...discoveryOptions.authStorageOptions,
-			defaultReservePct: discoveryOptions.authStorageOptions?.defaultReservePct ?? policy.defaultReservePct,
-		},
-	});
-}
+// Re-exported from lightweight modules so CLI commands can import them without
+// evaluating the full agent-session graph.
+export { discoverAuthStorage, discoverSessionExtensionPaths, loadCliExtensionProviders, loadSessionExtensions };
 
 /**
  * Discover extensions from cwd.
@@ -984,96 +953,6 @@ export async function discoverExtensions(cwd?: string): Promise<LoadExtensionsRe
 	const resolvedCwd = cwd ?? getProjectDir();
 
 	return discoverAndLoadExtensions([], resolvedCwd);
-}
-
-type ExtensionDiscoveryOptions = Pick<
-	CreateAgentSessionOptions,
-	"disableExtensionDiscovery" | "additionalExtensionPaths" | "extensionRoots"
-> & { includeAmbientHooks?: boolean };
-
-type CliExtensionProviderOptions = ExtensionDiscoveryOptions & {
-	/** Discover extension model catalogs after registration (default true); usage-only commands skip it. */
-	discoverModels?: boolean;
-};
-
-/**
- * Path-only counterpart of {@link loadSessionExtensions}: the FS-heavy scan
- * without the per-session module load. Subagents reuse the parent's path list
- * (cached on {@link ToolSession.extensionPaths}) and rebuild Extension
- * instances themselves so each session's `ExtensionAPI` (cwd, eventBus,
- * runtime) is its own.
- */
-export async function discoverSessionExtensionPaths(
-	options: ExtensionDiscoveryOptions,
-	cwd: string,
-	settings: Settings,
-): Promise<string[]> {
-	const roots = options.extensionRoots?.();
-	const explicit = roots?.explicit ?? options.additionalExtensionPaths ?? [];
-	const explicitOnly = roots ? roots.mode === "explicit-only" : options.disableExtensionDiscovery;
-	const configuredPaths = explicitOnly
-		? [...explicit]
-		: [...explicit, ...(roots?.configured ?? cfgExtensions.get(settings))];
-	const disabledExtensionIds = explicitOnly ? undefined : cfgDisabledExtensions.get(settings);
-	return discoverExtensionPaths(configuredPaths, cwd, disabledExtensionIds, {
-		ambient: !explicitOnly,
-		includeAmbientHooks: options.includeAmbientHooks,
-	});
-}
-
-/**
- * Load the discovered/configured extensions for a session — everything {@link
- * createAgentSession} would load except the inline factory extensions it appends
- * itself. Extracted so the CLI can resolve extension-registered flags (and thus
- * classify `@file` arguments extension-aware) *before* a session — and its
- * terminal breadcrumb — is created, then hand the result back through
- * {@link CreateAgentSessionOptions.preloadedExtensions} so the work is not
- * repeated. Keep this the single source of the discovery branch logic.
- */
-export async function loadSessionExtensions(
-	options: ExtensionDiscoveryOptions,
-	cwd: string,
-	settings: Settings,
-	eventBus: EventBus,
-): Promise<LoadExtensionsResult> {
-	const paths = await discoverSessionExtensionPaths(options, cwd, settings);
-	const result = await logger.time("loadExtensions", loadExtensions, paths, cwd, eventBus);
-	for (const { path, error } of result.errors) {
-		logger.error("Failed to load extension", { path, error });
-	}
-	return result;
-}
-
-/**
- * Load discovered/configured extensions and register their providers into
- * `modelRegistry`, then discover the dynamic provider catalogs. One-shot CLIs
- * (`omp bench`, dry-balance) build a bare {@link ModelRegistry} that only knows
- * built-in catalog providers; without this, providers contributed by an
- * extension (e.g. a custom OpenAI-compatible provider under
- * `~/.omp/agent/extensions/`) never reach model resolution. Mirrors the
- * session / `omp models` path: drain the queued provider registrations, then
- * `refreshRuntimeProviders` so dynamically-discovered models exist before
- * selectors are resolved, unless `discoverModels: false` (e.g. `omp usage`,
- * which needs only registered usage providers).
- */
-export async function loadCliExtensionProviders(
-	modelRegistry: ModelRegistry,
-	settings: Settings,
-	cwd: string,
-	options: CliExtensionProviderOptions = {},
-): Promise<void> {
-	const eventBus = new EventBus();
-	const extensionsResult = await loadSessionExtensions(options, cwd, settings, eventBus);
-	const activeSources = extensionsResult.extensions.map(extension => extension.path);
-	modelRegistry.syncExtensionSources(activeSources);
-	for (const sourceId of new Set(activeSources)) {
-		modelRegistry.clearSourceRegistrations(sourceId);
-	}
-	for (const { name, config, sourceId } of extensionsResult.runtime.pendingProviderRegistrations) {
-		modelRegistry.registerProvider(name, config, sourceId);
-	}
-	extensionsResult.runtime.pendingProviderRegistrations = [];
-	if (options.discoverModels !== false) await modelRegistry.refreshRuntimeProviders();
 }
 
 /** Resolve prewalk with the same ordering before and after extension registration. */
@@ -1806,6 +1685,16 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 				})
 			: undefined;
 	discoveredSkillsPromise?.catch(() => {});
+	// Rule and custom-tool path discovery depend only on cwd/agentDir; start them
+	// with this batch instead of after skills, model resolution and MCP setup.
+	const rulesPromise =
+		options.rules === undefined ? loadCapability<Rule>(ruleCapability.id, { cwd, agentDir }) : undefined;
+	rulesPromise?.catch(() => {});
+	const customToolPathsPromise =
+		options.restrictToolNames === true || options.preloadedCustomToolPaths
+			? undefined
+			: logger.time("discoverCustomToolPaths", () => discoverCustomToolPaths([], cwd, agentDir));
+	customToolPathsPromise?.catch(() => {});
 
 	const sessionManager =
 		options.sessionManager ??
@@ -2055,9 +1944,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 		// Live source: enable/repeat/interrupt/context changes apply on the next check.
 		const ttsrManager = new TtsrManager(() => cfgTtsr.get(settings));
 		const rulesResult =
-			options.rules !== undefined
-				? { items: options.rules, warnings: undefined }
-				: await loadCapability<Rule>(ruleCapability.id, { cwd, agentDir });
+			options.rules !== undefined ? { items: options.rules, warnings: undefined } : await rulesPromise!;
 		const { rulebookRules, alwaysApplyRules } = bucketRules(rulesResult.items, ttsrManager, {
 			builtinRules: ttsrSettings.builtinRules,
 			disabledRules: ttsrSettings.disabledRules,
@@ -2540,9 +2427,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			// Forwarding the parent's `LoadedCustomTool[]` directly would route tool
 			// execution back through the parent — wrong for isolated tasks and for
 			// pending-action queueing.
-			customToolPaths =
-				options.preloadedCustomToolPaths ??
-				(await logger.time("discoverCustomToolPaths", () => discoverCustomToolPaths([], cwd, agentDir)));
+			customToolPaths = options.preloadedCustomToolPaths ?? (await customToolPathsPromise) ?? [];
 			const customToolsLoadResult = await logger.time("loadCustomTools", () =>
 				loadCustomTools(customToolPaths, cwd, builtInToolNames, action => queueResolveHandler(toolSession, action)),
 			);
