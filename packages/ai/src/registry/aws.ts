@@ -1,7 +1,6 @@
 import * as fs from "node:fs";
-import * as os from "node:os";
 import { $env, $flag } from "@oh-my-pi/pi-utils";
-import { hasConfiguredAwsProfile } from "../utils/aws-profile";
+import { awsSharedFilePaths, hasConfiguredAwsProfile } from "../utils/aws-profile";
 import { AUTHENTICATED_SENTINEL } from "./types";
 
 export interface AwsBedrockProviderOptions extends Readonly<Record<string, unknown>> {
@@ -44,31 +43,37 @@ function isEc2Host(): boolean {
 	return cachedEc2Host;
 }
 
-/** How long a shared-profile probe answers for an unchanged environment. */
-const AWS_PROFILE_PROBE_TTL_MS = 5_000;
-let awsProfileProbe: { key: string; expiresAtMs: number; value: boolean } | undefined;
+let awsProfileProbe: { key: string; value: boolean } | undefined;
+
+/** Change stamp of one shared INI file; a missing file has its own stamp. */
+function awsFileStamp(filePath: string): string {
+	const stat = fs.statSync(filePath, { throwIfNoEntry: false });
+	return stat ? `${stat.mtimeMs}:${stat.size}` : "-";
+}
 
 /**
- * `hasConfiguredAwsProfile` re-reads and re-parses both shared INI files on
- * every call, and availability checks run per request. The result is reused
- * for a short TTL while every environment input of that probe is unchanged;
- * file edits land once the TTL lapses.
+ * `hasConfiguredAwsProfile` re-reads and re-parses both shared INI files, and
+ * availability checks run per request. The result is reused while every
+ * environment input and both files' stat stamps are unchanged, so edits from
+ * `aws configure` / `aws sso login` are seen on the next call.
  */
 function hasCachedAwsProfile(): boolean {
+	const { credentialsPath, configPath } = awsSharedFilePaths();
 	const key = [
 		$env.AWS_PROFILE,
 		$env.AWS_SDK_LOAD_CONFIG,
-		$env.AWS_SHARED_CREDENTIALS_FILE,
-		$env.AWS_CONFIG_FILE,
-		os.homedir(),
+		// `credential_source` profiles resolve against these.
 		!!($env.AWS_ACCESS_KEY_ID && $env.AWS_SECRET_ACCESS_KEY),
 		!!($env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI || $env.AWS_CONTAINER_CREDENTIALS_FULL_URI),
 		$env.AWS_EC2_METADATA_DISABLED?.toLowerCase() === "true",
+		credentialsPath,
+		awsFileStamp(credentialsPath),
+		configPath,
+		awsFileStamp(configPath),
 	].join("\u0000");
-	const nowMs = Date.now();
-	if (awsProfileProbe?.key === key && awsProfileProbe.expiresAtMs > nowMs) return awsProfileProbe.value;
+	if (awsProfileProbe?.key === key) return awsProfileProbe.value;
 	const value = hasConfiguredAwsProfile();
-	awsProfileProbe = { key, expiresAtMs: nowMs + AWS_PROFILE_PROBE_TTL_MS, value };
+	awsProfileProbe = { key, value };
 	return value;
 }
 
