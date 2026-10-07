@@ -674,7 +674,7 @@ export class SessionMaintenance {
 	}
 
 	async #pruneToolOutputs(): Promise<{ prunedCount: number; tokensSaved: number } | undefined> {
-		const branchEntries = this.#host.sessionManager.getBranch();
+		const branchEntries = this.#host.sessionManager.getBranchView();
 		const keepBoundaryId = getLatestCompactionEntry(branchEntries)?.firstKeptEntryId;
 		const result = pruneToolOutputs(
 			branchEntries,
@@ -719,7 +719,7 @@ export class SessionMaintenance {
 	async #pruneStaleToolResults(): Promise<{ prunedCount: number; tokensSaved: number } | undefined> {
 		const { supersedeReads, dropUseless } = cfgCompaction.get(this.#host.settings);
 		if (!supersedeReads && !dropUseless) return undefined;
-		const branchEntries = this.#host.sessionManager.getBranch();
+		const branchEntries = this.#host.sessionManager.getBranchView();
 		const keepBoundaryId = getLatestCompactionEntry(branchEntries)?.firstKeptEntryId;
 		const result = pruneSupersededToolResults(
 			branchEntries,
@@ -733,6 +733,10 @@ export class SessionMaintenance {
 				// region once the cache is genuinely cold (idle exceeds the 1h TTL).
 				keepBoundaryId,
 				idleFlushMs: PRUNE_IDLE_FLUSH_MS,
+				// Each prune rewrites the whole session file: let tiny candidates
+				// (zero-match searches, small re-reads) accumulate instead of
+				// paying a full rewrite for a handful of tokens.
+				minimumSavings: DEFAULT_PRUNE_CONFIG.minimumSavings,
 				// Prefix-bound thinking cannot survive rewrites inside a warm provider prefix.
 				suffixTokenLimit: this.#host.model()?.thinking?.prefixBinding === true ? 0 : undefined,
 			}),
