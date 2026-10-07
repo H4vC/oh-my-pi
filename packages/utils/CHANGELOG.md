@@ -4,7 +4,8 @@
 
 ### Changed
 
-- Sped up `chalk` styling (~25× faster per `chalk.bold` call), `parseStreamingJson` (~40%) and logger record writes (~2×) ([#14665](https://github.com/can1357/oh-my-pi/pull/14665) by [@H4vC](https://github.com/H4vC))
+- Sped up terminal styling, streaming tool-argument parsing and log writes ([#14665](https://github.com/can1357/oh-my-pi/pull/14665) by [@H4vC](https://github.com/H4vC))
+
 ### Fixed
 
 - Fixed `ptree` retaining all drained stderr for a child's lifetime, so long-lived children (LSP, DAP, daemons) no longer grow the heap ([#14664](https://github.com/can1357/oh-my-pi/pull/14664) by [@H4vC](https://github.com/H4vC))

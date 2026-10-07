@@ -215,7 +215,8 @@ const ERROR_SCAN_BUDGET = 128;
 /**
  * Whether `value` may contain an {@link Error} that {@link jsonReplacer} must
  * unwrap. Walks what `JSON.stringify` serializes (arrays and own enumerable
- * keys, not `toJSON` results); an exhausted budget answers true.
+ * keys); objects with a `toJSON` other than `Date` may return an Error, and an
+ * exhausted budget answers true.
  */
 function mayContainError(root: unknown): boolean {
 	const stack: unknown[] = [root];
@@ -225,7 +226,8 @@ function mayContainError(root: unknown): boolean {
 		if (value === null || typeof value !== "object") continue;
 		if (value instanceof Error) return true;
 		if (--budget < 0) return true;
-		if ("toJSON" in value && typeof value.toJSON === "function") continue;
+		if (value instanceof Date) continue;
+		if ("toJSON" in value && typeof value.toJSON === "function") return true;
 		for (const child of Object.values(value)) stack.push(child);
 	}
 	return false;
@@ -375,10 +377,9 @@ function emitLocally(level: LogLevel, message: string, context: Record<string, u
 	const rank = LOG_LEVEL_RANK[level];
 	const file = rank <= transports.fileLevelRank ? transports.file : undefined;
 	if (!file && !transports.console) return;
-	const timestamp = formatLocalTimestamp(new Date());
-	const line = formatLogRecord(level, message, context, timestamp);
-	// The timestamp's date part is the local day the sink names files by.
-	file?.write(line, rank <= IMMEDIATE_FLUSH_RANK || exiting, timestamp.slice(0, timestamp.indexOf("T")));
+	const now = new Date();
+	const line = formatLogRecord(level, message, context, formatLocalTimestamp(now));
+	file?.write(line, rank <= IMMEDIATE_FLUSH_RANK || exiting, localDay(now));
 	if (transports.console) fs.writeSync(1, `${line}${os.EOL}`);
 }
 
