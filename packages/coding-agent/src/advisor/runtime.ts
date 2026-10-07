@@ -1571,9 +1571,12 @@ export class AdvisorRuntime {
 						this.#quotaExhausted = true;
 						this.#consecutiveFailures = 0;
 						this.#failureNotified = false;
+						// Render before clearing: the requeued text must be obfuscated
+						// against the full advisor value set this batch was prepared under.
+						const text = batch();
 						this.#clearSeenContext();
 						this.#pending.unshift({
-							text: batch(),
+							text,
 							rawMessages,
 							renderRevision: this.#renderRevision,
 							turns: finalTurns,

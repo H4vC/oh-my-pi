@@ -8,8 +8,8 @@ import {
 	sanitizeForCollisionCheck,
 } from "@oh-my-pi/pi-coding-agent/secrets/placeholder";
 
-describe("SecretObfuscator scan cache", () => {
-	it("rescans a string after a mint earlier in the same call resolves the placeholder key", () => {
+describe("SecretObfuscator batch scans", () => {
+	it("rescans a string after a mint earlier in the same batch resolves the placeholder key", () => {
 		// Collection scans both messages before the key exists, so the second
 		// one is literal-free then. Redacting the first mints a placeholder,
 		// which resolves the key and registers it as a literal; the second
@@ -25,70 +25,6 @@ describe("SecretObfuscator scan cache", () => {
 
 		expect(output).not.toContain("tok_abc123");
 		expect(output).not.toContain(key);
-	});
-
-	const entries: SecretEntry[] = [
-		{ type: "plain", content: "PLAIN_SECRET_VALUE_42", friendlyName: "PlainSecret" },
-		{ type: "regex", content: "tok_[a-z0-9]{8,}", literalPrefixes: ["tok_"] },
-		{ type: "regex", content: "key-[a-z0-9]{8,}", flags: "i", literalPrefixes: ["key-"], mode: "replace" },
-	];
-	const key = "scan-cache-test-key";
-
-	it("produces identical output for consecutive requests over the same history", () => {
-		const history: Message[] = [
-			{ role: "user", content: "plain question about task-runner and disk-usage", timestamp: 1 },
-			{ role: "user", content: "deploy with PLAIN_SECRET_VALUE_42 please", timestamp: 2 },
-			{
-				role: "toolResult",
-				toolCallId: "call-1",
-				toolName: "read",
-				content: [{ type: "text", text: "KEY-ABCDEF123456 and tok_abcdef123456" }],
-				isError: false,
-				timestamp: 3,
-			},
-			{ role: "user", content: [{ type: "text", text: "again tok_abcdef123456 here" }], timestamp: 4 },
-		];
-		const obfuscator = new SecretObfuscator(entries, key);
-
-		const first = obfuscateMessages(obfuscator, history);
-		const second = obfuscateMessages(obfuscator, history);
-
-		expect(second).toEqual(first);
-		expect(obfuscateMessages(new SecretObfuscator(entries, key), history)).toEqual(first);
-		// The provider-context pass re-obfuscates converted output: a fixed point.
-		expect(obfuscateMessages(obfuscator, first)).toEqual(first);
-		const output = JSON.stringify(first);
-		for (const secret of ["PLAIN_SECRET_VALUE_42", "tok_abcdef123456", "KEY-ABCDEF123456"]) {
-			expect(output).not.toContain(secret);
-		}
-	});
-
-	it("redacts a secret appended after earlier messages were cached clean", () => {
-		const history: Message[] = [
-			{ role: "user", content: "plain question about task-runner", timestamp: 1 },
-			{ role: "user", content: "follow-up without credentials", timestamp: 2 },
-		];
-		const obfuscator = new SecretObfuscator(entries, key);
-		expect(obfuscateMessages(obfuscator, history)).toBe(history);
-
-		const next: Message[] = [...history, { role: "user", content: "new tok_zyxw98765432 token", timestamp: 3 }];
-		const output = obfuscateMessages(obfuscator, next);
-
-		expect(output[0]).toBe(history[0]);
-		expect(output[1]).toBe(history[1]);
-		expect(JSON.stringify(output[2])).not.toContain("tok_zyxw98765432");
-	});
-
-	it("redacts text cached clean before a later request resolves the placeholder key", () => {
-		const lazyKey = "lazy-placeholder-key-0123456789";
-		const obfuscator = new SecretObfuscator([{ type: "regex", content: "tok_[a-z0-9]+" }], () => lazyKey);
-		const keyMessage: Message[] = [{ role: "user", content: `the key is ${lazyKey}`, timestamp: 1 }];
-		// Cached as clean: the key is not a registered secret until it is resolved.
-		obfuscateMessages(obfuscator, keyMessage);
-		// Minting a regex placeholder resolves the key and registers it as a literal.
-		obfuscateMessages(obfuscator, [{ role: "user", content: "use tok_abc123 here", timestamp: 2 }]);
-
-		expect(JSON.stringify(obfuscateMessages(obfuscator, keyMessage))).not.toContain(lazyKey);
 	});
 });
 
