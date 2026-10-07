@@ -76,8 +76,6 @@ import { wrapLeakedThinkingStream } from "./utils/leaked-thinking-stream";
 import { withThinkingLoopGuard } from "./utils/thinking-loop";
 import { withTransportFetch } from "./utils/transport-fetch";
 
-export { getEnvApiKey, getEnvApiKeyName, listProvidersWithEnvKey } from "./env-api-key";
-
 function isGoogleVertexAuthenticatedModel(model: Model<Api>): boolean {
 	return (
 		model.provider === "google-vertex" &&

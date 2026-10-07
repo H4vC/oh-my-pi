@@ -1,4 +1,3 @@
-import { LRUCache } from "@oh-my-pi/pi-utils/lru";
 import type { AuthCredentialStore } from "./store";
 import type { AuthCredential, OAuthCredential } from "./types";
 import type { CredentialPool } from "./pool";
@@ -8,13 +7,6 @@ import type { UsageCredential, UsageProvider, UsageReport } from "../usage";
 const USAGE_CACHE_PREFIX = "usage_cache:";
 const USAGE_FORCE_REFRESH_CACHE_PREFIX = "force-refresh:";
 const USAGE_REPORT_KEY_PREFIX = "report:";
-/** Parsed fresh report entries kept in process; bounds the memo's footprint. */
-const USAGE_REPORT_MEMO_MAX_ENTRIES = 256;
-/**
- * Longest a memoized report answers without re-reading the store, so a write
- * from another process (fresh report, invalidation) is seen within this window.
- */
-const USAGE_REPORT_MEMO_TTL_MS = 30_000;
 /** Minimum interval between non-exhausted header snapshots; used by UsageService. */
 export const USAGE_HEADER_INGEST_INTERVAL_MS = 60_000;
 const USAGE_LAST_GOOD_RETENTION_MS = 24 * 60 * 60_000;
@@ -144,15 +136,6 @@ export class UsageCache {
 	#refreshEpochs: Map<Provider, number> = new Map();
 	#allRefreshEpoch = 0;
 	#usageReportCacheKeysByProvider: Map<Provider, Set<string>> = new Map();
-	/**
-	 * Logically fresh report entries parsed from the store, so repeat ranking
-	 * reads skip the SQL read and `JSON.parse`. Every write through this cache
-	 * drops the affected keys; entries also lapse after {@link USAGE_REPORT_MEMO_TTL_MS}.
-	 */
-	#freshReports = new LRUCache<string, UsageCacheEntry<unknown>>({
-		max: USAGE_REPORT_MEMO_MAX_ENTRIES,
-		ttl: USAGE_REPORT_MEMO_TTL_MS,
-	});
 	#store: AuthCredentialStore;
 	#pool: CredentialPool;
 	#usageProviders: (provider: Provider) => UsageProvider | undefined;
@@ -207,25 +190,9 @@ export class UsageCache {
 	}
 
 	get<T>(key: string): UsageCacheEntry<T> | undefined {
-		const memo = this.#freshReports.get(key);
-		if (memo) {
-			if (memo.expiresAt > Date.now()) return memo as UsageCacheEntry<T>;
-			this.#freshReports.delete(key);
-		}
 		const raw = this.#store.getCache(`${USAGE_CACHE_PREFIX}${key}`);
 		if (!raw) return undefined;
-		const entry = parseUsageCacheEntry<T>(raw);
-		// Only reports: null entries are failure cooldowns, which must stay exact across processes.
-		if (
-			entry &&
-			typeof entry.value === "object" &&
-			entry.value !== null &&
-			entry.expiresAt > Date.now() &&
-			key.startsWith(USAGE_REPORT_KEY_PREFIX)
-		) {
-			this.#freshReports.set(key, entry);
-		}
-		return entry;
+		return parseUsageCacheEntry<T>(raw);
 	}
 
 	getStale<T>(key: string): UsageCacheEntry<T> | undefined {
@@ -244,14 +211,10 @@ export class UsageCache {
 		});
 		const durableExpiresAt =
 			value === null ? entry.expiresAt : Math.max(entry.expiresAt, Date.now() + USAGE_LAST_GOOD_RETENTION_MS);
-		this.#freshReports.delete(key);
 		this.#store.setCache(`${USAGE_CACHE_PREFIX}${key}`, payload, Math.floor(durableExpiresAt / 1000));
 	}
 
 	deletePrefix(prefix: string): boolean {
-		for (const key of this.#freshReports.keys()) {
-			if (key.startsWith(prefix)) this.#freshReports.delete(key);
-		}
 		if (!this.#store.deleteCachePrefix) return false;
 		this.#store.deleteCachePrefix(`${USAGE_CACHE_PREFIX}${prefix}`);
 		return true;

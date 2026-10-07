@@ -3,7 +3,6 @@
  *
  * Lives outside `stream.ts` so auth code (AuthStorage, credential cascade,
  * usage) can resolve env keys without importing the whole provider stack.
- * `stream.ts` re-exports these for its existing import path.
  */
 import { providerEntries } from "@oh-my-pi/pi-catalog/compat/providers";
 import { $env, $pickenv } from "@oh-my-pi/pi-utils";
