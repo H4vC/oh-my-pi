@@ -14,7 +14,6 @@ import type {
 	LspJsonRpcResponse,
 	LspTransport,
 	LspWriteSink,
-	OpenFile,
 	PublishDiagnosticsParams,
 	ServerConfig,
 	WorkspaceEdit,
@@ -1104,7 +1103,6 @@ export async function getOrCreateClient(
 			dynamicCapabilityRegistrations: new Map(),
 			openFiles: new Map(),
 			pendingRequests: new Map(),
-			messageBuffer: new Uint8Array(0),
 			isReading: false,
 			status: "connecting",
 			lastActivity: Date.now(),
@@ -1244,53 +1242,6 @@ function documentSignature(content: string): number | bigint {
 }
 
 /**
- * Open documents kept per client. Each one is held in server memory and re-sent
- * by refresh-all paths, so the least recently touched overlays beyond this cap
- * are closed.
- */
-const MAX_OPEN_FILES = 64;
-/**
- * Documents touched within this window are never evicted, so a batch of writes
- * or an in-flight diagnostics wait keeps its overlay even past the cap.
- */
-const OPEN_FILE_EVICTION_GRACE_MS = 60_000;
-const openFileTouchedAt = new WeakMap<OpenFile, number>();
-
-/** Mark `info` as the most recently touched document, unless it was closed meanwhile. */
-function touchOpenFile(client: LspClient, uri: string, info: OpenFile): void {
-	if (client.openFiles.get(uri) !== info) return;
-	client.openFiles.delete(uri);
-	client.openFiles.set(uri, info);
-	openFileTouchedAt.set(info, Date.now());
-}
-
-/** Track a freshly opened document and close idle overlays beyond {@link MAX_OPEN_FILES}. */
-function trackOpenedFile(client: LspClient, uri: string, info: OpenFile): void {
-	// Delete first so a racing re-open moves to the most-recent end of the touch order.
-	client.openFiles.delete(uri);
-	client.openFiles.set(uri, info);
-	openFileTouchedAt.set(info, Date.now());
-	if (client.openFiles.size <= MAX_OPEN_FILES) return;
-	const idleBefore = Date.now() - OPEN_FILE_EVICTION_GRACE_MS;
-	// openFiles is kept in touch order, so iteration visits least recently used first.
-	for (const [victimUri, victim] of client.openFiles) {
-		if (client.openFiles.size <= MAX_OPEN_FILES) return;
-		if ((openFileTouchedAt.get(victim) ?? 0) > idleBefore) return;
-		if (fileOperationLocks.has(`${client.name}:${victimUri}`) || pendingDiskWrites.has(victimUri)) continue;
-		client.openFiles.delete(victimUri);
-		client.diagnostics.delete(victimUri);
-		// Queued synchronously, so a later reopen of the same URI is ordered after this close.
-		sendNotification(client, "textDocument/didClose", { textDocument: { uri: victimUri } }).catch(err => {
-			logger.debug("LSP didClose for evicted document failed", {
-				server: client.name,
-				uri: victimUri,
-				error: err instanceof Error ? err.message : String(err),
-			});
-		});
-	}
-}
-
-/**
  * Mark a file whose server overlay OMP has advanced ahead of disk for an in-flight
  * write. While marked, {@link reconcileFileFromDisk} skips reading disk back into
  * the server, because the on-disk file is the *stale* side until the write commits.
@@ -1367,7 +1318,7 @@ export async function ensureFileOpen(client: LspClient, filePath: string, signal
 			signal,
 		);
 
-		trackOpenedFile(client, uri, { version: 1, languageId, syncedHash: documentSignature(content) });
+		client.openFiles.set(uri, { version: 1, languageId, syncedHash: documentSignature(content) });
 		client.lastActivity = Date.now();
 	})();
 
@@ -1429,7 +1380,6 @@ export async function reconcileFileFromDisk(
 			await ensureFileOpen(client, filePath, signal);
 			return;
 		}
-		touchOpenFile(client, uri, info);
 
 		let content: string;
 		try {
@@ -1534,12 +1484,11 @@ export async function syncContent(
 				},
 				signal,
 			);
-			trackOpenedFile(client, uri, { version: 1, languageId, syncedHash: documentSignature(content) });
+			client.openFiles.set(uri, { version: 1, languageId, syncedHash: documentSignature(content) });
 			client.lastActivity = Date.now();
 			return;
 		}
 
-		touchOpenFile(client, uri, info);
 		const version = ++info.version;
 		throwIfAborted(signal);
 		await sendNotification(
@@ -1564,22 +1513,32 @@ export async function syncContent(
 }
 
 /**
+ * Whether the server opted into full text on `didSave`
+ * (`textDocumentSync.save.includeText`); otherwise it already has the text from didChange.
+ */
+function saveIncludesText(client: LspClient): boolean {
+	const sync = client.serverCapabilities?.textDocumentSync;
+	const save = typeof sync === "object" && sync !== null && "save" in sync ? sync.save : undefined;
+	return typeof save === "object" && save !== null && "includeText" in save && save.includeText === true;
+}
+
+/**
  * Notify LSP that a file was saved.
- * Assumes content was already synced via syncContent - just sends didSave.
+ * Assumes content was already synced via syncContent; the saved text is read
+ * back only for servers that asked for it.
  */
 export async function notifySaved(client: LspClient, filePath: string, signal?: AbortSignal): Promise<void> {
 	const uri = fileToUri(filePath);
 	const info = client.openFiles.get(uri);
 	if (!info) return; // File not open, nothing to notify
 
-	touchOpenFile(client, uri, info);
+	throwIfAborted(signal);
+	const text = saveIncludesText(client) ? await Bun.file(filePath).text() : undefined;
 	throwIfAborted(signal);
 	await sendNotification(
 		client,
 		"textDocument/didSave",
-		{
-			textDocument: { uri },
-		},
+		text === undefined ? { textDocument: { uri } } : { textDocument: { uri }, text },
 		signal,
 	);
 	client.lastActivity = Date.now();
@@ -1635,11 +1594,7 @@ export async function notifyWorkspaceWatchedFiles(
 			if (clientChanges.length === 0) return;
 			await sendNotification(client, "workspace/didChangeWatchedFiles", { changes: clientChanges }, sendSignal);
 			if (clientChanges.every(change => change.type === FileChangeType.Changed)) return;
-			await Promise.all(
-				Array.from(client.openFiles.keys(), uri =>
-					refreshDocument(client, uriToFile(uri), sendSignal, { explicit: false }),
-				),
-			);
+			await Promise.all(Array.from(client.openFiles.keys(), uri => refreshFile(client, uriToFile(uri), sendSignal)));
 		}),
 	);
 	throwIfAborted(signal);
@@ -1655,24 +1610,6 @@ export async function notifyWorkspaceWatchedFiles(
  * Increments version, sends didChange and didSave notifications.
  */
 export async function refreshFile(client: LspClient, filePath: string, signal?: AbortSignal): Promise<void> {
-	await refreshDocument(client, filePath, signal, { explicit: true });
-}
-
-interface RefreshDocumentOptions {
-	/**
-	 * A caller asked for this document: open it when untracked and mark it recently
-	 * used. Refresh-all sweeps pass `false` so they neither reopen documents closed
-	 * meanwhile nor shield every overlay from LRU eviction.
-	 */
-	explicit: boolean;
-}
-
-async function refreshDocument(
-	client: LspClient,
-	filePath: string,
-	signal: AbortSignal | undefined,
-	options: RefreshDocumentOptions,
-): Promise<void> {
 	throwIfAborted(signal);
 	const uri = fileToUri(filePath);
 	const lockKey = `${client.name}:${uri}`;
@@ -1691,10 +1628,9 @@ async function refreshDocument(
 		const info = client.openFiles.get(uri);
 
 		if (!info) {
-			if (options.explicit) await ensureFileOpen(client, filePath, signal);
+			await ensureFileOpen(client, filePath, signal);
 			return;
 		}
-		if (options.explicit) touchOpenFile(client, uri, info);
 
 		let content: string;
 		try {
@@ -1718,16 +1654,10 @@ async function refreshDocument(
 		);
 		throwIfAborted(signal);
 
-		// `didSave` carries the full text only when the server opted into it via
-		// `textDocumentSync.save.includeText`; it already has the text from didChange.
-		const sync = client.serverCapabilities?.textDocumentSync;
-		const save = typeof sync === "object" && sync !== null && "save" in sync ? sync.save : undefined;
-		const includeText =
-			typeof save === "object" && save !== null && "includeText" in save && save.includeText === true;
 		await sendNotification(
 			client,
 			"textDocument/didSave",
-			includeText ? { textDocument: { uri }, text: content } : { textDocument: { uri } },
+			saveIncludesText(client) ? { textDocument: { uri }, text: content } : { textDocument: { uri } },
 			signal,
 		);
 
