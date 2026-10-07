@@ -116,3 +116,38 @@ test("a failing message_update handler does not block later updates", async () =
 		authStorage.close();
 	}
 });
+
+test("a slow message_update handler drains a backlog as merged deltas without losing text", async () => {
+	const { api, authStorage, session, emit } = await makeSession();
+	const firstStarted = Promise.withResolvers<void>();
+	const releaseFirst = Promise.withResolvers<void>();
+	const drained = Promise.withResolvers<void>();
+	const deltas = Array.from({ length: 500 }, (_, i) => `d${i};`);
+	const last = deltas[deltas.length - 1];
+	const received: string[] = [];
+	api.on("message_update", async event => {
+		if (event.assistantMessageEvent.type !== "text_delta") return;
+		const delta = event.assistantMessageEvent.delta;
+		received.push(delta);
+		if (received.length === 1) {
+			firstStarted.resolve();
+			await releaseFirst.promise;
+		}
+		if (delta.endsWith(last)) drained.resolve();
+	});
+	try {
+		emit("first");
+		await firstStarted.promise;
+		for (const delta of deltas) emit(delta);
+		releaseFirst.resolve();
+		await drained.promise;
+		expect(received.join("")).toBe(`first${deltas.join("")}`);
+		// Under the backlog threshold each delta is delivered alone; past it they merge.
+		expect(received.length).toBeLessThan(deltas.length + 1);
+		expect(received.slice(1, 64)).toEqual(deltas.slice(0, 63));
+	} finally {
+		releaseFirst.resolve();
+		await session.dispose();
+		authStorage.close();
+	}
+});
