@@ -44,12 +44,6 @@ const INITIAL_TAIL_BYTES = 256 * 1024;
 const MAX_ROWS_PER_AGENT = 256;
 const DEFAULT_QUERY_LIMIT = 200;
 const MAX_QUERY_LIMIT = 2_000;
-/**
- * Transcript response rows keep at most this many summary characters. Every
- * consumer renders summaries as one terminal-width line, so the tail of a
- * long reply is never shown; retaining it cost up to 256 full replies per agent.
- */
-const MAX_SUMMARY_CHARS = 1_024;
 
 function recordOf(value: unknown): Record<string, unknown> | undefined {
 	return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -65,25 +59,14 @@ function timestampOf(value: unknown, fallback: number): number {
 }
 
 function textContent(content: unknown): string {
-	if (typeof content === "string") return capSummary(content);
+	if (typeof content === "string") return activityOneLine(content);
 	if (!Array.isArray(content)) return "";
 	const parts: string[] = [];
-	let length = 0;
 	for (const blockValue of content) {
 		const block = recordOf(blockValue);
-		if (block?.type !== "text" || typeof block.text !== "string") continue;
-		parts.push(block.text);
-		length += block.text.length + 1;
-		// Whitespace collapse can shrink the text, so keep a generous margin.
-		if (length > MAX_SUMMARY_CHARS * 4) break;
+		if (block?.type === "text" && typeof block.text === "string") parts.push(block.text);
 	}
-	return capSummary(parts.join(" "));
-}
-
-function capSummary(text: string): string {
-	const raw = text.length > MAX_SUMMARY_CHARS * 4 ? text.slice(0, MAX_SUMMARY_CHARS * 4) : text;
-	const line = activityOneLine(raw);
-	return line.length > MAX_SUMMARY_CHARS ? line.slice(0, MAX_SUMMARY_CHARS) : line;
+	return activityOneLine(parts.join(" "));
 }
 
 function sameRow(a: AgentActivityRow, b: AgentActivityRow): boolean {
@@ -187,8 +170,8 @@ function toolBlocks(content: unknown): Array<{ id: string; name: string; args: u
 }
 
 /**
- * Insert-or-replace by id without sorting; `#consume` sorts and trims once per
- * batch via {@link trimRows}.
+ * Insert-or-replace by id without sorting; `#consume` sorts and trims via
+ * {@link trimRows} once per batch and whenever a backlog doubles the bound.
  */
 function upsertRow(rows: AgentActivityRow[], index: Map<string, number>, row: AgentActivityRow): void {
 	const existing = index.get(row.id);
@@ -207,6 +190,13 @@ function trimRows(state: TranscriptState): void {
 	for (const [toolCallId, row] of state.toolRows) {
 		if (!retained.has(row.id)) state.toolRows.delete(toolCallId);
 	}
+}
+
+/** Row position by id, rebuilt after {@link trimRows} reorders the rows. */
+function rowIndex(rows: readonly AgentActivityRow[]): Map<string, number> {
+	const index = new Map<string, number>();
+	for (let position = 0; position < rows.length; position++) index.set(rows[position]!.id, position);
+	return index;
 }
 
 interface QueryCacheEntry {
@@ -351,6 +341,7 @@ export class AgentActivityIndex {
 			stat.size < state.offset ||
 			(stat.size === state.offset && stat.mtimeMs !== state.mtimeMs)
 		) {
+			const hadRows = (state?.rows.length ?? 0) > 0;
 			state = {
 				path: sessionFile,
 				offset: Math.max(0, stat.size - INITIAL_TAIL_BYTES),
@@ -360,6 +351,8 @@ export class AgentActivityIndex {
 				toolRows: new Map(),
 			};
 			this.#states.set(agentId, state);
+			// The rotated transcript's rows are gone even if the new one yields none.
+			if (hadRows) this.#notify();
 		}
 		if (stat.size === state.offset && stat.mtimeMs === state.mtimeMs) return;
 		const start = state.offset;
@@ -400,8 +393,11 @@ export class AgentActivityIndex {
 		if (result.newSize < state.offset) {
 			state.offset = Math.max(0, result.newSize - INITIAL_TAIL_BYTES);
 			state.pending = "";
+			const hadRows = state.rows.length > 0;
 			state.rows = [];
 			state.toolRows.clear();
+			// The truncated transcript's rows are gone even if the new tail yields none.
+			if (hadRows) this.#notify();
 			try {
 				result = await this.#remote?.readTranscript(agentId, state.offset);
 			} catch {
@@ -424,8 +420,7 @@ export class AgentActivityIndex {
 		const lines = text.split("\n");
 		state.pending = complete ? "" : (lines.pop() ?? "");
 		let changed = false;
-		const index = new Map<string, number>();
-		for (let position = 0; position < state.rows.length; position++) index.set(state.rows[position]!.id, position);
+		let index = rowIndex(state.rows);
 		for (const line of lines) {
 			if (!line.trim()) continue;
 			let entry: Record<string, unknown> | undefined;
@@ -471,6 +466,11 @@ export class AgentActivityIndex {
 					state.toolRows.set(call.id, row);
 					upsertRow(state.rows, index, row);
 					changed = true;
+				}
+				// A backlog may hold far more rows than are kept: trim as it grows, not once at the end.
+				if (state.rows.length >= MAX_ROWS_PER_AGENT * 2) {
+					trimRows(state);
+					index = rowIndex(state.rows);
 				}
 				continue;
 			}

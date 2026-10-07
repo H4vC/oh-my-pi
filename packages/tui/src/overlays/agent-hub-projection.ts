@@ -30,6 +30,9 @@ interface FallbackReadStamp {
 	last: unknown;
 	/** Usage and block count of the last message, which a streaming turn mutates in place. */
 	lastShape: string;
+	/** Session model, whose context window the context gauge reports. */
+	model: unknown;
+	contextWindow: number | null | undefined;
 }
 
 /** Stamp of each cached fallback read, keyed by the cache entry so it cannot outlive that read. */
@@ -50,13 +53,23 @@ function fallbackReadStamp(session: NonNullable<AgentRecordLike["session"]>): Fa
 		const messages = session.agent?.state?.messages;
 		if (!Array.isArray(messages)) return undefined;
 		const last = messages[messages.length - 1];
-		return { messages, length: messages.length, last, lastShape: lastMessageShape(last) };
+		return {
+			messages,
+			length: messages.length,
+			last,
+			lastShape: lastMessageShape(last),
+			model: session.model,
+			contextWindow: session.model?.contextWindow,
+		};
 	} catch {
 		return undefined;
 	}
 }
 
-/** Whether a cached fallback read still matches the session's message list (append, compaction, rewrite, streaming tail). */
+/**
+ * Whether a cached fallback read still matches the session's message list
+ * (append, compaction, rewrite, streaming tail) and model (context window).
+ */
 function fallbackReadCurrent(entry: object, session: NonNullable<AgentRecordLike["session"]>): boolean {
 	const stamp = fallbackReadStamps.get(entry);
 	if (!stamp) return false;
@@ -66,7 +79,9 @@ function fallbackReadCurrent(entry: object, session: NonNullable<AgentRecordLike
 		current.messages === stamp.messages &&
 		current.length === stamp.length &&
 		current.last === stamp.last &&
-		current.lastShape === stamp.lastShape
+		current.lastShape === stamp.lastShape &&
+		current.model === stamp.model &&
+		current.contextWindow === stamp.contextWindow
 	);
 }
 
