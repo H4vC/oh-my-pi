@@ -18,8 +18,6 @@ import { col, kbd, node, row, span, text } from "@oh-my-pi/pi-tui/native/describ
 import type { StreamConsoleEvent, StreamMuxHost } from "./streamer";
 
 const HISTORY_LIMIT = 50;
-/** Log entries retained; older ones scroll out for good. */
-const LOG_LIMIT = 500;
 const PURPLE = chalk.hex("#a855f7");
 const CHAT_COLORS: readonly ((text: string) => string)[] = [
 	chalk.cyan,
@@ -53,8 +51,6 @@ class StreamConsoleComponent implements Component, Focusable {
 	readonly #logLines: string[] = [];
 	/** Native twin of {@link #logLines}: one keyed text node per entry, built once. */
 	readonly #logNodes: NativeNode[] = [];
-	/** Stable key source for {@link #logNodes}; indices shift once the log is capped. */
-	#logSerial = 0;
 	/** {@link #logLines} truncated to {@link #logWidth}; rebuilt only when the width changes. */
 	#logRendered: string[] = [];
 	#logWidth: number | undefined;
@@ -185,13 +181,8 @@ class StreamConsoleComponent implements Component, Focusable {
 	/** Append one log entry in both presentations. */
 	#log(ansi: string, spans: readonly TspSpan[]): void {
 		this.#logLines.push(ansi);
-		this.#logNodes.push(node("text", { spans }, undefined, `${this.#logSerial++}`));
+		this.#logNodes.push(node("text", { spans }, undefined, `${this.#logNodes.length}`));
 		if (this.#logWidth !== undefined) this.#logRendered.push(truncateToWidth(ansi, this.#logWidth));
-		if (this.#logLines.length > LOG_LIMIT) {
-			this.#logLines.shift();
-			this.#logNodes.shift();
-			if (this.#logWidth !== undefined) this.#logRendered.shift();
-		}
 		this.#logDirty = true;
 	}
 
