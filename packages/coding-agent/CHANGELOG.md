@@ -11,6 +11,7 @@
 ### Changed
 
 - Clarified how agents request line ranges in `read` calls with complete examples ([#13956](https://github.com/can1357/oh-my-pi/pull/13956) by [@Dante-dan](https://github.com/Dante-dan)).
+- Reduced RPC `message_update` encoding CPU (~40% on large messages) ([#14716](https://github.com/can1357/oh-my-pi/pull/14716) by [@H4vC](https://github.com/H4vC))
 
 ### Fixed
 

@@ -11,6 +11,32 @@ const RPC_CHUNK_PAYLOAD_BYTES = 256 * 1024;
 
 export type RpcProtocolVersion = 1 | 2;
 
+/** Stands in for a `message_update`'s shared snapshot while its frame skeleton serializes. */
+const SHARED_MESSAGE_PLACEHOLDER = `\u0000omp-rpc-shared-message-${crypto.randomUUID()}\u0000`;
+const SHARED_MESSAGE_PLACEHOLDER_JSON = JSON.stringify(SHARED_MESSAGE_PLACEHOLDER);
+
+/**
+ * `JSON.stringify(frame)`, byte for byte. A streaming `message_update` aliases
+ * one cumulative snapshot as both `message` and `assistantMessageEvent.partial`;
+ * that snapshot is serialized once and spliced into both positions instead of
+ * being re-serialized per position on every token.
+ */
+function serializeFrame(frame: object): string {
+	if (isRecord(frame) && frame.type === "message_update" && isRecord(frame.message)) {
+		const event = frame.assistantMessageEvent;
+		if (isRecord(event) && event.partial === frame.message) {
+			const messageJson = JSON.stringify(frame.message);
+			const skeleton = JSON.stringify({
+				...frame,
+				message: SHARED_MESSAGE_PLACEHOLDER,
+				assistantMessageEvent: { ...event, partial: SHARED_MESSAGE_PLACEHOLDER },
+			});
+			return skeleton.split(SHARED_MESSAGE_PLACEHOLDER_JSON).join(messageJson);
+		}
+	}
+	return JSON.stringify(frame);
+}
+
 interface PendingRpcChunks {
 	chunkId: string;
 	count: number;
@@ -265,7 +291,7 @@ function encodeRpcFrameFromJson(
 
 /** Serialize a complete JSONL frame while enforcing the transport byte ceiling. */
 export function encodeRpcFrame(frame: object, streamedMessageCount = 0, streamedMessages?: readonly unknown[]): string {
-	return encodeRpcFrameFromJson(frame, JSON.stringify(frame), streamedMessageCount, streamedMessages);
+	return encodeRpcFrameFromJson(frame, serializeFrame(frame), streamedMessageCount, streamedMessages);
 }
 
 /** Stateful encoder that tracks which messages a client has already received. */
@@ -295,7 +321,7 @@ export class RpcFrameEncoder {
 	 */
 	encodeFrames(frame: object): Iterable<string> {
 		if (isRecord(frame) && frame.type === "agent_start") this.#streamedMessages = [];
-		const json = JSON.stringify(frame);
+		const json = serializeFrame(frame);
 		let frames: Iterable<string>;
 		let singleFrame: string | undefined;
 		if (this.#protocolVersion === 2 && serializedFrameBytes(json) > MAX_RPC_FRAME_BYTES) {
