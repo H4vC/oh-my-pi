@@ -3,7 +3,6 @@ import * as path from "node:path";
 import { promisify } from "node:util";
 import { gunzip, gunzipSync } from "node:zlib";
 import { getDocsRsCacheDir, isEnoent, logger, ptree, tryParseJson, USER_AGENT } from "@oh-my-pi/pi-utils";
-import { LRUCache } from "@oh-my-pi/pi-utils/lru";
 import { ToolAbortError } from "../../tools/tool-errors";
 import type { RenderResult, SpecialHandler } from "./types";
 import { buildResult, MAX_BYTES } from "./types";
@@ -321,23 +320,12 @@ interface CachedRustdocCrate {
 	fetchedAt: string;
 }
 
-/**
- * Parsed crates keyed by on-disk cache path (crate + version/day). Rustdoc JSON
- * for large crates is tens of MB, so browsing several items of one crate must
- * not re-read and re-parse it per page; keep only the most recent couple.
- */
-const parsedCrateCache = new LRUCache<string, CachedRustdocCrate>({ max: 2 });
-
 async function readCachedRustdocCrate(cachePath: string): Promise<CachedRustdocCrate | null> {
-	const parsed = parsedCrateCache.get(cachePath);
-	if (parsed) return parsed;
 	try {
 		const [jsonStr, stat] = await Promise.all([Bun.file(cachePath).text(), fs.stat(cachePath)]);
 		const crate = tryParseJson<RustdocCrate>(jsonStr);
 		if (!crate?.index) return null;
-		const entry = { crate, fetchedAt: stat.mtime.toISOString() };
-		parsedCrateCache.set(cachePath, entry);
-		return entry;
+		return { crate, fetchedAt: stat.mtime.toISOString() };
 	} catch (err) {
 		if (isEnoent(err)) return null;
 		logger.warn("Failed to read docs.rs cache", { path: cachePath, error: String(err) });
@@ -345,12 +333,9 @@ async function readCachedRustdocCrate(cachePath: string): Promise<CachedRustdocC
 	}
 }
 
-async function writeCachedRustdocCrate(cachePath: string, json: string, crate: RustdocCrate): Promise<void> {
+async function writeCachedRustdocCrate(cachePath: string, json: string): Promise<void> {
 	try {
 		await Bun.write(cachePath, json);
-		// Later views report the cache file's mtime, exactly as a disk-cache hit would.
-		const stat = await fs.stat(cachePath);
-		parsedCrateCache.set(cachePath, { crate, fetchedAt: stat.mtime.toISOString() });
 	} catch (err) {
 		logger.warn("Failed to write docs.rs cache", { path: cachePath, error: String(err) });
 	}
@@ -411,7 +396,7 @@ export const handleDocsRs: SpecialHandler = async (
 			const jsonStr = await gunzipRustdocJsonAsync(compressed);
 			crate_ = tryParseJson<RustdocCrate>(jsonStr);
 			if (crate_?.index) {
-				await writeCachedRustdocCrate(cachePath, jsonStr, crate_);
+				await writeCachedRustdocCrate(cachePath, jsonStr);
 			}
 		} catch {
 			if (signal?.aborted) throw new ToolAbortError();

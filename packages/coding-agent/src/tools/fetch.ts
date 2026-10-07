@@ -21,7 +21,7 @@ import { findFirecrawlApiKey, scrapeWithFirecrawl } from "../web/firecrawl";
 import { extractWithParallel, findParallelApiKey, getParallelExtractContent } from "../web/parallel";
 import type { RenderResult, SpecialHandler } from "../web/scrapers/types";
 import { finalizeOutput, loadPage, looksLikeHtml, MAX_BYTES, MAX_OUTPUT_CHARS } from "../web/scrapers/types";
-import { convertWithMarkit, fetchBinary } from "../web/scrapers/utils";
+import { type BinaryFetchResult, convertWithMarkit, fetchBinary } from "../web/scrapers/utils";
 import { findCredential } from "../web/search/providers/utils";
 import { applyListLimit } from "@oh-my-pi/pi-tui/tools/list-limit";
 import { parseTailCount } from "./path-utils";
@@ -901,6 +901,8 @@ async function tryRenderBinaryPayload(
 	signal: AbortSignal | undefined,
 	fetchedAt: string,
 	notes: readonly string[],
+	/** The convertible-document download already made for this URL; reused instead of downloading again. */
+	prefetched?: BinaryFetchResult,
 ): Promise<FetchRenderResult | null> {
 	const hasNotebookHint = isNotebookHint(mime, extHint);
 	const hasSqliteHint = isSqliteHint(mime, extHint);
@@ -911,9 +913,10 @@ async function tryRenderBinaryPayload(
 	}
 
 	const resultNotes = [...notes];
-	const binary = await fetchBinary(finalUrl, timeout, signal);
+	const binary = prefetched ?? (await fetchBinary(finalUrl, timeout, signal));
 	if (!binary.ok) {
-		resultNotes.push(binary.error ? `Binary fetch failed: ${binary.error}` : "Binary fetch failed");
+		// A prefetched failure was already noted by the conversion step.
+		if (!prefetched) resultNotes.push(binary.error ? `Binary fetch failed: ${binary.error}` : "Binary fetch failed");
 		return buildBinaryPayloadResult(
 			url,
 			finalUrl,
@@ -1246,8 +1249,10 @@ async function renderUrl(
 	}
 
 	// Step 3: Handle convertible binary files (PDF, DOCX, etc.)
+	let convertibleBinary: BinaryFetchResult | undefined;
 	if (!skipConvertibleBinaryRetry && isConvertible(mime, extHint)) {
 		const binary = await fetchBinary(finalUrl, timeout, signal);
+		convertibleBinary = binary;
 		if (binary.ok) {
 			const ext = getExtensionHint(finalUrl, binary.contentDisposition) || extHint;
 			const converted = await convertWithMarkit(binary.buffer, ext, timeout, signal);
@@ -1290,6 +1295,7 @@ async function renderUrl(
 		signal,
 		fetchedAt,
 		notes,
+		convertibleBinary,
 	);
 	if (binaryPayloadResult) return binaryPayloadResult;
 

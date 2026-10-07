@@ -147,11 +147,13 @@ describe("read URL binary dispatch", () => {
 			.mockImplementation(async () => ({ ok: false, error: "offline" }));
 
 		const tool = new ReadTool(makeSession(testDir));
-		await tool.execute("read-url-generic-pdf", { path: url });
+		const result = await tool.execute("read-url-generic-pdf", { path: url });
 
 		expect(loadPage).toHaveBeenCalledTimes(1);
 		expect(bodyReads).toEqual([]);
-		expect(fetchBinary).toHaveBeenCalled();
+		// One download even when it fails: the binary fallback reuses the conversion attempt.
+		expect(fetchBinary).toHaveBeenCalledTimes(1);
+		expect(textOutput(result).split("Binary fetch failed: offline").length - 1).toBe(1);
 	});
 
 	it("returns a metadata notice when a hinted binary refetch fails", async () => {
