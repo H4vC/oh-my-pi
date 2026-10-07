@@ -172,6 +172,25 @@ describe("HistorySearchComponent debounced search", () => {
 		expect(renders).toBe(0);
 	});
 
+	it("ignores a list pick of a row from the previous query while the search is pending", () => {
+		vi.useFakeTimers();
+		const stale = makeEntry(1, "routine status update");
+		const { storage } = countingStorage([stale, makeEntry(2, "needle in a haystack")]);
+		const selected: string[] = [];
+		const component = new HistorySearchComponent(
+			storage,
+			prompt => selected.push(prompt),
+			() => {},
+		);
+		component.setOnRequestRender(() => {});
+		type(component, "needle");
+		// The row is still on screen: the debounce has not refreshed results yet.
+		const staleKey = `${stale.created_at}-${Bun.hash(stale.prompt).toString(36)}`;
+		component.handleNativeEvent({ type: "activate", key: "list", item: staleKey });
+		expect(selected).toEqual([]);
+		expect(render(component).plain).not.toContain("routine status update");
+	});
+
 	it("shows recent history immediately when the query is cleared", () => {
 		vi.useFakeTimers();
 		const { storage } = countingStorage([

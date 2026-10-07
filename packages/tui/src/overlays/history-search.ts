@@ -421,6 +421,9 @@ export class HistorySearchComponent extends OverlayPanel {
 	 * Picker: a row click highlights, a second click or `Insert` inserts it
 	 * (Enter), `Close` cancels (Esc), `Clear search` empties the query.
 	 * List: picking a result does what highlighting it and pressing Enter does.
+	 * A row picked while a debounced search is pending belongs to the previous
+	 * query: results are refreshed first and the pick only lands if that entry
+	 * is still among them.
 	 */
 	handleNativeEvent(event: NativeUiEvent): void {
 		const ev = pickerEvent(event, PICKER_KEY);
@@ -434,6 +437,7 @@ export class HistorySearchComponent extends OverlayPanel {
 				}
 				return;
 			}
+			this.#flushPendingSearch();
 			const index = this.#menu.visibleItems.findIndex(entry => nativeEntryKey(entry) === ev.item);
 			if (index < 0) return;
 			this.#menu.setSelectedIndex(index);
@@ -441,6 +445,7 @@ export class HistorySearchComponent extends OverlayPanel {
 			return;
 		}
 		if ((event.type !== "select" && event.type !== "activate") || event.key !== "list") return;
+		this.#flushPendingSearch();
 		const index = this.#menu.visibleItems.findIndex(entry => nativeEntryKey(entry) === event.item);
 		const target = this.#menu.visibleItems[index];
 		if (!target) return;
