@@ -141,8 +141,10 @@ async function consolidateLocked(
 		const model = await resolveSharpshooterModel(options.settings, options.modelRegistry);
 		if (!model) return { ran: false, reason: "no_model" };
 
-		const currentFiles = await readCurrentMemoryFiles(options.agentDir, options.cwd);
-		const projectDocs = await readProjectDocs(options.cwd);
+		const [currentFiles, projectDocs] = await Promise.all([
+			readCurrentMemoryFiles(options.agentDir, options.cwd),
+			readProjectDocs(options.cwd),
+		]);
 		const sessions = renderSharpshooterSessions(groups);
 		const input = prompt.render(consolidateInputTemplate, {
 			architecture: currentFiles["architecture.md"],

@@ -2,8 +2,8 @@
 export function markdownFenceFor(value: string): string {
 	let longestRun = 0;
 	let run = 0;
-	for (const character of value) {
-		if (character === "`") {
+	for (let index = 0; index < value.length; index++) {
+		if (value.charCodeAt(index) === 0x60) {
 			run++;
 			if (run > longestRun) longestRun = run;
 		} else {

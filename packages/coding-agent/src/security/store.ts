@@ -336,18 +336,21 @@ export class SecurityStore {
 
 	async listScans(): Promise<SecurityScanSummary[]> {
 		const index = await this.#readIndex();
+		// Summaries need only the manifest: a valid bundle's `findingIds` lists every finding exactly once.
+		const scans = await withSecurityStoreWrite(this.#projectDirectory, () =>
+			Promise.all([...index.scanIds].reverse().map(scanId => this.getScan(scanId))),
+		);
 		const summaries: SecurityScanSummary[] = [];
-		for (const scanId of [...index.scanIds].reverse()) {
-			const bundle = await this.getBundle(scanId);
-			if (!bundle) continue;
+		for (const scan of scans) {
+			if (!scan) continue;
 			summaries.push({
-				id: bundle.scan.id,
-				status: bundle.scan.status,
-				createdAt: bundle.scan.createdAt,
-				completedAt: bundle.scan.completedAt,
-				producer: bundle.scan.producer,
-				findingCount: bundle.findings.length,
-				target: bundle.scan.target,
+				id: scan.id,
+				status: scan.status,
+				createdAt: scan.createdAt,
+				completedAt: scan.completedAt,
+				producer: scan.producer,
+				findingCount: scan.findingIds.length,
+				target: scan.target,
 			});
 		}
 		return summaries;

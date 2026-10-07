@@ -163,16 +163,16 @@ export function createGitFileDiffTool(cwd: string, state: CommitAgentState): Cus
 				}
 			}
 
-			if (uncachedFiles.length > 0) {
-				for (const file of uncachedFiles) {
-					const diff = await repo.diffText({ cached: staged, files: [file] });
-					if (diff) {
-						diffs.set(file, diff);
-						state.diffCache.set(cacheKey(file), diff);
-					} else {
-						state.diffCache.set(cacheKey(file), "");
-					}
-				}
+			// Per-file diffs keep each requested pathspec's exact output (directories, renames,
+			// paths with spaces); run them concurrently instead of one spawn after another.
+			const uncachedDiffs = await Promise.all(
+				uncachedFiles.map(file => repo.diffText({ cached: staged, files: [file] })),
+			);
+			for (let index = 0; index < uncachedFiles.length; index += 1) {
+				const file = uncachedFiles[index];
+				const diff = uncachedDiffs[index];
+				if (diff) diffs.set(file, diff);
+				state.diffCache.set(cacheKey(file), diff || "");
 			}
 
 			const { result, truncatedFiles } = processDiffs(params.files, diffs);

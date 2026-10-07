@@ -3,11 +3,10 @@ import type { ConventionalAnalysis, ConventionalCommit } from "../types";
 import { conventionalAnalysis, conventionalCommit, formatTypesDescription } from "./commit-types";
 import type { ConventionalGenerationConfig } from "./config";
 import {
-	classifyDiffWhitespace,
+	analyzeDiffWhitespace,
 	condenseStat,
 	scrubDiffForPrompt,
 	smartTruncateDiff,
-	stripWhitespaceOnlyFiles,
 	truncateDiffByLines,
 } from "./diff";
 import type { CommitInference } from "./inference";
@@ -54,7 +53,7 @@ export interface ConventionalGenerationResult {
 export async function generateConventionalCommit(
 	input: ConventionalGenerationInput,
 ): Promise<ConventionalGenerationResult> {
-	const whitespace = classifyDiffWhitespace(input.diff);
+	const whitespace = analyzeDiffWhitespace(input.diff);
 	let commit: ConventionalCommit;
 	if (whitespace.allWhitespace) {
 		const summary =
@@ -64,7 +63,9 @@ export async function generateConventionalCommit(
 		commit = postProcessCommitMessage(conventionalCommit({ type: "style", summary }), input.config);
 	} else {
 		const changedLines = countAutoFastLines(input.numstat, input.config);
-		commit = changedLines !== null ? await generateFastWorkflow(input) : await generateStandardWorkflow(input);
+		const diff = whitespace.strippedDiff ?? input.diff;
+		commit =
+			changedLines !== null ? await generateFastWorkflow(input, diff) : await generateStandardWorkflow(input, diff);
 	}
 	return validateAndProcess(
 		commit,
@@ -77,8 +78,11 @@ export async function generateConventionalCommit(
 	);
 }
 
-async function generateFastWorkflow(input: ConventionalGenerationInput): Promise<ConventionalCommit> {
-	let diff = stripWhitespaceOnlyFiles(input.diff) ?? input.diff;
+async function generateFastWorkflow(
+	input: ConventionalGenerationInput,
+	strippedDiff: string,
+): Promise<ConventionalCommit> {
+	let diff = strippedDiff;
 	diff = scrubDiffForPrompt(diff);
 	diff = truncateDiffByLines(diff, 10_000, input.config);
 	const scopeCandidates = extractScopeCandidates(input.numstat, input.config).scopeCandidates;
@@ -104,8 +108,11 @@ async function generateFastWorkflow(input: ConventionalGenerationInput): Promise
 	return messageFromAnalysis(analysis, input.config, input.stat, input.context?.userContext, input.inference);
 }
 
-async function generateStandardWorkflow(input: ConventionalGenerationInput): Promise<ConventionalCommit> {
-	let diff = stripWhitespaceOnlyFiles(input.diff) ?? input.diff;
+async function generateStandardWorkflow(
+	input: ConventionalGenerationInput,
+	strippedDiff: string,
+): Promise<ConventionalCommit> {
+	let diff = strippedDiff;
 	diff = scrubDiffForPrompt(diff);
 	const scopeCandidates = extractScopeCandidates(input.numstat, input.config).scopeCandidates;
 	const mapReduce = shouldUseMapReduce(diff, input.config);

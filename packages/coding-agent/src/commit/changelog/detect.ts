@@ -6,9 +6,33 @@ const CHANGELOG_NAME = "CHANGELOG.md";
 
 export async function detectChangelogBoundaries(cwd: string, stagedFiles: string[]): Promise<ChangelogBoundary[]> {
 	const boundaries = new Map<string, string[]>();
+	const root = path.resolve(cwd);
+	// Staged files cluster in shared directories; resolve each directory (and its ancestors) once.
+	const nearestByDir = new Map<string, Promise<string | null>>();
+	const findNearestChangelog = (dir: string): Promise<string | null> => {
+		let pending = nearestByDir.get(dir);
+		if (!pending) {
+			pending = (async () => {
+				const candidate = path.resolve(dir, CHANGELOG_NAME);
+				try {
+					await fs.promises.access(candidate);
+					return candidate;
+				} catch {
+					// not found, continue traversal
+				}
+				if (dir === root) return null;
+				const parent = path.dirname(dir);
+				if (parent === dir) return null;
+				return findNearestChangelog(parent);
+			})();
+			nearestByDir.set(dir, pending);
+		}
+		return pending;
+	};
+
 	for (const file of stagedFiles) {
 		if (file.toLowerCase().endsWith("changelog.md")) continue;
-		const changelogPath = await findNearestChangelog(cwd, file);
+		const changelogPath = await findNearestChangelog(path.resolve(cwd, path.dirname(file)));
 		if (!changelogPath) continue;
 		const list = boundaries.get(changelogPath) ?? [];
 		list.push(file);
@@ -19,22 +43,4 @@ export async function detectChangelogBoundaries(cwd: string, stagedFiles: string
 		changelogPath,
 		files,
 	}));
-}
-
-async function findNearestChangelog(cwd: string, filePath: string): Promise<string | null> {
-	let current = path.resolve(cwd, path.dirname(filePath));
-	const root = path.resolve(cwd);
-	while (true) {
-		const candidate = path.resolve(current, CHANGELOG_NAME);
-		try {
-			await fs.promises.access(candidate);
-			return candidate;
-		} catch {
-			// not found, continue traversal
-		}
-		if (current === root) return null;
-		const parent = path.dirname(current);
-		if (parent === current) return null;
-		current = parent;
-	}
 }

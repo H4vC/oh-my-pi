@@ -138,6 +138,30 @@ async function validateScopePaths(repositoryRoot: string, paths: readonly string
 	}
 }
 
+/** Files at or above this size are streamed into the hasher instead of being prefetched whole. */
+const DIGEST_STREAM_THRESHOLD_BYTES = 4 * 1024 * 1024;
+/** In-scope files whose metadata/content is read ahead while earlier ones are hashed. */
+const DIGEST_READ_AHEAD = 16;
+
+type DigestEntry =
+	| { kind: "missing" }
+	| { kind: "symlink"; mode: number; target: string }
+	| { kind: "file"; mode: number; bytes: Uint8Array | null }
+	| { kind: "unsupported"; mode: number };
+
+async function readDigestEntry(absolutePath: string): Promise<DigestEntry> {
+	const stats = await fs.lstat(absolutePath).catch(() => null);
+	if (!stats) return { kind: "missing" };
+	const mode = stats.mode & 0o111;
+	if (stats.isSymbolicLink()) return { kind: "symlink", mode, target: await fs.readlink(absolutePath) };
+	if (stats.isFile()) {
+		const bytes =
+			stats.size < DIGEST_STREAM_THRESHOLD_BYTES ? new Uint8Array(await Bun.file(absolutePath).arrayBuffer()) : null;
+		return { kind: "file", mode, bytes };
+	}
+	return { kind: "unsupported", mode };
+}
+
 async function digestWorkingTree(
 	repositoryRoot: string,
 	includePaths: readonly string[],
@@ -145,30 +169,60 @@ async function digestWorkingTree(
 	adapter: SecurityGitAdapter,
 	signal?: AbortSignal,
 ): Promise<string> {
-	const tracked = await adapter.files(repositoryRoot, signal);
-	const untracked = await adapter.untracked(repositoryRoot, signal);
+	const [tracked, untracked] = await Promise.all([
+		adapter.files(repositoryRoot, signal),
+		adapter.untracked(repositoryRoot, signal),
+	]);
 	const files = [...new Set([...tracked, ...untracked])]
 		.map(normalizeRelativePath)
 		.filter(candidate => pathMatchesSecurityScope(candidate, includePaths, excludePaths))
 		.sort();
-	const hasher = new Bun.CryptoHasher("sha256");
-	for (const relativePath of files) {
-		if (signal?.aborted) throw signal.reason;
+	const absolutePaths = files.map(relativePath => {
 		const absolutePath = path.resolve(repositoryRoot, relativePath);
 		if (!pathIsWithin(absolutePath, repositoryRoot)) throw new Error(`Git path escapes repository: ${relativePath}`);
-		const stats = await fs.lstat(absolutePath).catch(() => null);
-		hasher.update(relativePath);
+		return absolutePath;
+	});
+	// Reads run DIGEST_READ_AHEAD files ahead of the hasher; results settle into
+	// tagged objects so a failed read only surfaces (in order) when its file is hashed.
+	const readAhead: Array<Promise<{ entry: DigestEntry } | { error: unknown }>> = [];
+	let nextRead = 0;
+	const fillReadAhead = (): void => {
+		while (readAhead.length < DIGEST_READ_AHEAD && nextRead < absolutePaths.length) {
+			readAhead.push(
+				readDigestEntry(absolutePaths[nextRead]).then(
+					entry => ({ entry }),
+					(error: unknown) => ({ error }),
+				),
+			);
+			nextRead += 1;
+		}
+	};
+
+	const hasher = new Bun.CryptoHasher("sha256");
+	for (let index = 0; index < files.length; index += 1) {
+		if (signal?.aborted) throw signal.reason;
+		fillReadAhead();
+		const task = readAhead.shift();
+		if (!task) break;
+		const settled = await task;
+		if ("error" in settled) throw settled.error;
+		const { entry } = settled;
+		hasher.update(files[index]);
 		hasher.update("\0");
-		if (!stats) {
+		if (entry.kind === "missing") {
 			hasher.update("missing\0");
 			continue;
 		}
-		hasher.update(`mode:${stats.mode & 0o111}\0`);
-		if (stats.isSymbolicLink()) {
+		hasher.update(`mode:${entry.mode}\0`);
+		if (entry.kind === "symlink") {
 			hasher.update("symlink\0");
-			hasher.update(await fs.readlink(absolutePath));
-		} else if (stats.isFile()) {
-			hasher.update(new Uint8Array(await Bun.file(absolutePath).arrayBuffer()));
+			hasher.update(entry.target);
+		} else if (entry.kind === "file") {
+			if (entry.bytes) {
+				hasher.update(entry.bytes);
+			} else {
+				for await (const chunk of Bun.file(absolutePaths[index]).stream()) hasher.update(chunk);
+			}
 		} else {
 			hasher.update("unsupported\0");
 		}
