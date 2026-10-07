@@ -33,13 +33,12 @@ const RESET_FG = "\x1b[39m";
  *  (pastes are usually re-encoded JPEG/WebP) convert before transmit — the same pipeline
  *  the transcript uses. `null` = conversion in flight or failed. */
 const kImagePng = Symbol("omp.imagePng");
-/** The draft image's decoded bytes, kept so its TSP blob stays available while the draft lives
- *  (the blob store holds unreferenced blobs only weakly); registration reuses their cached hash. */
-const kImageBytes = Symbol("omp.imageBytes");
+/** Content address of the draft image's decoded bytes, registered once for TSP `image` nodes. */
+const kImageBlob = Symbol("omp.imageBlob");
 
 interface ImageContentWithPng extends ImageContent {
 	[kImagePng]?: ImageContent | null;
-	[kImageBytes]?: Uint8Array;
+	[kImageBlob]?: string;
 }
 
 /**
@@ -88,8 +87,8 @@ export class AttachmentChipsBand implements Component {
 				const dims = this.#imageDims(chip.image);
 				caption = dims ? `${dims.width}x${dims.height}` : "";
 				const image = chip.image as ImageContentWithPng;
-				const bytes = (image[kImageBytes] ??= Buffer.from(image.data, "base64"));
-				const blob = registerNativeBlob(bytes, image.mimeType);
+				const blob = image[kImageBlob] ?? registerNativeBlob(Buffer.from(image.data, "base64"), image.mimeType);
+				image[kImageBlob] = blob;
 				content = node("image", {
 					blob,
 					alt: title,
