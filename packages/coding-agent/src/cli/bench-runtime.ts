@@ -23,7 +23,8 @@ import type { ApiKeyResolverModel } from "../config/api-key-resolver";
 import { ModelRegistry } from "../config/model-registry";
 import { formatModelString, getModelMatchPreferences, resolveCliModel } from "../config/model-resolver";
 import { Settings } from "../config/settings";
-import { discoverAuthStorage, loadCliExtensionProviders } from "../sdk";
+import { loadCliExtensionProviders } from "../extensibility/extensions/session-loader";
+import { discoverAuthStorage } from "../session/auth-discovery";
 import { concreteThinkingLevel, resolveThinkingLevelForModel } from "@oh-my-pi/pi-tui/thinking";
 
 /** Injection point for the provider call; tests pass a synthetic event stream. */

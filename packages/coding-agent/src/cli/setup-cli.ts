@@ -12,11 +12,12 @@ import { ModelRegistry } from "../config/model-registry";
 import { resolveRoleChain } from "../config/model-resolver";
 import { roleCandidatePool } from "../config/model-roles";
 import { checkPythonKernelAvailability } from "../eval/py/kernel";
-import { discoverAuthStorage } from "../sdk";
+import { discoverAuthStorage } from "../session/auth-discovery";
 import { theme } from "@oh-my-pi/pi-tui/theme";
 import { downloadSttModel, isSttModelCached } from "../stt/downloader";
 import { isSttModelKey, STT_MODEL_OPTIONS } from "../stt/models";
-import { downloadTtsModel, isTtsLocalModelKey, isTtsModelCached, TTS_LOCAL_MODELS } from "../tts";
+import { downloadTtsModel, isTtsModelCached } from "../tts/downloader";
+import { isTtsLocalModelKey, TTS_LOCAL_MODELS } from "../tts/models";
 import { selectSetupModel } from "@oh-my-pi/pi-tui/apps/setup-model-picker";
 
 import { cfgPythonInterpreter } from "../eval/settings";
