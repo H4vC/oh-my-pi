@@ -10,6 +10,9 @@
 ### Fixed
 
 - Fixed memory growth from subagents the host no longer lists ([#14728](https://github.com/can1357/oh-my-pi/pull/14728) by [@H4vC](https://github.com/H4vC))
+### Fixed
+
+- Fixed slow Markdown rendering for transcripts with many unclosed `\[`/`$$` openers ([#14667](https://github.com/can1357/oh-my-pi/pull/14667) by [@H4vC](https://github.com/H4vC))
 
 ## [18.4.10] - 2026-10-02
 
