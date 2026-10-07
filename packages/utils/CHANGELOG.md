@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Reduced vterm memory use ~5× and sped up parsing ~4× and resize reflow ~7× ([#14666](https://github.com/can1357/oh-my-pi/pull/14666) by [@H4vC](https://github.com/H4vC))
+
 ## [18.6.3] - 2026-10-06
 
 ### Breaking Changes
