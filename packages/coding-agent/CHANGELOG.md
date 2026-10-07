@@ -11,6 +11,7 @@
 ### Changed
 
 - Clarified how agents request line ranges in `read` calls with complete examples ([#13956](https://github.com/can1357/oh-my-pi/pull/13956) by [@Dante-dan](https://github.com/Dante-dan)).
+- Sped up repeated LLM requests with inline images and blob uploads ([#14712](https://github.com/can1357/oh-my-pi/pull/14712) by [@H4vC](https://github.com/H4vC))
 
 ### Fixed
 

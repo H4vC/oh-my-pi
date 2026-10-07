@@ -238,6 +238,39 @@ describe("BlobRegistry persistence", () => {
 		// Same content address: registration reused the existing blob file.
 		expect(await sessionStore.has(hash)).toBe(true);
 	});
+
+	it("stages concurrent background saves of a shared index in distinct temp files", async () => {
+		const persist = makePersist(60_000);
+		const realWrite = Bun.write;
+		const staged: string[] = [];
+		const writes: Promise<number>[] = [];
+		vi.useFakeTimers();
+		const write = vi.spyOn(Bun, "write").mockImplementation(((dest: string, data: string) => {
+			staged.push(dest);
+			const pending = realWrite(dest, data);
+			writes.push(pending);
+			return pending;
+		}) as typeof Bun.write);
+		try {
+			const first = new BlobRegistry({ persist });
+			const second = new BlobRegistry({ persist });
+			const bytes = new Uint8Array(Buffer.from("shared-index"));
+			await first.registerBytes("first-image", "image/png", bytes);
+			await second.registerBytes("second-image", "image/png", bytes);
+			// Both debounced saves fire in the same tick and stage concurrently.
+			vi.advanceTimersByTime(1_000);
+			await Promise.allSettled(writes);
+			first.flush();
+			second.flush();
+
+			const indexStages = staged.filter(dest => dest.startsWith(persist.indexPath));
+			expect(indexStages).toHaveLength(2);
+			expect(new Set(indexStages).size).toBe(2);
+		} finally {
+			write.mockRestore();
+			vi.useRealTimers();
+		}
+	});
 });
 
 describe("ImageUrlService", () => {
