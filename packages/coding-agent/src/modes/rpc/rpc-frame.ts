@@ -16,15 +16,48 @@ const SHARED_MESSAGE_PLACEHOLDER = `\u0000omp-rpc-shared-message-${crypto.random
 const SHARED_MESSAGE_PLACEHOLDER_JSON = JSON.stringify(SHARED_MESSAGE_PLACEHOLDER);
 
 /**
+ * Serialize-once only beats a plain `JSON.stringify` when object structure, not
+ * string bytes, dominates the snapshot: JSC copies plain strings nearly at memcpy
+ * speed, so splicing a string-heavy or few-block snapshot twice costs more than
+ * serializing it twice. Measured in Bun: 1–12 blocks or >512 string chars per block
+ * ran 10–90% slower via the splice; ≥16 small blocks ran 10–45% faster.
+ */
+const SHARED_MESSAGE_MIN_BLOCKS = 16;
+const SHARED_MESSAGE_MAX_STRING_CHARS_PER_BLOCK = 512;
+
+/** Whether a snapshot's `content` is block-heavy and string-light enough to serialize once. */
+function isStructureHeavy(content: unknown): boolean {
+	if (!Array.isArray(content) || content.length < SHARED_MESSAGE_MIN_BLOCKS) return false;
+	const budget = content.length * SHARED_MESSAGE_MAX_STRING_CHARS_PER_BLOCK;
+	let chars = 0;
+	for (const block of content) {
+		if (!isRecord(block)) continue;
+		for (const key in block) {
+			const value = block[key];
+			if (typeof value === "string") {
+				chars += value.length;
+			} else if (isRecord(value)) {
+				for (const nestedKey in value) {
+					const nested = value[nestedKey];
+					if (typeof nested === "string") chars += nested.length;
+				}
+			}
+		}
+		if (chars >= budget) return false;
+	}
+	return true;
+}
+
+/**
  * `JSON.stringify(frame)`, byte for byte. A streaming `message_update` aliases
  * one cumulative snapshot as both `message` and `assistantMessageEvent.partial`;
- * that snapshot is serialized once and spliced into both positions instead of
- * being re-serialized per position on every token.
+ * when that snapshot is structure-heavy it is serialized once and spliced into
+ * both positions instead of being re-serialized per position on every token.
  */
 function serializeFrame(frame: object): string {
 	if (isRecord(frame) && frame.type === "message_update" && isRecord(frame.message)) {
 		const event = frame.assistantMessageEvent;
-		if (isRecord(event) && event.partial === frame.message) {
+		if (isRecord(event) && event.partial === frame.message && isStructureHeavy(frame.message.content)) {
 			const messageJson = JSON.stringify(frame.message);
 			const skeleton = JSON.stringify({
 				...frame,

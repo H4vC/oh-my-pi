@@ -492,10 +492,12 @@ export class LiveSessionController {
 
 	#emitLevels(): void {
 		if (this.#inputLevel === this.#emittedInputLevel && this.#outputLevel === this.#emittedOutputLevel) return;
-		this.#emittedInputLevel = this.#inputLevel;
-		this.#emittedOutputLevel = this.#outputLevel;
+		const input = this.#inputLevel;
+		const output = this.#outputLevel;
 		try {
-			this.#callbacks.onLevels(this.#inputLevel, this.#outputLevel);
+			this.#callbacks.onLevels(input, output);
+			this.#emittedInputLevel = input;
+			this.#emittedOutputLevel = output;
 		} catch (cause) {
 			this.#reportFailure(errorFrom(cause));
 		}
