@@ -145,6 +145,8 @@ export class UserMessageComponent extends Container implements ReactionTarget {
 	#native: NativeNode | undefined;
 	/** The terminal's clock {@link #native} was described with. */
 	#nativeHour12: boolean | undefined;
+	/** Thumbnail nodes for {@link #images}; built once (decode, hash, probe) since images and links are fixed. */
+	#imageThumbs: NativeNode[] | undefined;
 
 	constructor(text: string, options: UserBubbleOptions = {}) {
 		super();
@@ -227,15 +229,15 @@ export class UserMessageComponent extends Container implements ReactionTarget {
 			children.push(node("row", { gap: "xs", role: "omp.user.tools" }, tools, "tools"));
 		}
 		// Videos keep their chip only: the native image node decodes stills.
-		const thumbs: NativeNode[] = [];
+		let thumbs: NativeNode[] = [];
 		if (!this.#synthetic) {
-			this.#images.forEach((image, i) => {
-				if (!image.mimeType.startsWith("image/")) return;
+			thumbs = this.#imageThumbs ??= this.#images.flatMap((image, i) => {
+				if (!image.mimeType.startsWith("image/")) return [];
 				const label = `#${i + 1}`;
 				const link = this.#imageLinks?.[i];
 				// A click zooms the image in the terminal; the file opens from its context menu.
 				const open = link ? { href: link, actions: { menu: ["open"] } } : {};
-				thumbs.push(base64ImageNode(image.data, image.mimeType, { alt: label, title: label, ...open }, label));
+				return [base64ImageNode(image.data, image.mimeType, { alt: label, title: label, ...open }, label)];
 			});
 		}
 		if (thumbs.length > 0) {

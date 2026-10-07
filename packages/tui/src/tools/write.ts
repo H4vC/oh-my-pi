@@ -1,4 +1,5 @@
 import type { HighlightStream } from "@oh-my-pi/pi-natives";
+import { countNewlines } from "@oh-my-pi/pi-utils";
 import type { Component } from "../tui";
 import { Text } from "../components/text";
 import { getLanguageFromPath } from "../lang-from-path";
@@ -15,6 +16,7 @@ import {
 	formatMoreItems,
 	formatStatusIcon,
 	PREVIEW_LIMITS,
+	previewWindowRows,
 	type RenderedStringCache,
 	replaceTabs,
 	shortenPath,
@@ -105,32 +107,34 @@ interface WriteResult {
 const kSvgPreview = Symbol("write.svgPreview");
 
 interface TaggedWriteResult extends WriteResult {
-	[kSvgPreview]?: { content: string; node: NativeNode };
+	/** `bytes` stays referenced so the blob store can't drop the registered payload while the node is reused. */
+	[kSvgPreview]?: { content: string; node: NativeNode; bytes: Uint8Array };
 }
 
 /** Native `image` node drawing written SVG `content`, cached on `result`. */
 function describeSvgPreview(result: TaggedWriteResult, content: string, alt: string): NativeNode {
 	const cached = result[kSvgPreview];
 	if (cached?.content === content) return cached.node;
-	const blob = registerNativeBlob(new TextEncoder().encode(content), "image/svg+xml");
+	const bytes = new TextEncoder().encode(content);
+	const blob = registerNativeBlob(bytes, "image/svg+xml");
 	const preview = node("image", {
 		blob,
 		alt,
 		role: "omp.tool.write.image",
 		max: { h: `${NATIVE_SVG_PREVIEW_LINES}lines` },
 	});
-	result[kSvgPreview] = { content, node: preview };
+	result[kSvgPreview] = { content, node: preview, bytes };
 	return preview;
 }
 
 function countLines(text: string): number {
 	if (!text) return 0;
-	return text.split("\n").length;
+	return countNewlines(text) + 1;
 }
 
 /** Bounded newline scan: whether `text` spans more than `maxLines` lines.
- *  Runs on every live compose (the repaint predicate below), so it must not
- *  materialize the split the way `countLines` does. */
+ *  Runs on every live compose (the repaint predicate below), so it must stop
+ *  at the bound instead of scanning the whole payload the way `countLines` does. */
 function exceedsLineCount(text: string, maxLines: number): boolean {
 	if (!text) return false;
 	let lines = 1;
@@ -288,37 +292,52 @@ function updateStreamingPreview(
 	return state;
 }
 
+/**
+ * Body text (leading blank rows included) of a streaming write preview.
+ * Collapsed shows the last {@link PREVIEW_LIMITS.EXPANDED_LINES} lines. While
+ * args are still streaming, expanded shows a viewport-sized tail window (like
+ * the edit tool's streaming diff) so each delta costs O(window), not O(file);
+ * the full file appears once args are complete.
+ */
 function formatStreamingContent(
 	content: string,
 	expanded: boolean,
 	language: string | undefined,
 	uiTheme: Theme,
-	spinnerFrame?: number,
 	cache?: RenderedStringCache,
 	streamKey?: WriteStreamingPreviewStateCarrier,
 	argsComplete?: boolean,
 ): string {
 	if (!content) return "";
-	const bodyText = cachedRenderedString(cache, uiTheme, expanded, language ?? "", content, () => {
+	const windowLines = expanded
+		? argsComplete === true
+			? Number.POSITIVE_INFINITY
+			: Math.max(PREVIEW_LIMITS.EXPANDED_LINES, previewWindowRows())
+		: PREVIEW_LIMITS.EXPANDED_LINES;
+	const salt = `${language ?? ""}:${windowLines}:${argsComplete === true ? 1 : 0}`;
+	return cachedRenderedString(cache, uiTheme, expanded, salt, content, () => {
 		const state = updateStreamingPreview(streamKey, content, language, uiTheme, argsComplete === true);
 		let totalLines: number;
 		let startIndex: number;
-		let visibleLines: string[];
+		let completeLines: readonly string[];
+		let trailingLine: string | undefined;
 		if (state) {
 			totalLines = state.lineCount;
-			startIndex = expanded ? 0 : Math.max(0, totalLines - PREVIEW_LIMITS.EXPANDED_LINES);
 			const flushed = argsComplete === true && state.finalFlushedLength === content.length;
-			const trailingLine = flushed ? state.finalTrailing : content.slice(state.completeLength).replace(/\r/g, "");
+			trailingLine = flushed ? state.finalTrailing : content.slice(state.completeLength).replace(/\r/g, "");
 			if (totalLines === 1 && trailingLine.length === 0) return "";
-			visibleLines = [...state.highlightedLines.slice(startIndex), trailingLine];
+			startIndex = Math.max(0, totalLines - windowLines);
+			completeLines = state.highlightedLines;
 		} else {
 			const normalized = normalizeDisplayText(content);
 			if (normalized.length === 0) return "";
 			const lines = normalized.split("\n");
 			totalLines = lines.length;
-			startIndex = expanded ? 0 : Math.max(0, totalLines - PREVIEW_LIMITS.EXPANDED_LINES);
-			visibleLines = highlightCode(lines.slice(startIndex).join("\n"), language);
+			startIndex = Math.max(0, totalLines - windowLines);
+			completeLines = highlightCode(lines.slice(startIndex).join("\n"), language);
 		}
+		// State lines are indexed from the file start; fallback lines from the window start.
+		const offset = state ? startIndex : 0;
 		const hidden = startIndex;
 		const lineNumberWidth = Math.max(WRITE_GUTTER_MIN_WIDTH, String(totalLines).length);
 
@@ -326,21 +345,26 @@ function formatStreamingContent(
 		if (hidden > 0) {
 			text += `${uiTheme.fg("dim", `… (${hidden} earlier line${hidden === 1 ? "" : "s"})`)}\n`;
 		}
-		for (let i = 0; i < visibleLines.length; i++) {
+		const visibleCount = completeLines.length - offset + (trailingLine === undefined ? 0 : 1);
+		for (let i = 0; i < visibleCount; i++) {
 			const lineNum = startIndex + i + 1;
 			const gutter = uiTheme.fg("dim", `${String(lineNum).padStart(lineNumberWidth, " ")} `);
-			const body = replaceTabs(visibleLines[i] ?? "");
-			text += `${gutter}${body}\n`;
+			const source = offset + i < completeLines.length ? completeLines[offset + i] : trailingLine;
+			text += `${gutter}${replaceTabs(source ?? "")}\n`;
 		}
 		return text;
 	});
-	if (bodyText.length === 0) return "";
-	// The animated glyph lives on this trailing line — inside the transcript's
-	// volatile-tail holdback — never in the header: an animating head row pins
-	// the native-scrollback commit boundary at the top of the block, so a long
-	// expanded preview could never scroll-append mid-stream.
+}
+
+/**
+ * Trailing streaming row. The animated glyph lives on this line — inside the
+ * transcript's volatile-tail holdback — never in the header: an animating head
+ * row pins the native-scrollback commit boundary at the top of the block, so a
+ * long expanded preview could never scroll-append mid-stream.
+ */
+function formatStreamingFooter(uiTheme: Theme, spinnerFrame: number | undefined): string {
 	const spinner = spinnerFrame !== undefined ? `${formatStatusIcon("running", uiTheme, spinnerFrame)} ` : "";
-	return `${bodyText}${spinner}${uiTheme.fg("dim", `… (streaming)`)}`;
+	return `${spinner}${uiTheme.fg("dim", `… (streaming)`)}`;
 }
 
 function renderContentPreview(
@@ -592,6 +616,11 @@ export const writeToolRenderer = {
 		// back to the normalizing stringify.
 		const content = typeof args.content === "string" ? args.content : normalizeDisplayText(args.content);
 		const streamingCache = createRenderedStringCache();
+		// Split the cached body once per body string, not on every spinner frame;
+		// the spinner footer rides its own label-less section, which the frame
+		// renders contiguously with the body.
+		let splitBody = "";
+		let bodyLines: readonly string[] = [];
 		return framedToolCard(uiTheme, () => {
 			const body = content
 				? formatStreamingContent(
@@ -599,7 +628,6 @@ export const writeToolRenderer = {
 						Boolean(options?.expanded),
 						lang,
 						uiTheme,
-						options?.spinnerFrame,
 						streamingCache,
 						// `options` is the ToolExecutionComponent's persistent
 						// render-state object — a stable identity across reveal ticks
@@ -609,11 +637,16 @@ export const writeToolRenderer = {
 						options?.argsComplete,
 					)
 				: "";
-			const bodyLines = body ? body.split("\n") : [];
-			while (bodyLines.length > 0 && bodyLines[0].trim() === "") bodyLines.shift();
+			if (body !== splitBody) {
+				splitBody = body;
+				// Drop the two leading blank rows and the empty row after the final "\n".
+				bodyLines = body.length > 2 ? body.slice(2, -1).split("\n") : [];
+			}
 			return {
 				header,
-				sections: bodyLines.length > 0 ? [{ content: bodyLines }] : [],
+				sections: body
+					? [{ content: bodyLines }, { content: [formatStreamingFooter(uiTheme, options?.spinnerFrame)] }]
+					: [],
 				phase: "pending",
 				borderColor: "borderMuted",
 			};

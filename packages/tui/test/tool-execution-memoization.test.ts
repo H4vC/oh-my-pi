@@ -9,11 +9,13 @@ import { Text, type TUI } from "@oh-my-pi/pi-tui";
  * Contract under test (tool-result render memoization):
  *
  * `ToolExecutionComponent` shapes a tool result into UI components by calling
- * the tool's `renderResult` — an O(result-size) pass. A dirty-key guard at the
- * top of `#updateDisplay()` must collapse the result version, expand state,
- * partial flag, spinner frame, show-images flag, and theme epoch into one key
- * and skip `#rebuildDisplay()` when nothing meaningful changed. So:
+ * the tool's `renderResult` — an O(result-size) pass. Updates only mark the
+ * display dirty; the next `render()` runs a dirty-key guard that collapses the
+ * result version, expand state, partial flag, spinner frame, show-images flag,
+ * and theme epoch into one key and skips `#rebuildDisplay()` when nothing
+ * meaningful changed. So:
  *
+ *   - Several updates between two frames shape once, at the next render.
  *   - A flood of `invalidate()` calls (one per render frame) after a final
  *     result must re-shape EXACTLY ONCE, not once per frame — this is the
  *     regression guard against the per-frame re-shape stall.
@@ -66,13 +68,20 @@ describe("ToolExecutionComponent tool-result render memoization", () => {
 		);
 
 		// No result yet: the shaping pass has not run.
+		component.render(80);
 		expect(shapeSpy).toHaveBeenCalledTimes(0);
 
-		// Phase 1 — a final (non-partial) result shapes exactly once, and a
-		// flood of per-frame invalidate()s must NOT re-shape (the regression).
+		// Phase 1 — a final (non-partial) result shapes exactly once, lazily at
+		// the next frame, and a flood of per-frame invalidate()s must NOT
+		// re-shape (the regression).
 		component.updateResult(finalResult("ALPHA"), false);
+		expect(shapeSpy).toHaveBeenCalledTimes(0);
+		component.render(80);
 		expect(shapeSpy).toHaveBeenCalledTimes(1);
-		for (let i = 0; i < 12; i++) component.invalidate();
+		for (let i = 0; i < 12; i++) {
+			component.invalidate();
+			component.render(80);
+		}
 		expect(shapeSpy).toHaveBeenCalledTimes(1);
 		expect(stripVTControlCharacters(component.render(80).join("\n"))).toContain("shaped:ALPHA");
 
@@ -80,18 +89,28 @@ describe("ToolExecutionComponent tool-result render memoization", () => {
 		// shaping pass; further invalidate()s and a redundant same-value set do
 		// not, and the expanded frame is observable.
 		component.setExpanded(true);
+		component.render(80);
 		expect(shapeSpy).toHaveBeenCalledTimes(2);
 		for (let i = 0; i < 12; i++) component.invalidate();
 		component.setExpanded(true);
+		component.render(80);
 		expect(shapeSpy).toHaveBeenCalledTimes(2);
 
 		// Phase 3 — a NEW result (bumped version) forces exactly one more pass,
 		// and the rendered output reflects the new result, not the stale one.
 		component.updateResult(finalResult("BRAVO"), false);
-		expect(shapeSpy).toHaveBeenCalledTimes(3);
 		const frame = stripVTControlCharacters(component.render(80).join("\n"));
+		expect(shapeSpy).toHaveBeenCalledTimes(3);
 		expect(frame).toContain("shaped:BRAVO");
 		expect(frame).not.toContain("shaped:ALPHA");
+
+		// Phase 4 — a burst of partial updates between two frames shapes once.
+		component.updateResult(finalResult("C1"), true);
+		component.updateResult(finalResult("C2"), true);
+		component.updateResult(finalResult("C3"), true);
+		expect(shapeSpy).toHaveBeenCalledTimes(3);
+		expect(stripVTControlCharacters(component.render(80).join("\n"))).toContain("shaped:C3");
+		expect(shapeSpy).toHaveBeenCalledTimes(4);
 	});
 
 	// Regression: the memo key must also cover streamed call-arg changes. The
@@ -124,22 +143,27 @@ describe("ToolExecutionComponent tool-result render memoization", () => {
 		const afterCtor = callSpy.mock.calls.length;
 
 		// A flood of per-frame invalidate()s must NOT re-shape (memo still holds).
-		for (let i = 0; i < 12; i++) component.invalidate();
+		for (let i = 0; i < 12; i++) {
+			component.invalidate();
+			component.render(80);
+		}
 		expect(callSpy.mock.calls.length).toBe(afterCtor);
 
 		// A NEW args object (streamed delta) MUST re-shape and reflect the change,
 		// even though no key field (result version, expanded, …) moved.
 		component.updateArgs({ cmd: "B" });
-		expect(callSpy.mock.calls.length).toBe(afterCtor + 1);
 		const frame = stripVTControlCharacters(component.render(80).join("\n"));
+		expect(callSpy.mock.calls.length).toBe(afterCtor + 1);
 		expect(frame).toContain("call:B");
 		expect(frame).not.toContain("call:A");
 
 		// A same-reference updateArgs is the documented no-op and must not re-shape.
 		const sameArgs = { cmd: "C" };
 		component.updateArgs(sameArgs);
+		component.render(80);
 		const afterReal = callSpy.mock.calls.length;
 		component.updateArgs(sameArgs);
+		component.render(80);
 		expect(callSpy.mock.calls.length).toBe(afterReal);
 	});
 	// Regression: freezing a backgrounded task (seal()) flips #backgroundTaskFrozen,

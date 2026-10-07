@@ -132,14 +132,22 @@ function touchPngCache(key: string): ImageContent | undefined {
 	return hit;
 }
 
+/** Last computed {@link imagePayloadKey} per image object, revalidated against its payload. */
+const payloadKeyMemo = new WeakMap<object, { data: string; mimeType: string; key: string }>();
+
 /**
  * Content-addressed identity of an image payload, stable across components and
  * transcript rebuilds. Callers key their own per-image state by this instead of
  * positional ids like `${toolCallId}:${index}`, which go stale when the images
- * behind a position are replaced.
+ * behind a position are replaced. Memoized per image object, so repeated
+ * lookups on the same block hash the base64 payload once.
  */
-export function imagePayloadKey(image: ImageContent): string {
-	return `${image.mimeType}:${image.data.length}:${Bun.hash(image.data)}`;
+export function imagePayloadKey(image: Pick<ImageContent, "data" | "mimeType">): string {
+	const memo = payloadKeyMemo.get(image);
+	if (memo && memo.data === image.data && memo.mimeType === image.mimeType) return memo.key;
+	const key = `${image.mimeType}:${image.data.length}:${Bun.hash(image.data)}`;
+	payloadKeyMemo.set(image, { data: image.data, mimeType: image.mimeType, key });
+	return key;
 }
 
 /**
@@ -147,7 +155,7 @@ export function imagePayloadKey(image: ImageContent): string {
  * Synchronous so renderers can use an already-converted image on the spot
  * instead of scheduling another async re-render.
  */
-export function cachedPngConversion(image: ImageContent): ImageContent | undefined {
+export function cachedPngConversion(image: Pick<ImageContent, "data" | "mimeType">): ImageContent | undefined {
 	return touchPngCache(imagePayloadKey(image));
 }
 

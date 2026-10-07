@@ -5,7 +5,13 @@ import { SPINNER_ADVANCE_MS } from "../components/loader";
 import { Image } from "../components/image";
 import { Spacer } from "../components/spacer";
 import { Text } from "../components/text";
-import { getImageDimensions, ImageProtocol, imageFallback, TERMINAL } from "../terminal-capabilities";
+import {
+	getImageDimensions,
+	type ImageDimensions,
+	ImageProtocol,
+	imageFallback,
+	TERMINAL,
+} from "../terminal-capabilities";
 import { type Component, Container, type TUI } from "../tui";
 import { truncateToWidth } from "../utils";
 import { getProjectDir, isRecord, logger, sanitizeText } from "@oh-my-pi/pi-utils";
@@ -80,6 +86,28 @@ function imageBlocksFromDetails(details: unknown): ToolImageBlock[] {
 			(image.data === undefined || typeof image.data === "string") &&
 			(image.mimeType === undefined || typeof image.mimeType === "string"),
 	);
+}
+
+/** Probed dimensions per image block, revalidated against its payload. */
+const imageDimensionsMemo = new WeakMap<
+	ToolImageBlock,
+	{ data: string; mimeType: string; dims: ImageDimensions | undefined }
+>();
+
+/** Text stand-in for an image that is not drawn inline; the header probe runs once per block payload. */
+function imageBlockFallback(image: ToolImageBlock): string {
+	const mimeType = String(image.mimeType);
+	let dims: ImageDimensions | undefined;
+	if (image.data) {
+		const memo = imageDimensionsMemo.get(image);
+		if (memo && memo.data === image.data && memo.mimeType === mimeType) {
+			dims = memo.dims;
+		} else {
+			dims = getImageDimensions(image.data, mimeType) ?? undefined;
+			imageDimensionsMemo.set(image, { data: image.data, mimeType, dims });
+		}
+	}
+	return imageFallback(mimeType, dims);
 }
 
 function displaceableToolName(
@@ -331,6 +359,10 @@ export class ToolExecutionComponent extends Container {
 	// #contentBox.children.length probe so the memo fast-path also covers the
 	// #contentText fallback path (which leaves #contentBox empty).
 	#displayBuilt = false;
+	// Set by every display-input change; render() runs the memoized rebuild
+	// once per frame instead of per update (tool_execution_update can land
+	// many times between frames). See #updateDisplay / #flushDisplay.
+	#displayDirty = true;
 	// Number of Image children the last rebuild emitted. Only when this is > 0 does
 	// the memo key fold in viewport-dependent image sizing (resolveImageOptions),
 	// so a terminal resize re-shapes image-bearing results to rescale them without
@@ -356,13 +388,15 @@ export class ToolExecutionComponent extends Container {
 	#editMode?: EditMode;
 	#editDiffPreview?: PerFileDiffPreview[];
 	#previewReady?: PromiseWithResolvers<void>;
-	// Payload keys whose Kitty PNG conversion is already awaited; the converted
-	// images themselves live in the process-wide cache behind
-	// `convertImageToPngShared`, so rebuilt components reuse them.
+	// Payload keys whose Kitty PNG conversion is in flight. Converted images
+	// live in the bounded process-wide cache behind `convertImageToPngShared`,
+	// so rebuilt components reuse them.
 	#kittyConversionsAwaited = new Set<string>();
-	// Conversions this component displays, held so a later re-render still finds
-	// them after the bounded shared cache evicts them.
-	#kittyConverted = new Map<string, ImageContent>();
+	// Conversions the current Image children display, by payload key. Rebuilt
+	// on every image pass, so a conversion is held only while it is on screen
+	// (a re-render after the shared cache evicted it still finds it) and
+	// released once hidden or replaced, leaving the shared LRU in charge.
+	#kittyDisplayed = new Map<string, ImageContent>();
 	// Spinner animation for partial task results
 	#spinnerFrame?: number;
 	#spinnerActive = false;
@@ -591,7 +625,7 @@ export class ToolExecutionComponent extends Container {
 			wasPartialResult && partialResultPainted,
 			isPartial,
 		);
-		// Convert non-PNG images to PNG for Kitty protocol (async)
+		// Start Kitty PNG conversions now so they are ready by the next frame.
 		this.#maybeConvertImagesForKitty();
 	}
 
@@ -611,42 +645,38 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	/**
-	 * Convert non-PNG images to PNG for Kitty graphics protocol.
-	 * Kitty requires PNG format (f=100), so JPEG/GIF/WebP won't display.
+	 * Convert non-PNG images to PNG for the Kitty graphics protocol (f=100
+	 * accepts only PNG); the display rebuilds once each lands.
 	 */
 	#maybeConvertImagesForKitty(): void {
-		// Only needed for Kitty protocol
-		if (TERMINAL.imageProtocol !== ImageProtocol.Kitty) return;
-		if (!this.#result) return;
-
+		if (TERMINAL.imageProtocol !== ImageProtocol.Kitty || !this.#result) return;
 		for (const img of this.#getAllImageBlocks()) {
-			if (!img.data || !img.mimeType) continue;
-			// Skip if already PNG or already converted anywhere in this process
-			if (img.mimeType === "image/png") continue;
-			const image: ImageContent = { type: "image", data: img.data, mimeType: img.mimeType };
-			const key = imagePayloadKey(image);
-			if (this.#kittyConverted.has(key)) continue;
-			const cached = cachedPngConversion(image);
-			if (cached) {
-				this.#kittyConverted.set(key, cached);
-				continue;
-			}
-			if (this.#kittyConversionsAwaited.has(key)) continue;
-			this.#kittyConversionsAwaited.add(key);
-
-			// Convert async - catch errors from processing
-			convertImageToPngShared(image)
-				.then(converted => {
-					this.#kittyConverted.set(key, converted);
-					this.#displayInputVersion++;
-					this.#updateDisplay();
-					this.#ui.requestRender();
-				})
-				.catch(() => {
-					// Ignore conversion failures - display will use original image format
-					this.#kittyConversionsAwaited.delete(key);
-				});
+			if (!img.data || !img.mimeType || img.mimeType === "image/png") continue;
+			const source = img as Pick<ImageContent, "data" | "mimeType">;
+			if (cachedPngConversion(source) || this.#kittyDisplayed.has(imagePayloadKey(source))) continue;
+			this.#scheduleKittyConversion(img.data, img.mimeType);
 		}
+	}
+
+	/**
+	 * Convert one non-PNG image and rebuild once it lands. Failures are
+	 * ignored: the image stays hidden until a later update retries.
+	 */
+	#scheduleKittyConversion(data: string, mimeType: string): void {
+		const image: ImageContent = { type: "image", data, mimeType };
+		const key = imagePayloadKey(image);
+		if (this.#kittyConversionsAwaited.has(key)) return;
+		this.#kittyConversionsAwaited.add(key);
+		convertImageToPngShared(image)
+			.then(() => {
+				this.#kittyConversionsAwaited.delete(key);
+				this.#displayInputVersion++;
+				this.#updateDisplay();
+				this.#ui.requestRender();
+			})
+			.catch(() => {
+				this.#kittyConversionsAwaited.delete(key);
+			});
 	}
 
 	/**
@@ -1162,13 +1192,7 @@ export class ToolExecutionComponent extends Container {
 			.map(block => sanitizeText(block.text || ""))
 			.join("\n");
 		if (this.#showImages) return output;
-		const indicators = this.#getAllImageBlocks()
-			.map(image => {
-				const mimeType = String(image.mimeType);
-				const dims = image.data ? (getImageDimensions(image.data, mimeType) ?? undefined) : undefined;
-				return imageFallback(mimeType, dims);
-			})
-			.join("\n");
+		const indicators = this.#getAllImageBlocks().map(imageBlockFallback).join("\n");
 		return indicators ? (output ? `${output}\n${indicators}` : indicators) : output;
 	}
 
@@ -1203,7 +1227,13 @@ export class ToolExecutionComponent extends Container {
 		this.#updateDisplay();
 	}
 
+	/** Mark the display stale; the next render() rebuilds it once (see #flushDisplay). */
 	#updateDisplay(): void {
+		this.#displayDirty = true;
+	}
+
+	#flushDisplay(): void {
+		this.#displayDirty = false;
 		// `TERMINAL.imageProtocol` is resolved by an async capability probe during
 		// TUI startup, so a result rendered before it lands must re-shape once it
 		// does (it gates Image children vs text fallback in #rebuildDisplay); keyed
@@ -1254,6 +1284,7 @@ export class ToolExecutionComponent extends Container {
 		if (!this.#toolActivityVisible || this.#allocation === 0 || (this.#toolName === "wait" && this.#isBenignSkip())) {
 			return [];
 		}
+		if (this.#displayDirty) this.#flushDisplay();
 		let lines = super.render(width);
 		if (this.#allocation < 3) {
 			// A squeezed allocation degrades only blocks that genuinely overflow it.
@@ -1611,6 +1642,8 @@ export class ToolExecutionComponent extends Container {
 			this.removeChild(spacer);
 		}
 		this.#imageSpacers = [];
+		const previouslyDisplayed = this.#kittyDisplayed;
+		this.#kittyDisplayed = new Map();
 
 		if (this.#result) {
 			const imageBlocks = this.#getAllImageBlocks();
@@ -1618,17 +1651,21 @@ export class ToolExecutionComponent extends Container {
 			for (let i = 0; i < imageBlocks.length; i++) {
 				const img = imageBlocks[i];
 				if (TERMINAL.imageProtocol && this.#showImages && img.data && img.mimeType) {
-					// Use converted PNG for Kitty protocol if available
-					const source: ImageContent = { type: "image", data: img.data, mimeType: img.mimeType };
-					const converted =
-						TERMINAL.imageProtocol === ImageProtocol.Kitty && img.mimeType !== "image/png"
-							? (this.#kittyConverted.get(imagePayloadKey(source)) ?? cachedPngConversion(source))
-							: undefined;
+					// Use converted PNG for Kitty protocol if available. The block
+					// itself is the memo identity for its payload hash.
+					let converted: ImageContent | undefined;
+					if (TERMINAL.imageProtocol === ImageProtocol.Kitty && img.mimeType !== "image/png") {
+						const source = img as Pick<ImageContent, "data" | "mimeType">;
+						const payloadKey = imagePayloadKey(source);
+						converted = cachedPngConversion(source) ?? previouslyDisplayed.get(payloadKey);
+						if (converted) this.#kittyDisplayed.set(payloadKey, converted);
+					}
 					const imageData = converted?.data ?? img.data;
 					const imageMimeType = converted?.mimeType ?? img.mimeType;
 
 					// For Kitty, skip non-PNG images that haven't been converted yet
 					if (TERMINAL.imageProtocol === ImageProtocol.Kitty && imageMimeType !== "image/png") {
+						this.#scheduleKittyConversion(img.data, img.mimeType);
 						continue;
 					}
 
@@ -1755,13 +1792,7 @@ export class ToolExecutionComponent extends Container {
 			.join("\n");
 
 		if (imageBlocks.length > 0 && (!TERMINAL.imageProtocol || !this.#showImages)) {
-			const imageIndicators = imageBlocks
-				.map(img => {
-					const mimeType = String(img.mimeType);
-					const dims = img.data ? (getImageDimensions(img.data, mimeType) ?? undefined) : undefined;
-					return imageFallback(mimeType, dims);
-				})
-				.join("\n");
+			const imageIndicators = imageBlocks.map(imageBlockFallback).join("\n");
 			output = output ? `${output}\n${imageIndicators}` : imageIndicators;
 		}
 
