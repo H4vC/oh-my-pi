@@ -29,8 +29,9 @@ export const LOAD_OLDER_LABEL = "### MOVE UP TO LOAD MORE...";
 const INITIAL_LOG_CHUNK = 50;
 const LOAD_OLDER_CHUNK = 50;
 /**
- * Most entries retained in memory. Loading older entries past this drops the
- * newest ones (the far end of the window from where history grows).
+ * Default for {@link DebugLogViewerModelOptions.maxLogEntries}. Once this many
+ * entries are loaded, older history stops loading; the newest entries (the
+ * current session) are never evicted.
  */
 const MAX_LOG_ENTRIES = 50_000;
 const MIN_LOG_VIEWER_WIDTH = 48;
@@ -68,15 +69,6 @@ type CachedLogRow = {
 	lines: string[];
 };
 
-/**
- * Total entries ever loaded into the model. Every prepend raises it (log
- * indices shift even when the cap keeps {@link DebugLogViewerModel.logCount}
- * flat), so caches keyed by log index stay valid while it is unchanged.
- */
-function entriesGeneration(model: DebugLogViewerModel): number {
-	return model.logCount + model.droppedCount;
-}
-
 type CursorToken = { kind: "log"; logIndex: number } | { kind: "load-older" };
 
 type DebugLogViewerModelOptions = {
@@ -84,6 +76,8 @@ type DebugLogViewerModelOptions = {
 	processPid?: number;
 	hasOlderLogs?: () => boolean;
 	loadOlderLogs?: (limitDays?: number) => Promise<string>;
+	/** Most entries kept; older history beyond it is not loaded. Defaults to {@link MAX_LOG_ENTRIES}. */
+	maxLogEntries?: number;
 };
 
 /**
@@ -174,7 +168,7 @@ export class DebugLogViewerModel {
 	 * copying the whole array. Log index `i` (0 = oldest) lives at `length - 1 - i`.
 	 */
 	#entries: LogEntry[];
-	#droppedCount = 0;
+	readonly #maxLogEntries: number;
 	#rows: ViewerRow[];
 	#visibleLogIndices: number[];
 	#selectableRowIndices: number[];
@@ -191,8 +185,17 @@ export class DebugLogViewerModel {
 	#loadOlderLogs?: (limitDays?: number) => Promise<string>;
 
 	constructor(logText: string, options: DebugLogViewerModelOptions = {}) {
-		const { processStartMs = getProcessStartMs(), processPid = process.pid, hasOlderLogs, loadOlderLogs } = options;
+		const {
+			processStartMs = getProcessStartMs(),
+			processPid = process.pid,
+			hasOlderLogs,
+			loadOlderLogs,
+			maxLogEntries = MAX_LOG_ENTRIES,
+		} = options;
+		this.#maxLogEntries = Math.max(1, maxLogEntries);
 		this.#entries = parseLogEntries(logText).reverse();
+		// Newest first: truncating keeps the newest entries and drops the oldest.
+		if (this.#entries.length > this.#maxLogEntries) this.#entries.length = this.#maxLogEntries;
 		this.#processStartMs = processStartMs;
 		this.#processPid = processPid;
 		this.#hasOlderLogs = hasOlderLogs;
@@ -208,9 +211,9 @@ export class DebugLogViewerModel {
 		return this.#entries.length;
 	}
 
-	/** Newest entries discarded because loading older history exceeded the retention cap. */
-	get droppedCount(): number {
-		return this.#droppedCount;
+	/** True once the entry cap is reached, so older history no longer loads. */
+	get historyLimitReached(): boolean {
+		return this.#entries.length >= this.#maxLogEntries;
 	}
 
 	get visibleLogCount(): number {
@@ -407,7 +410,10 @@ export class DebugLogViewerModel {
 	prependLogs(logText: string): number {
 		const previousCursor = this.#getCursorToken();
 		const previousAnchorLogIndex = this.#getAnchorLogIndex();
-		const newEntries = parseLogEntries(logText);
+		const room = this.#maxLogEntries - this.#entries.length;
+		const parsed = room > 0 ? parseLogEntries(logText) : [];
+		// Chronological order: past the cap, keep the chunk's newest entries (nearest the loaded history).
+		const newEntries = parsed.length > room ? parsed.slice(parsed.length - room) : parsed;
 		if (newEntries.length === 0) {
 			return 0;
 		}
@@ -416,16 +422,7 @@ export class DebugLogViewerModel {
 			this.#entries.push(newEntries[i]!);
 		}
 		this.#loadedStartIndex += offset;
-		let expanded = [...this.#expandedLogIndices].map(logIndex => logIndex + offset);
-		const excess = this.#entries.length - MAX_LOG_ENTRIES;
-		if (excess > 0) {
-			// Newest entries sit at the front; dropping them leaves older log indices unchanged.
-			this.#entries.splice(0, excess);
-			this.#droppedCount += excess;
-			this.#loadedStartIndex = Math.min(this.#loadedStartIndex, this.#entries.length);
-			expanded = expanded.filter(logIndex => logIndex < this.#entries.length);
-		}
-		this.#expandedLogIndices = new Set(expanded);
+		this.#expandedLogIndices = new Set([...this.#expandedLogIndices].map(logIndex => logIndex + offset));
 		const adjustedCursor: CursorToken | undefined =
 			previousCursor?.kind === "log" ? { kind: "log", logIndex: previousCursor.logIndex + offset } : previousCursor;
 		const adjustedAnchor = previousAnchorLogIndex === undefined ? undefined : previousAnchorLogIndex + offset;
@@ -545,7 +542,7 @@ export class DebugLogViewerModel {
 	}
 
 	#hasExternalOlderLogs(): boolean {
-		return this.#hasOlderLogs?.() ?? false;
+		return !this.historyLimitReached && (this.#hasOlderLogs?.() ?? false);
 	}
 
 	#entryAt(logIndex: number): LogEntry | undefined {
@@ -865,7 +862,7 @@ export class DebugLogViewerComponent implements Component {
 				model.cursorRowIndex,
 				selected.join(","),
 				model.logCount,
-				model.droppedCount,
+				model.historyLimitReached,
 				model.isProcessFilterEnabled(),
 				model.canLoadOlder(),
 				query,
@@ -874,7 +871,8 @@ export class DebugLogViewerComponent implements Component {
 				this.#statusMessage,
 			],
 			() => {
-				const generation = entriesGeneration(model);
+				// Entries only grow, and every prepend shifts log indices, so the count keys the item cache.
+				const generation = model.logCount;
 				if (this.#nativeItemsGeneration !== generation) {
 					this.#nativeItems = new Map();
 					this.#nativeItemsGeneration = generation;
@@ -910,7 +908,7 @@ export class DebugLogViewerComponent implements Component {
 				const subtitle = [
 					`${model.visibleLogCount}/${model.logCount} entries`,
 					selected.length > 1 ? `${selected.length} selected` : undefined,
-					model.droppedCount > 0 ? `${model.droppedCount} newest dropped` : undefined,
+					model.historyLimitReached ? "history limit reached" : undefined,
 					this.#loadingOlder ? "loading older…" : undefined,
 				]
 					.filter(part => part !== undefined)
@@ -947,7 +945,11 @@ export class DebugLogViewerComponent implements Component {
 							pickerAction("all", "Select all", "ctrl+a"),
 							pickerAction("pid", "This process", "ctrl+p", { on: model.isProcessFilterEnabled() }),
 							pickerAction("older", "Load older", "ctrl+o", {
-								disabled: model.canLoadOlder() ? undefined : "No older log entries",
+								disabled: model.canLoadOlder()
+									? undefined
+									: model.historyLimitReached
+										? "Log history limit reached"
+										: "No older log entries",
 							}),
 							CLOSE_ACTION,
 						],
@@ -1039,10 +1041,8 @@ export class DebugLogViewerComponent implements Component {
 	#summaryText(): string {
 		const selected = this.#model.getSelectedCount();
 		const expanded = this.#model.expandedCount;
-		const dropped = this.#model.droppedCount;
-		const droppedText =
-			dropped > 0 ? `  ${theme.fg("muted", "dropped")} ${theme.fg("warning", String(dropped))}` : "";
-		return `${theme.fg("muted", "showing")} ${theme.fg("accent", `${this.#model.visibleLogCount}/${this.#model.logCount}`)}  ${theme.fg("muted", "selected")} ${theme.fg(selected > 0 ? "accent" : "muted", String(selected))}  ${theme.fg("muted", "expanded")} ${theme.fg(expanded > 0 ? "accent" : "muted", String(expanded))}${droppedText}`;
+		const limitText = this.#model.historyLimitReached ? `  ${theme.fg("warning", "history limit reached")}` : "";
+		return `${theme.fg("muted", "showing")} ${theme.fg("accent", `${this.#model.visibleLogCount}/${this.#model.logCount}`)}  ${theme.fg("muted", "selected")} ${theme.fg(selected > 0 ? "accent" : "muted", String(selected))}  ${theme.fg("muted", "expanded")} ${theme.fg(expanded > 0 ? "accent" : "muted", String(expanded))}${limitText}`;
 	}
 
 	#controlsText(): string {
@@ -1116,7 +1116,8 @@ export class DebugLogViewerComponent implements Component {
 	#renderRows(innerWidth: number): Array<{ lines: string[]; rowIndex: number }> {
 		const model = this.#model;
 		const rendered: Array<{ lines: string[]; rowIndex: number }> = [];
-		const generation = entriesGeneration(model);
+		// Entries only grow, and every prepend shifts log indices, so the count keys the row cache.
+		const generation = model.logCount;
 		const themeEpoch = getThemeEpoch();
 		if (this.#rowCacheGeneration !== generation || this.#rowCacheThemeEpoch !== themeEpoch) {
 			this.#rowCache.clear();
