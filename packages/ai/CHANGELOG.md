@@ -11,6 +11,7 @@
 
 - Reduced CPU and memory spent decoding large Cursor and Devin streamed responses ([#14669](https://github.com/can1357/oh-my-pi/pull/14669) by [@H4vC](https://github.com/H4vC))
 - Reduced per-request CPU and memory use for Codex and OpenAI Responses requests, and moved Codex SSE body compression off the event loop ([#14670](https://github.com/can1357/oh-my-pi/pull/14670) by [@H4vC](https://github.com/H4vC))
+- Sped up in-band tool-call dialect parsing for long tool calls ([#14671](https://github.com/can1357/oh-my-pi/pull/14671) by [@H4vC](https://github.com/H4vC))
 
 ## [18.7.0] - 2026-10-06
 
@@ -23,10 +24,6 @@
 - Fixed Ultrafast service-tier billing and usage accounting: GPT-6 Astra now applies its published premium rates—6× on the OpenAI API and 8× included usage on Codex—and is counted toward the premium-request limit.
 - Fixed Vertex AI authentication on Windows when credentials are created with `gcloud auth application-default login`.
 - Fixed selecting Cursor accounts by email through `auth.accountPolicies` and `/session pin`; newly refreshed and existing accounts now retain the account email.
-
-### Changed
-
-- Sped up in-band tool-call dialect parsing for long tool calls ([#14671](https://github.com/can1357/oh-my-pi/pull/14671) by [@H4vC](https://github.com/H4vC))
 
 ## [18.6.3] - 2026-10-06
 
