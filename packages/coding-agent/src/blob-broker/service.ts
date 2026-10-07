@@ -79,22 +79,6 @@ function blockContentHash(block: ImageContent): string {
 }
 
 /**
- * Longest reuse of a cached publication before the backend is asked again.
- * Re-asking re-arms the serving window and self-heals replaced or evicted
- * registrations (daemon restart, session blob GC, RAM eviction), so the cache
- * only absorbs the per-request probe of every image in an active turn loop.
- */
-const PUBLICATION_REUSE_MS = 60_000;
-
-/** When a publication obtained at `now` must be re-confirmed with its backend. */
-function publicationRefreshAt(publication: BlobPublication, now: number): number {
-	const reuseUntil = now + PUBLICATION_REUSE_MS;
-	if (publication.expiresAt === undefined) return reuseUntil;
-	// Half the remaining lifetime: the URL is re-armed well before it can lapse.
-	return Math.min(reuseUntil, now + (publication.expiresAt - now) / 2);
-}
-
-/**
  * Ordered backend chain that advances when a destination cannot publish.
  *
  * Each ensure call starts at the first backend so healthy persisted
@@ -169,8 +153,6 @@ export class ImageUrlService {
 	#publicationByUrl = new Map<string, BlobPublication>();
 	/** Backend range and content key retained by URL for ordered fallback. */
 	#publicationSourceByUrl = new Map<string, { rangeStart: number; rangeEnd: number; hash: string }>();
-	/** Recent publications by `backendKey\0contentHash`, reused until `refreshAt` without a backend probe. */
-	#recentPublications = new Map<string, { publication: BlobPublication; refreshAt: number }>();
 	#callback: { port: number; token: string; server: Bun.Server<undefined> } | null | undefined;
 	#daemonEnabled: boolean;
 	#providerFiles: ProviderFileManager | undefined;
@@ -415,38 +397,24 @@ export class ImageUrlService {
 		if (byHash.size === 0) return context;
 
 		const urlByBlock = new Map<ImageContent, string>();
-		const now = Date.now();
 		await Promise.all(
 			[...byHash].map(async ([hash, blocks]) => {
-				const cacheKey = `${backendKey}\0${hash}`;
-				const cached = this.#recentPublications.get(cacheKey);
+				const data = blocks[0].data;
 				let publication: BlobPublication | null;
-				if (cached && now < cached.refreshAt) {
-					publication = cached.publication;
-				} else {
-					const data = blocks[0].data;
-					try {
-						publication = await backend.ensureBlob(
-							hash,
-							blocks[0].mimeType,
-							() => Buffer.from(data, "base64"),
-							() => data,
-						);
-					} catch (error) {
-						logger.warn("blob-broker: backend publication failed", {
-							error: error instanceof Error ? error.message : String(error),
-						});
-						return;
-					}
-					if (!publication) {
-						this.#recentPublications.delete(cacheKey);
-						return;
-					}
-					this.#recentPublications.set(cacheKey, {
-						publication,
-						refreshAt: publicationRefreshAt(publication, Date.now()),
+				try {
+					publication = await backend.ensureBlob(
+						hash,
+						blocks[0].mimeType,
+						() => Buffer.from(data, "base64"),
+						() => data,
+					);
+				} catch (error) {
+					logger.warn("blob-broker: backend publication failed", {
+						error: error instanceof Error ? error.message : String(error),
 					});
+					return;
 				}
+				if (!publication) return;
 				this.#publicationByUrl.set(publication.url, publication);
 				const rangeStart = this.#configs.indexOf(configs[0]);
 				this.#publicationSourceByUrl.set(publication.url, {
@@ -556,17 +524,12 @@ export class ImageUrlService {
 	}
 
 	#forgetUrls(urls: readonly string[]): void {
-		if (urls.length === 0) return;
 		for (const url of urls) {
 			const lazyKey = this.#lazyKeyByUrl.get(url);
 			this.#publicationByUrl.delete(url);
 			this.#publicationSourceByUrl.delete(url);
 			this.#lazyKeyByUrl.delete(url);
 			if (lazyKey) this.#producers.delete(lazyKey);
-		}
-		const forgotten = new Set(urls);
-		for (const [key, cached] of this.#recentPublications) {
-			if (forgotten.has(cached.publication.url)) this.#recentPublications.delete(key);
 		}
 	}
 
@@ -621,7 +584,6 @@ export class ImageUrlService {
 		this.#backendPromises.clear();
 		this.#publicationByUrl.clear();
 		this.#publicationSourceByUrl.clear();
-		this.#recentPublications.clear();
 		this.#lazyKeyByUrl.clear();
 		this.#producers.clear();
 	}

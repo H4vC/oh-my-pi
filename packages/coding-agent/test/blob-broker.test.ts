@@ -239,37 +239,28 @@ describe("BlobRegistry persistence", () => {
 		expect(await sessionStore.has(hash)).toBe(true);
 	});
 
-	it("stages concurrent background saves of a shared index in distinct temp files", async () => {
+	it("keeps the flushed index when a background save that started earlier finishes later", async () => {
 		const persist = makePersist(60_000);
-		const realWrite = Bun.write;
-		const staged: string[] = [];
-		const writes: Promise<number>[] = [];
+		const write = vi.spyOn(Bun, "write");
 		vi.useFakeTimers();
-		const write = vi.spyOn(Bun, "write").mockImplementation(((dest: string, data: string) => {
-			staged.push(dest);
-			const pending = realWrite(dest, data);
-			writes.push(pending);
-			return pending;
-		}) as typeof Bun.write);
 		try {
-			const first = new BlobRegistry({ persist });
-			const second = new BlobRegistry({ persist });
+			const registry = new BlobRegistry({ persist });
 			const bytes = new Uint8Array(Buffer.from("shared-index"));
-			await first.registerBytes("first-image", "image/png", bytes);
-			await second.registerBytes("second-image", "image/png", bytes);
-			// Both debounced saves fire in the same tick and stage concurrently.
+			await registry.registerBytes("first-image", "image/png", bytes);
+			// Start the debounced background save, then register again and flush before it lands.
 			vi.advanceTimersByTime(1_000);
-			await Promise.allSettled(writes);
-			first.flush();
-			second.flush();
-
-			const indexStages = staged.filter(dest => dest.startsWith(persist.indexPath));
-			expect(indexStages).toHaveLength(2);
-			expect(new Set(indexStages).size).toBe(2);
+			await registry.registerBytes("second-image", "image/png", bytes);
+			registry.flush();
+			// Let the stale background write (and its rename continuation) settle.
+			await Promise.allSettled(write.mock.results.map(result => result.value));
 		} finally {
-			write.mockRestore();
 			vi.useRealTimers();
+			write.mockRestore();
 		}
+
+		const reloaded = new BlobRegistry({ persist });
+		expect(reloaded.lookup("first-image")).not.toBeNull();
+		expect(reloaded.lookup("second-image")).not.toBeNull();
 	});
 });
 
