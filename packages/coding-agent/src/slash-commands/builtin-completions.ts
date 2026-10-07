@@ -108,30 +108,6 @@ const MCP_DISABLED_CONFIG_ELIGIBLE_SUBCOMMANDS: Readonly<Record<string, true>> =
 };
 
 /**
- * Autocomplete re-runs on every keystroke after `/mcp <sub> `; config files and
- * the server list do not change between keystrokes, so name lookups are reused
- * for a short window instead of re-reading and re-parsing both MCP configs.
- */
-const MCP_NAME_COMPLETION_TTL_MS = 2_000;
-
-interface McpNameCacheEntry<T> {
-	expiresAt: number;
-	value: Promise<T>;
-}
-
-function memoizeMcpNames<T>(cache: Map<string, McpNameCacheEntry<T>>, key: string, load: () => Promise<T>): Promise<T> {
-	const now = Date.now();
-	const cached = cache.get(key);
-	if (cached && cached.expiresAt > now) return cached.value;
-	const value = load();
-	cache.set(key, { expiresAt: now + MCP_NAME_COMPLETION_TTL_MS, value });
-	value.catch(() => {
-		if (cache.get(key)?.value === value) cache.delete(key);
-	});
-	return value;
-}
-
-/**
  * Build getArgumentCompletions for /mcp. Delegates to the generic
  * declarative subcommand completer while the subcommand name itself is
  * still being typed, then switches to MCP server-name completion (sourced
@@ -148,8 +124,6 @@ export function buildMcpArgumentCompletions(
 	runtime: TuiSlashCommandRuntime,
 ): (argumentPrefix: string) => Promise<AutocompleteItem[] | null> {
 	const genericCompletions = buildArgumentCompletions(subcommands);
-	const serverNameCache = new Map<string, McpNameCacheEntry<string[]>>();
-	const configNameCache = new Map<string, McpNameCacheEntry<McpConfigNames>>();
 	return async (argumentPrefix: string) => {
 		const spaceIndex = argumentPrefix.indexOf(" ");
 		if (spaceIndex === -1) return genericCompletions(argumentPrefix);
@@ -159,17 +133,16 @@ export function buildMcpArgumentCompletions(
 		if (MCP_SERVER_NAME_SUBCOMMANDS[lowerSubcommand] !== true) return null;
 		const namePrefix = argumentPrefix.slice(spaceIndex + 1).toLowerCase();
 		if (lowerSubcommand === "remove") {
-			return await buildMcpRemoveCompletions(rawSubcommand, namePrefix, configNameCache);
+			return await buildMcpRemoveCompletions(rawSubcommand, namePrefix);
 		}
 
-		const disabledOnlyEligible = MCP_DISABLED_ONLY_ELIGIBLE_SUBCOMMANDS[lowerSubcommand] === true;
-		const disabledConfigEligible = MCP_DISABLED_CONFIG_ELIGIBLE_SUBCOMMANDS[lowerSubcommand] === true;
 		let serverNames: string[];
 		try {
-			serverNames = await memoizeMcpNames(
-				serverNameCache,
-				`${getProjectDir()}\0${disabledOnlyEligible}\0${disabledConfigEligible}`,
-				() => collectMcpServerNames(runtime.ctx, undefined, disabledOnlyEligible, disabledConfigEligible),
+			serverNames = await collectMcpServerNames(
+				runtime.ctx,
+				undefined,
+				MCP_DISABLED_ONLY_ELIGIBLE_SUBCOMMANDS[lowerSubcommand] === true,
+				MCP_DISABLED_CONFIG_ELIGIBLE_SUBCOMMANDS[lowerSubcommand] === true,
 			);
 		} catch (error) {
 			logger.warn("MCP server-name autocomplete failed to read config", { error });
@@ -180,11 +153,6 @@ export function buildMcpArgumentCompletions(
 			.map(name => ({ value: `${rawSubcommand} ${name} `, label: name }));
 		return matches.length > 0 ? matches : null;
 	};
-}
-
-interface McpConfigNames {
-	projectNames: string[];
-	userNames: string[];
 }
 
 /**
@@ -200,22 +168,17 @@ interface McpConfigNames {
 async function buildMcpRemoveCompletions(
 	rawSubcommand: string,
 	namePrefix: string,
-	cache: Map<string, McpNameCacheEntry<McpConfigNames>>,
 ): Promise<AutocompleteItem[] | null> {
 	const cwd = getProjectDir();
 	let projectNames: string[];
 	let userNames: string[];
 	try {
-		({ projectNames, userNames } = await memoizeMcpNames(cache, cwd, async () => {
-			const [projectConfig, userConfig] = await Promise.all([
-				readMCPConfigFile(getMCPConfigPath("project", cwd)),
-				readMCPConfigFile(getMCPConfigPath("user", cwd)),
-			]);
-			return {
-				projectNames: Object.keys(projectConfig.mcpServers ?? {}),
-				userNames: Object.keys(userConfig.mcpServers ?? {}),
-			};
-		}));
+		const [projectConfig, userConfig] = await Promise.all([
+			readMCPConfigFile(getMCPConfigPath("project", cwd)),
+			readMCPConfigFile(getMCPConfigPath("user", cwd)),
+		]);
+		projectNames = Object.keys(projectConfig.mcpServers ?? {});
+		userNames = Object.keys(userConfig.mcpServers ?? {});
 	} catch (error) {
 		logger.warn("MCP remove autocomplete failed to read config", { error });
 		return null;

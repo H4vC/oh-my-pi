@@ -206,6 +206,44 @@ describe("MCPManager notification listeners", () => {
 		}
 	});
 
+	it("coalesces a burst of tool refreshes into one trailing pass that every caller waits for", async () => {
+		const manager = new MCPManager(workDir);
+		const collector = makeFrameCollector();
+		manager.addNotificationListener(collector.listener);
+
+		try {
+			await manager.connectServers({ alpha: serverConfig() }, {});
+			await collector.awaitFrame("alpha", "notifications/tools/list_changed");
+
+			const firstEntered = Promise.withResolvers<void>();
+			const releaseFirst = Promise.withResolvers<void>();
+			let calls = 0;
+			manager.setOnToolsChanged(async () => {
+				calls++;
+				if (calls === 1) {
+					firstEntered.resolve();
+					await releaseFirst.promise;
+				}
+			});
+
+			const first = manager.refreshServerTools("alpha");
+			await firstEntered.promise;
+			const burst = [1, 2, 3, 4].map(() => manager.refreshServerTools("alpha"));
+			let burstSettled = false;
+			void Promise.all(burst).then(() => {
+				burstSettled = true;
+			});
+			releaseFirst.resolve();
+			await Promise.all([first, ...burst]);
+
+			expect(burstSettled).toBe(true);
+			// The held pass plus exactly one trailing pass for the whole burst.
+			expect(calls).toBe(2);
+		} finally {
+			await manager.disconnectAll();
+		}
+	});
+
 	it("refreshServerTools awaits an async setOnToolsChanged handler before resolving", async () => {
 		// Verifies the second-layer guarantee (issue raised in review):
 		// #onToolsChanged in the sdk.ts wiring calls session.refreshMCPTools()

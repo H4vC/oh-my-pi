@@ -543,7 +543,7 @@ export async function terminateStdioProcess(
  * Spawns a subprocess and communicates via stdin/stdout.
  */
 export class StdioTransport implements MCPTransport {
-	#process: Subprocess<"pipe", "pipe", "ignore"> | null = null;
+	#process: Subprocess<"pipe", "pipe", "pipe"> | null = null;
 	#pendingRequests = new Map<
 		string | number,
 		{
@@ -605,9 +605,7 @@ export class StdioTransport implements MCPTransport {
 			env,
 			stdin: "pipe",
 			stdout: "pipe",
-			// MCP spec: clients MAY capture or ignore server stderr (logging). It was
-			// never surfaced, so don't pay a reader and decode per chunk for it.
-			stderr: "ignore",
+			stderr: "pipe",
 			windowsHide: spawnCommand.windowsHide,
 			detached: spawnCommand.detached,
 			windowsVerbatimArguments: spawnCommand.windowsVerbatimArguments,
@@ -618,6 +616,9 @@ export class StdioTransport implements MCPTransport {
 
 		// Start reading stdout
 		this.#readLoop = this.#startReadLoop();
+
+		// Log stderr for debugging
+		this.#startStderrLoop();
 	}
 
 	async #startReadLoop(): Promise<void> {
@@ -656,6 +657,30 @@ export class StdioTransport implements MCPTransport {
 				});
 			}
 			this.#handleClose(closeError);
+		}
+	}
+
+	async #startStderrLoop(): Promise<void> {
+		if (!this.#process?.stderr) return;
+
+		const reader = this.#process.stderr.getReader();
+		const decoder = new TextDecoder();
+
+		try {
+			while (this.#connected) {
+				const { done, value } = await reader.read();
+				if (done) break;
+				// Log stderr but don't treat as error - servers use it for logging
+				const text = decoder.decode(value, { stream: true });
+				if (text.trim()) {
+					// Could expose via onStderr callback if needed
+					// For now, silent - MCP spec says clients MAY capture/ignore
+				}
+			}
+		} catch {
+			// Ignore stderr read errors
+		} finally {
+			reader.releaseLock();
 		}
 	}
 

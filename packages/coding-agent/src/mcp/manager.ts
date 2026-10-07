@@ -473,7 +473,8 @@ export class MCPManager {
 	/**
 	 * Invoke the owner {@link setOnToolsChanged} handler, coalescing bursts.
 	 * The returned promise settles once the handler has observed a tool set at
-	 * least as new as the one current at call time.
+	 * least as new as the one current at call time; it rejects only when the
+	 * last (newest) handler call failed.
 	 */
 	#notifyOwnerToolsChanged(): Promise<void> {
 		if (!this.#onToolsChanged) return Promise.resolve();
@@ -484,10 +485,20 @@ export class MCPManager {
 		let settled = false;
 		const run = (async () => {
 			try {
+				// A failed call must not swallow a call queued while it ran.
+				let failure: unknown;
+				let failed = false;
 				do {
 					this.#ownerToolsDirty = false;
-					await this.#onToolsChanged?.(this.#tools);
+					try {
+						await this.#onToolsChanged?.(this.#tools);
+						failed = false;
+					} catch (error) {
+						failure = error;
+						failed = true;
+					}
 				} while (this.#ownerToolsDirty);
+				if (failed) throw failure;
 			} finally {
 				settled = true;
 				this.#ownerToolsRun = undefined;
