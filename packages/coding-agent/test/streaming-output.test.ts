@@ -912,6 +912,13 @@ describe("OutputSink head-retain mode", () => {
 		expect(preview).toStartWith("row 0\n");
 		expect(preview).toContain("elided");
 	});
+
+	test("preview() omits the newline dump() adds after a trailing carriage return", async () => {
+		const sink = new OutputSink({ spillThreshold: 1024 });
+		sink.push("progress 50%\r");
+		expect(sink.preview()).toBe("progress 50%");
+		expect((await sink.dump()).output).toBe("progress 50%\n");
+	});
 });
 
 describe("OutputSink maxColumns (per-line cap)", () => {

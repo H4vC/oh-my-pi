@@ -1512,9 +1512,11 @@ export class OutputSink {
 
 	/**
 	 * Current inline view without finalizing: the body {@link dump} would
-	 * return right now (head + elision marker + rolling tail), minus any
-	 * notice. Cheap enough to call at the onChunk cadence, so callers can
-	 * stream it instead of keeping their own tail buffer.
+	 * return right now (head + elision marker + rolling tail), minus any notice
+	 * and minus the newline `dump()` appends after output that ends in a bare
+	 * carriage return. Each call trims the rolling tail to its budget (a copy
+	 * of the tail window once it overflowed), so call it from a throttled
+	 * onChunk (`chunkThrottleMs`), not once per raw chunk.
 	 */
 	preview(): string {
 		return this.#composeBody().body;

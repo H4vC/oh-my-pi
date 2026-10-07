@@ -4,9 +4,8 @@
 
 ### Changed
 
-- Model mentions (`^`), `/switch` completions, and model picker search stay responsive on every keystroke with large model catalogs ([#14595](https://github.com/can1357/oh-my-pi/pull/14595) by [@H4vC](https://github.com/H4vC))
-- Sped up `OutputSink` on many single-line chunks (100k chunks: ~1.3–9 s → ~15 ms) ([#14679](https://github.com/can1357/oh-my-pi/pull/14679) by [@H4vC](https://github.com/H4vC))
 - Sped up Markdown lexing of large documents (532 KB: ~29 ms → ~19 ms) ([#14667](https://github.com/can1357/oh-my-pi/pull/14667) by [@H4vC](https://github.com/H4vC))
+- Sped up `OutputSink` on many single-line chunks (100k chunks: ~1.3–9 s → ~15 ms) ([#14679](https://github.com/can1357/oh-my-pi/pull/14679) by [@H4vC](https://github.com/H4vC))
 
 ### Fixed
 
