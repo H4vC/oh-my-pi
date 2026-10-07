@@ -194,9 +194,31 @@ interface OverlayPanelNativeMemo {
 interface OverlayPanelMemo {
 	width: number;
 	title: string;
+	theme: typeof theme;
 	children: Component[];
 	childLines: (readonly string[])[];
 	result: string[];
+}
+
+/** Wrapped rows of one child, reused while its `render` output identity, width and theme hold. */
+interface OverlayPanelRowsMemo {
+	width: number;
+	theme: typeof theme;
+	lines: readonly string[];
+	rows: readonly string[];
+}
+
+interface OverlayPanelChromeMemo {
+	width: number;
+	title: string;
+	theme: typeof theme;
+	top: string;
+	divider: string;
+	bottom: string;
+}
+
+function fitChrome(line: string, width: number): string {
+	return width < 4 ? truncateToWidth(line, width, Ellipsis.Omit) : line;
 }
 
 /** Titles inset into a single border row must never carry line breaks. */
@@ -221,6 +243,8 @@ export class OverlayPanel implements Component {
 	readonly #role: string;
 	#memo: OverlayPanelMemo | undefined;
 	#nativeMemo: OverlayPanelNativeMemo | undefined;
+	#rowsMemo = new WeakMap<Component, OverlayPanelRowsMemo>();
+	#chromeMemo: OverlayPanelChromeMemo | undefined;
 
 	constructor(title = "", role = "omp.overlay") {
 		this.#title = collapseTitle(title);
@@ -315,30 +339,51 @@ export class OverlayPanel implements Component {
 			child instanceof PanelDivider ? NO_LINES : child.render(innerWidth),
 		);
 		const memo = this.#memo;
+		const activeTheme = theme;
 		if (
 			memo !== undefined &&
 			memo.width === width &&
 			memo.title === this.#title &&
+			memo.theme === activeTheme &&
 			memo.children.length === this.children.length &&
 			this.children.every((child, i) => memo.children[i] === child && memo.childLines[i] === childLines[i])
 		) {
 			return memo.result;
 		}
-		const result: string[] = [topBorder(width, this.#title)];
+		let chrome = this.#chromeMemo;
+		if (
+			chrome === undefined ||
+			chrome.width !== width ||
+			chrome.title !== this.#title ||
+			chrome.theme !== activeTheme
+		) {
+			chrome = {
+				width,
+				title: this.#title,
+				theme: activeTheme,
+				top: fitChrome(topBorder(width, this.#title), width),
+				divider: fitChrome(divider(width), width),
+				bottom: fitChrome(bottomBorder(width), width),
+			};
+			this.#chromeMemo = chrome;
+		}
+		const result: string[] = [chrome.top];
 		for (let i = 0; i < this.children.length; i++) {
-			if (this.children[i] instanceof PanelDivider) {
-				result.push(divider(width));
+			const child = this.children[i]!;
+			if (child instanceof PanelDivider) {
+				result.push(chrome.divider);
 				continue;
 			}
-			for (const line of childLines[i] ?? NO_LINES) result.push(row(line, width));
-		}
-		result.push(bottomBorder(width));
-		if (width < 4) {
-			for (let index = 0; index < result.length; index++) {
-				result[index] = truncateToWidth(result[index]!, width, Ellipsis.Omit);
+			const lines = childLines[i] ?? NO_LINES;
+			let rows = this.#rowsMemo.get(child);
+			if (rows === undefined || rows.lines !== lines || rows.width !== width || rows.theme !== activeTheme) {
+				rows = { width, theme: activeTheme, lines, rows: lines.map(line => fitChrome(row(line, width), width)) };
+				this.#rowsMemo.set(child, rows);
 			}
+			for (const line of rows.rows) result.push(line);
 		}
-		this.#memo = { width, title: this.#title, children: [...this.children], childLines, result };
+		result.push(chrome.bottom);
+		this.#memo = { width, title: this.#title, theme: activeTheme, children: [...this.children], childLines, result };
 		return result;
 	}
 }

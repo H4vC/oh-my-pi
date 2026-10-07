@@ -5,6 +5,14 @@
 ### Changed
 
 - Model mentions (`^`), `/switch` completions, and model picker search stay responsive on every keystroke with large model catalogs ([#14595](https://github.com/can1357/oh-my-pi/pull/14595) by [@H4vC](https://github.com/H4vC))
+- Sped up overlay and modal rendering by reusing unchanged rows ([#14689](https://github.com/can1357/oh-my-pi/pull/14689) by [@H4vC](https://github.com/H4vC))
+- Improved `visibleWidth` caching so stable lines stay cached ([#14689](https://github.com/can1357/oh-my-pi/pull/14689) by [@H4vC](https://github.com/H4vC))
+- Sped up theme symbol group lookups (`theme.icon`, `theme.status`, etc.) ([#14689](https://github.com/can1357/oh-my-pi/pull/14689) by [@H4vC](https://github.com/H4vC))
+- Sped up `theme.fgResolved`, `theme.bgFill` and `theme.fgOnBg` on plain text ([#14689](https://github.com/can1357/oh-my-pi/pull/14689) by [@H4vC](https://github.com/H4vC))
+- Sped up `getImageDimensions` by decoding only the image header ([#14689](https://github.com/can1357/oh-my-pi/pull/14689) by [@H4vC](https://github.com/H4vC))
+- Reduced memory use of the native (TSP) blob store by freeing unreferenced images past a 64 MiB budget ([#14689](https://github.com/can1357/oh-my-pi/pull/14689) by [@H4vC](https://github.com/H4vC))
+- Sped up TSP rendering of unchanged transcript blocks and image thumbnails ([#14689](https://github.com/can1357/oh-my-pi/pull/14689) by [@H4vC](https://github.com/H4vC))
+- Sped up `SelectList` rendering of wrapping popups (≈19×) ([#14689](https://github.com/can1357/oh-my-pi/pull/14689) by [@H4vC](https://github.com/H4vC))
 
 ### Fixed
 

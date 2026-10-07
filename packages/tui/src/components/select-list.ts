@@ -167,6 +167,26 @@ export class SelectList implements Component, MouseRoutable {
 		SelectItem,
 		{ sourceLabel: string; sourceDescription: string | undefined; label: string; description: string | undefined }
 	>();
+	/**
+	 * Column widths and per-item row counts of the built-in row layout, reused
+	 * across frames while the visible items (and each item's sanitized text and
+	 * icon), the width and the cursor glyph are unchanged. Wrapping every
+	 * description to count rows is the dominant render cost of a long
+	 * slash-command popup.
+	 */
+	#layoutMemo:
+		| {
+				items: readonly SelectItem[];
+				entries: readonly object[];
+				icons: readonly (string | undefined)[];
+				width: number;
+				cursor: string;
+				wrap: boolean;
+				primaryColumnWidth: number;
+				iconColumnWidth: number;
+				rowCounts: readonly number[];
+		  }
+		| undefined;
 	#maxVisible: number;
 	#selection: MenuSelection<SelectItem>;
 	#hoveredIndex: number | null = null;
@@ -380,7 +400,7 @@ export class SelectList implements Component, MouseRoutable {
 	}
 
 	invalidate(): void {
-		// No cached state to invalidate currently
+		this.#layoutMemo = undefined;
 	}
 
 	render(width: number): readonly string[] {
@@ -401,8 +421,6 @@ export class SelectList implements Component, MouseRoutable {
 			return lines;
 		}
 
-		const primaryColumnWidth = this.#getPrimaryColumnWidth();
-		const iconColumnWidth = this.#getIconColumnWidth();
 		const wrapEnabled = this.layout.wrapDescription === true;
 		// `maxVisible` is the picker's visual row budget. For non-wrap layouts
 		// every item is one row, so the budget matches the original item count.
@@ -412,22 +430,28 @@ export class SelectList implements Component, MouseRoutable {
 		// assume the scrollbar column might be reserved). For non-wrap layouts
 		// every count is 1, so total visual rows equal the visible item count.
 		const conservativeRowWidth = Math.max(0, width - 1);
-		// oxlint-disable-next-line unicorn/no-new-array -- length preallocation
-		const rowCounts = new Array<number>(this.#selection.visibleItems.length);
-		for (let i = 0; i < this.#selection.visibleItems.length; i++) {
-			const item = this.#selection.visibleItems[i];
-			if (!item) {
-				rowCounts[i] = 0;
-				continue;
-			}
-			const context = this.#renderContext(item, i, conservativeRowWidth);
-			rowCounts[i] = this.layout.measureItem
-				? Math.max(1, Math.trunc(this.layout.measureItem(context)))
-				: this.layout.renderItem
-					? Math.max(1, this.layout.renderItem(context).length)
-					: wrapEnabled
-						? this.#computeItemRowCount(item, conservativeRowWidth, primaryColumnWidth, iconColumnWidth)
+		const custom = this.layout.measureItem !== undefined || this.layout.renderItem !== undefined;
+		const builtIn = this.#builtInLayout(conservativeRowWidth, wrapEnabled && !custom);
+		const { primaryColumnWidth, iconColumnWidth } = builtIn;
+		let rowCounts = builtIn.rowCounts;
+		if (custom) {
+			// Custom rows may depend on selection/hover state, so they are measured every render.
+			// oxlint-disable-next-line unicorn/no-new-array -- length preallocation
+			const customCounts = new Array<number>(this.#selection.visibleItems.length);
+			for (let i = 0; i < this.#selection.visibleItems.length; i++) {
+				const item = this.#selection.visibleItems[i];
+				if (!item) {
+					customCounts[i] = 0;
+					continue;
+				}
+				const context = this.#renderContext(item, i, conservativeRowWidth);
+				customCounts[i] = this.layout.measureItem
+					? Math.max(1, Math.trunc(this.layout.measureItem(context)))
+					: this.layout.renderItem
+						? Math.max(1, this.layout.renderItem(context).length)
 						: 1;
+			}
+			rowCounts = customCounts;
 		}
 
 		const window = getMenuWindow(rowCounts, this.#selection.selectedIndex, visualBudget);
@@ -630,6 +654,47 @@ export class SelectList implements Component, MouseRoutable {
 			truncatedValue,
 			spacing: "",
 		};
+	}
+
+	/** Column widths plus built-in row counts (all 1 unless `wrap`), memoized in {@link #layoutMemo}. */
+	#builtInLayout(
+		width: number,
+		wrap: boolean,
+	): { primaryColumnWidth: number; iconColumnWidth: number; rowCounts: readonly number[] } {
+		const items = this.#selection.visibleItems;
+		const cursor = this.theme.symbols?.cursor ?? DEFAULT_CURSOR_SYMBOL;
+		const memo = this.#layoutMemo;
+		// The sanitized entry object is replaced whenever an item's label or
+		// description changes, so it doubles as a per-item revision token.
+		if (
+			memo &&
+			memo.items === items &&
+			memo.width === width &&
+			memo.cursor === cursor &&
+			memo.wrap === wrap &&
+			memo.entries.length === items.length &&
+			items.every((item, i) => this.#sanitizedEntry(item) === memo.entries[i] && item.icon === memo.icons[i])
+		) {
+			return memo;
+		}
+		const entries = items.map(item => this.#sanitizedEntry(item));
+		const primaryColumnWidth = this.#getPrimaryColumnWidth();
+		const iconColumnWidth = this.#getIconColumnWidth();
+		const rowCounts = items.map(item =>
+			!item ? 0 : wrap ? this.#computeItemRowCount(item, width, primaryColumnWidth, iconColumnWidth) : 1,
+		);
+		this.#layoutMemo = {
+			items,
+			entries,
+			icons: items.map(item => item?.icon),
+			width,
+			cursor,
+			wrap,
+			primaryColumnWidth,
+			iconColumnWidth,
+			rowCounts,
+		};
+		return this.#layoutMemo;
 	}
 
 	#getIconColumnWidth(): number {

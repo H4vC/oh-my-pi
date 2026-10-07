@@ -182,7 +182,7 @@ export interface SessionAccentTheme {
 export function getSessionAccentHex(name: string, theme: SessionAccentTheme): string {
 	// Pure function of its inputs; keyed by value so structurally equal inputs
 	// share an entry. Bounded: sessions × themes stays tiny in practice.
-	const key = `${name}\0${theme.accentHex}\0${theme.surfaceLuminance}\0${theme.colorHexes.join(",")}`;
+	const key = `${name}\0${sessionAccentThemeKey(theme)}`;
 	const cached = accentHexCache.get(key);
 	if (cached !== undefined) return cached;
 	const hex = computeSessionAccentHex(name, theme);
@@ -194,6 +194,22 @@ export function getSessionAccentHex(name: string, theme: SessionAccentTheme): st
 const ACCENT_CACHE_LIMIT = 256;
 const accentHexCache = new Map<string, string>();
 const accentAnsiCache = new Map<string, string | undefined>();
+/** Value keys of frozen accent inputs (`Theme.sessionAccentInputs` is built once per theme). */
+const themeKeyCache = new WeakMap<SessionAccentTheme, string>();
+
+/**
+ * Value key of the theme half of {@link getSessionAccentHex}'s cache key. Joining
+ * every theme color per call ran several times per status-line rebuild, so the
+ * key is memoized per inputs object — only when frozen, since a caller-owned
+ * mutable object could change under the same identity.
+ */
+function sessionAccentThemeKey(theme: SessionAccentTheme): string {
+	const cached = themeKeyCache.get(theme);
+	if (cached !== undefined) return cached;
+	const key = `${theme.accentHex}\0${theme.surfaceLuminance}\0${theme.colorHexes.join(",")}`;
+	if (Object.isFrozen(theme) && Object.isFrozen(theme.colorHexes)) themeKeyCache.set(theme, key);
+	return key;
+}
 
 function computeSessionAccentHex(name: string, theme: SessionAccentTheme): string {
 	// 1. Pick hue range based on theme mode

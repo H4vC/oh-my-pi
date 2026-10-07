@@ -1,9 +1,7 @@
 /**
- * `stripTerminalSequences` is ported verbatim from pi-mono's TUI utils so pi
- * extensions importing it through the legacy-pi compat rewrite observe
- * identical behavior. These tests pin the escape-sequence grammar it shares
- * with its private `extractAnsiCode` helper: CSI (restricted final bytes),
- * OSC and APC with BEL or ST terminators.
+ * `stripTerminalSequences` is part of the public TUI utils surface (pi
+ * extensions import it through the legacy-pi compat rewrite). These tests pin
+ * the grammar it strips: CSI, OSC and APC with BEL or ST terminators.
  */
 import { describe, expect, it } from "bun:test";
 import { stripTerminalSequences } from "@oh-my-pi/pi-tui/utils";
@@ -19,6 +17,10 @@ describe("stripTerminalSequences", () => {
 
 	it("strips CSI styling sequences", () => {
 		expect(stripTerminalSequences(`${ESC}[31mred${ESC}[0m`)).toBe("red");
+	});
+
+	it("strips non-SGR CSI sequences without consuming the following text", () => {
+		expect(stripTerminalSequences(`a${ESC}[?25lHidden${ESC}[2Kb`)).toBe("aHiddenb");
 	});
 
 	it("strips OSC 8 hyperlinks terminated by BEL", () => {

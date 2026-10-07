@@ -1,5 +1,6 @@
 import { encodeSixel } from "@oh-my-pi/pi-natives";
 import { $env, isBunTestRuntime, isTerminalHeadless, isWsl } from "@oh-my-pi/pi-utils/env";
+import { parseImageMetadata } from "@oh-my-pi/pi-utils/mime";
 import { writeTerminalSequence } from "./active-terminal";
 import { sendDesktopNotification, shouldDeliverDesktopNotification } from "./desktop-notify";
 import {
@@ -1199,6 +1200,11 @@ function calculateImageFit(
 	};
 }
 
+// Enough decoded bytes to reach a JPEG SOF marker behind typical EXIF/ICC
+// segments; PNG/GIF/WebP need only the first 30 bytes. A multiple of 4 so the
+// base64 slice decodes cleanly.
+const IMAGE_HEADER_BASE64_CHARS = 4 * Math.ceil((64 * 1024) / 3);
+
 export function getPngDimensions(base64Data: string): ImageDimensions | null {
 	try {
 		const buffer = Buffer.from(base64Data, "base64");
@@ -1324,20 +1330,33 @@ export function getWebpDimensions(base64Data: string): ImageDimensions | null {
 	}
 }
 
+/**
+ * Pixel size of decoded image bytes, or null unless their header parses as
+ * `mimeType` (PNG, JPEG, GIF or WebP).
+ */
+export function getImageDimensionsFromBytes(bytes: Uint8Array, mimeType: string): ImageDimensions | null {
+	const metadata = parseImageMetadata(bytes);
+	if (metadata?.mimeType !== mimeType || metadata.width === undefined || metadata.height === undefined) return null;
+	return { widthPx: metadata.width, heightPx: metadata.height };
+}
+
+/**
+ * Pixel size of a base64 image, or null unless its header parses as
+ * `mimeType` (PNG, JPEG, GIF or WebP). Decodes only a 64 KB header window;
+ * a JPEG whose frame header sits past it (large EXIF/ICC segments) falls
+ * back to decoding the whole payload.
+ */
 export function getImageDimensions(base64Data: string, mimeType: string): ImageDimensions | null {
-	if (mimeType === "image/png") {
-		return getPngDimensions(base64Data);
+	if (base64Data.length <= IMAGE_HEADER_BASE64_CHARS) {
+		return getImageDimensionsFromBytes(Buffer.from(base64Data, "base64"), mimeType);
 	}
-	if (mimeType === "image/jpeg") {
-		return getJpegDimensions(base64Data);
+	const header = Buffer.from(base64Data.slice(0, IMAGE_HEADER_BASE64_CHARS), "base64");
+	const metadata = parseImageMetadata(header);
+	if (metadata?.mimeType !== mimeType) return null;
+	if (metadata.width !== undefined && metadata.height !== undefined) {
+		return { widthPx: metadata.width, heightPx: metadata.height };
 	}
-	if (mimeType === "image/gif") {
-		return getGifDimensions(base64Data);
-	}
-	if (mimeType === "image/webp") {
-		return getWebpDimensions(base64Data);
-	}
-	return null;
+	return mimeType === "image/jpeg" ? getImageDimensionsFromBytes(Buffer.from(base64Data, "base64"), mimeType) : null;
 }
 
 /**
@@ -1347,7 +1366,7 @@ export function getImageDimensions(base64Data: string, mimeType: string): ImageD
  */
 export function encodeSixelNow(base64Data: string, widthPx: number, heightPx: number): string | null {
 	try {
-		return encodeSixel(new Uint8Array(Buffer.from(base64Data, "base64")), widthPx, heightPx);
+		return encodeSixel(Buffer.from(base64Data, "base64"), widthPx, heightPx);
 	} catch {
 		return null;
 	}
