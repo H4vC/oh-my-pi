@@ -9,14 +9,11 @@
  * coding-agent.
  */
 
-import type { Database } from "bun:sqlite";
-import type { Stats } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { getBundledModel, type GeneratedProvider } from "@oh-my-pi/pi-catalog/models";
 import { getSessionsDir, isEnoent } from "@oh-my-pi/pi-utils";
 import { initDb, isScheduledCatalogModel } from "./db";
-import { statsLive } from "./live";
 import { extractFolderFromPath, parseAllSessionEntries, resolveUsageTotal } from "./parser";
 import { getSessionRollups } from "./rollup";
 import type {
@@ -44,8 +41,6 @@ const LABEL_MAX = 80;
 const DETAIL_MAX = 160;
 const TITLE_SCAN_BYTES = 4096;
 const LIST_FOLD_LIMIT = 300;
-/** Per-transcript scans kept for trace rebuilds (a big task fan-out has hundreds of children). */
-const SCAN_MEMO_LIMIT = 1024;
 
 // ---------------------------------------------------------------------------
 // Structural entry views (journal shapes mirrored without importing coding-agent)
@@ -646,51 +641,6 @@ function transcriptStem(file: string): string {
 }
 
 /**
- * Unassembled scans keyed by transcript + track placement, valid while the
- * file's (mtimeMs, size) holds: a live session's rebuild re-parses only the
- * transcripts that changed. Insertion order doubles as LRU order.
- */
-const scanMemo = new Map<string, { mtimeMs: number; size: number; scan: TrackScan }>();
-
-/**
- * Scan one transcript, reusing the memoized scan while the file is unchanged.
- * Returns a copy whose track and span list the caller may mutate; null when
- * the file is gone.
- */
-async function scanTranscriptFile(
-	file: string,
-	trackId: string,
-	parentTrackId: string | null,
-): Promise<TrackScan | null> {
-	let stat: Stats;
-	let bytes: Uint8Array;
-	const key = `${file}\0${trackId}\0${parentTrackId ?? ""}`;
-	try {
-		// Stat before reading: a write racing the read is keyed under the older
-		// stat, so the next build misses and rescans.
-		stat = await fs.stat(file);
-		const memo = scanMemo.get(key);
-		if (memo && memo.mtimeMs === stat.mtimeMs && memo.size === stat.size) {
-			scanMemo.delete(key);
-			scanMemo.set(key, memo);
-			return { ...memo.scan, track: { ...memo.scan.track, spans: memo.scan.track.spans.slice() } };
-		}
-		bytes = await readTranscript(file);
-	} catch (err) {
-		if (isEnoent(err)) return null;
-		throw err;
-	}
-	const scan = scanTranscript(parseAllSessionEntries(bytes), trackId, parentTrackId, file);
-	scanMemo.delete(key);
-	scanMemo.set(key, { mtimeMs: stat.mtimeMs, size: stat.size, scan });
-	for (const oldest of scanMemo.keys()) {
-		if (scanMemo.size <= SCAN_MEMO_LIMIT) break;
-		scanMemo.delete(oldest);
-	}
-	return { ...scan, track: { ...scan.track, spans: scan.track.spans.slice() } };
-}
-
-/**
  * Build the track for one transcript and recurse into its artifacts directory.
  * Appends tracks to `out` in DFS order and places subagent spans on parents.
  */
@@ -706,8 +656,15 @@ async function buildTrackTree(
 	if (visited.has(file)) return null;
 	visited.add(file);
 
-	const scan = await scanTranscriptFile(file, trackId, parentTrackId);
-	if (!scan) return null;
+	let bytes: Uint8Array;
+	try {
+		bytes = await readTranscript(file);
+	} catch (err) {
+		if (isEnoent(err)) return null;
+		throw err;
+	}
+
+	const scan = scanTranscript(parseAllSessionEntries(bytes), trackId, parentTrackId, file);
 	out.push(scan.track);
 	scans.push(scan);
 
@@ -844,18 +801,28 @@ async function childTranscriptsFingerprint(rootFile: string, depth = 0): Promise
 	return [`n=${transcriptNames.length}`, ...childParts].join(",");
 }
 
+/** Freshness of a root trace: root mtime plus the child-transcript set fingerprint. */
+export interface TraceFingerprint {
+	rootMtimeMs: number;
+	childFingerprint: string;
+}
+
+/** Stat the root and walk its child transcripts (readdir+stat, no parse). */
+async function readTraceFingerprint(resolved: string): Promise<TraceFingerprint> {
+	const rootMtimeMs = (await fs.stat(resolved)).mtimeMs;
+	const childFingerprint = await childTranscriptsFingerprint(resolved);
+	return { rootMtimeMs, childFingerprint };
+}
+
 /**
- * Freshness fingerprint for the trace ETag pre-check: root mtime plus the
- * child-transcript set fingerprint (readdir+stat walk, no parse). Returns
- * undefined when the path is rejected or missing (the caller falls through
- * to the full build, which maps those to 400/404).
+ * Freshness fingerprint for the trace ETag pre-check; `SessionTrace.etag` is
+ * `${rootMtimeMs}:${childFingerprint}` for an unraced build. Returns undefined
+ * when the path is rejected or missing (the caller falls through to the full
+ * build, which maps those to 400/404).
  */
-export async function traceFingerprintForEtag(fileParam: string): Promise<string | undefined> {
+export async function traceFingerprintForEtag(fileParam: string): Promise<TraceFingerprint | undefined> {
 	try {
-		const resolved = resolveSessionPath(fileParam);
-		const rootMs = (await fs.stat(resolved)).mtimeMs;
-		const childFp = await childTranscriptsFingerprint(resolved);
-		return `${rootMs}:${childFp}`;
+		return await readTraceFingerprint(resolveSessionPath(fileParam));
 	} catch {
 		return undefined;
 	}
@@ -873,23 +840,14 @@ export function traceMemoForTests(): { file: string; mtimeMs: number } | undefin
  * {@link traceFingerprintForEtag} value the caller just computed for the same
  * file (its ETag pre-check), sparing a second walk.
  */
-export async function buildSessionTrace(fileParam: string, fingerprint?: string): Promise<SessionTrace> {
+export async function buildSessionTrace(fileParam: string, fingerprint?: TraceFingerprint): Promise<SessionTrace> {
 	const resolved = resolveSessionPath(fileParam);
 	const memo = traceMemo?.file === resolved ? traceMemo.entry : undefined;
 	// Pre-build child fingerprint on EVERY path (hit check and rebuild
 	// alike): the post-build race guard compares against this, so a child
 	// append landing mid-parse is detected even on first builds and
 	// memo-less rebuilds, where no prior fingerprint exists to compare.
-	const split = fingerprint?.indexOf(":") ?? -1;
-	let rootMtimeMs: number;
-	let preChildFingerprint: string;
-	if (fingerprint !== undefined && split > 0) {
-		rootMtimeMs = Number(fingerprint.slice(0, split));
-		preChildFingerprint = fingerprint.slice(split + 1);
-	} else {
-		rootMtimeMs = (await fs.stat(resolved)).mtimeMs;
-		preChildFingerprint = await childTranscriptsFingerprint(resolved);
-	}
+	const { rootMtimeMs, childFingerprint: preChildFingerprint } = fingerprint ?? (await readTraceFingerprint(resolved));
 	if (memo && memo.mtimeMs === rootMtimeMs) {
 		// Equality, not <=: a LOWER mark (delete/older-mtime replace) is
 		// also stale — only an identical child set may reuse the trace.
@@ -1178,50 +1136,13 @@ async function scanDiskRoots(limit: number): Promise<Array<{ file: string; mtime
 }
 
 /**
- * Folded list rows (before search and limit) for a short window, keyed by the
- * open database and the live data version: polls and refetches between data
- * changes skip the rollup fold and the metadata sweep.
- */
-let summariesMemo:
-	| { atMs: number; db: Database; sessionsDir: string; version: number; rows: SessionSummary[] }
-	| undefined;
-
-/**
  * List root sessions for the Traces section, folding every synced child
  * transcript (subagents, advisors) into its root row.
  */
 export async function listSessionSummaries(limit = 100, q?: string): Promise<SessionSummary[]> {
 	// The Traces page may be the first thing a dashboard serves.
-	const database = await initDb();
+	await initDb();
 	const sessionsDir = getSessionsDir();
-	const version = statsLive().status().version;
-	const memo = summariesMemo;
-	let rows =
-		memo &&
-		memo.db === database &&
-		memo.sessionsDir === sessionsDir &&
-		memo.version === version &&
-		Date.now() - memo.atMs < DISK_ROOTS_TTL_MS
-			? memo.rows
-			: undefined;
-	if (!rows) {
-		rows = await foldSessionSummaries(sessionsDir);
-		summariesMemo = { atMs: Date.now(), db: database, sessionsDir, version, rows };
-	}
-	if (q?.trim()) {
-		const needle = q.trim().toLowerCase();
-		rows = rows.filter(
-			row =>
-				(row.title ?? "").toLowerCase().includes(needle) ||
-				row.folder.toLowerCase().includes(needle) ||
-				path.basename(row.file).toLowerCase().includes(needle),
-		);
-	}
-	return rows.slice(0, limit);
-}
-
-/** Every root session (synced rollups plus unsynced on-disk roots), newest first, at most {@link LIST_FOLD_LIMIT}. */
-async function foldSessionSummaries(sessionsDir: string): Promise<SessionSummary[]> {
 	const byRoot = new Map<string, SummaryFold>();
 
 	for (const row of getSessionRollups()) {
@@ -1302,5 +1223,15 @@ async function foldSessionSummaries(sessionsDir: string): Promise<SessionSummary
 		}),
 	);
 
-	return folds.map(({ modelSet: _modelSet, ...summary }) => summary);
+	let rows: SessionSummary[] = folds.map(({ modelSet: _modelSet, ...summary }) => summary);
+	if (q?.trim()) {
+		const needle = q.trim().toLowerCase();
+		rows = rows.filter(
+			row =>
+				(row.title ?? "").toLowerCase().includes(needle) ||
+				row.folder.toLowerCase().includes(needle) ||
+				path.basename(row.file).toLowerCase().includes(needle),
+		);
+	}
+	return rows.slice(0, limit);
 }

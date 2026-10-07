@@ -7,8 +7,7 @@
  * transcripts are re-synced (only those files) shortly after they are written.
  * Every batch that changes stored rows bumps {@link LiveStatus.version}
  * (throttled), so open pages refetch and fill in while parsing is still
- * running; syncs that change nothing leave the version alone. Ingest stops a
- * minute after the last subscriber leaves.
+ * running; syncs that change nothing leave the version alone.
  */
 
 import * as fs from "node:fs";
@@ -33,9 +32,6 @@ const PROGRESS_THROTTLE_MS = 150;
 /** Receives each distinct status and its JSON serialization (shared by every listener). */
 type Listener = (status: LiveStatus, frame: string) => void;
 
-/** Keep ingesting this long after the last subscriber leaves, so a page reload does not restart it. */
-const IDLE_STOP_MS = 60_000;
-
 /** One per process; owned by the dashboard server (see `startServer`). */
 export class StatsLive {
 	#version = 1;
@@ -54,7 +50,6 @@ export class StatsLive {
 	#versionTimer: NodeJS.Timeout | null = null;
 	#progressTimer: NodeJS.Timeout | null = null;
 	#retryTimer: NodeJS.Timeout | null = null;
-	#idleTimer: NodeJS.Timeout | null = null;
 	#lastVersionAt = 0;
 
 	/** Queued work: specific files, or `"all"` for a full sync. */
@@ -67,26 +62,10 @@ export class StatsLive {
 		return { version: this.#version, sync: { ...this.#sync }, indexingHours: this.#indexingHours };
 	}
 
-	/**
-	 * Receive every status change; returns the unsubscribe function. Once the
-	 * last subscriber of a started hub leaves, ingest stops after
-	 * {@link IDLE_STOP_MS} unless someone subscribes again.
-	 */
+	/** Receive every status change; returns the unsubscribe function. */
 	subscribe(listener: Listener): () => void {
-		// A wrapper per subscription, so subscribing one function twice still counts twice.
-		const entry: Listener = (status, frame) => listener(status, frame);
-		this.#listeners.add(entry);
-		clearTimeout(this.#idleTimer ?? undefined);
-		this.#idleTimer = null;
-		return () => {
-			if (!this.#listeners.delete(entry) || this.#listeners.size > 0 || !this.#started) return;
-			clearTimeout(this.#idleTimer ?? undefined);
-			this.#idleTimer = setTimeout(() => {
-				this.#idleTimer = null;
-				if (this.#listeners.size === 0) this.stop();
-			}, IDLE_STOP_MS);
-			this.#idleTimer.unref?.();
-		};
+		this.#listeners.add(listener);
+		return () => this.#listeners.delete(listener);
 	}
 
 	/** Begin background ingest: an immediate full sync, the transcript watcher, and periodic resyncs. Idempotent. */
@@ -104,22 +83,10 @@ export class StatsLive {
 		this.#watcher?.close();
 		this.#watcher = null;
 		clearInterval(this.#fullSyncTimer ?? undefined);
-		for (const timer of [
-			this.#debounceTimer,
-			this.#versionTimer,
-			this.#progressTimer,
-			this.#retryTimer,
-			this.#idleTimer,
-		]) {
+		for (const timer of [this.#debounceTimer, this.#versionTimer, this.#progressTimer, this.#retryTimer]) {
 			clearTimeout(timer ?? undefined);
 		}
-		this.#fullSyncTimer =
-			this.#debounceTimer =
-			this.#versionTimer =
-			this.#progressTimer =
-			this.#retryTimer =
-			this.#idleTimer =
-				null;
+		this.#fullSyncTimer = this.#debounceTimer = this.#versionTimer = this.#progressTimer = this.#retryTimer = null;
 		this.#queued = null;
 	}
 

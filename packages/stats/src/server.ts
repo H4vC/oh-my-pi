@@ -18,7 +18,7 @@ import {
 	getToolDashboardStats,
 } from "./aggregator";
 import { initDb } from "./db";
-import { decodeEmbeddedClientArchive } from "./embedded-client";
+import { decodeEmbeddedClientArchive, hasEmbeddedClientArchive } from "./embedded-client";
 import embeddedClientArchiveTxt from "./embedded-client.generated.txt";
 import {
 	cancelFrustrationRun,
@@ -44,6 +44,7 @@ import {
 	getTraceEntry,
 	listSessionSummaries,
 	TRACE_ETAG_VERSION,
+	type TraceFingerprint,
 	traceFingerprintForEtag,
 	TracePathError,
 } from "./trace";
@@ -62,7 +63,7 @@ const IS_BUN_COMPILED =
 const IS_PREBUILT = IS_BUN_COMPILED || Boolean(process.env.PI_BUNDLED || Bun.env.PI_BUNDLED);
 // Sniff the base64 gzip magic instead of decoding: importing this module (every
 // TUI start) must not pay for a multi-megabyte archive nobody may serve.
-const USE_EMBEDDED_CLIENT = /^\s*H4s/.test(embeddedClientArchiveTxt) || IS_PREBUILT;
+const USE_EMBEDDED_CLIENT = hasEmbeddedClientArchive(embeddedClientArchiveTxt) || IS_PREBUILT;
 
 let embeddedClientFilesPromise: Promise<Map<string, Blob>> | null = null;
 
@@ -297,11 +298,11 @@ export async function handleApi(req: Request): Promise<Response> {
 			// The fingerprint covers child transcripts, so a subagent-only
 			// append changes the ETag and never 304s stale.
 			const clientEtag = req.headers.get("if-none-match");
-			let fingerprint: string | undefined;
+			let fingerprint: TraceFingerprint | undefined;
 			if (clientEtag) {
 				fingerprint = await traceFingerprintForEtag(file);
 				if (fingerprint !== undefined) {
-					const etag = `"${TRACE_ETAG_VERSION}:${fingerprint}"`;
+					const etag = `"${TRACE_ETAG_VERSION}:${fingerprint.rootMtimeMs}:${fingerprint.childFingerprint}"`;
 					if (clientEtag === etag) return new Response(null, { status: 304 });
 				}
 			}

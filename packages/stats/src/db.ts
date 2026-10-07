@@ -840,7 +840,7 @@ export function applySessionParseResults(sessions: ParsedSession[]): {
  */
 export function getDataVersion(): number | null {
 	if (!db) return null;
-	return (db.query("PRAGMA data_version").get() as { data_version: number }).data_version;
+	return db.query<{ data_version: number }, []>("PRAGMA data_version").get()?.data_version ?? null;
 }
 
 export function prepareSessionSync(): boolean {
