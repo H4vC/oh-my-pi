@@ -656,10 +656,10 @@ let registered = false;
 
 /**
  * How long a successful {@link ensureConnection} stays trusted. Within this
- * window repeated ssh:// operations skip the `ssh -O check` spawn, the key
- * stat and the control-dir setup. A master that died in the meantime is
- * harmless: every command runs with `ControlMaster=auto`, which opens a new
- * connection on demand.
+ * window repeated ssh:// operations skip the `ssh -O check` spawn and the key
+ * stat; the control-dir ownership check still runs on every call. A master
+ * that died in the meantime is harmless: every command runs with
+ * `ControlMaster=auto`, which opens a new connection on demand.
  */
 const CONNECTION_VERIFY_TTL_MS = 30_000;
 
@@ -677,6 +677,9 @@ export async function ensureConnection(host: SSHConnectionTarget): Promise<void>
 		activeHosts.has(key) &&
 		hostInfoCache.has(key)
 	) {
+		// The socket directory can be replaced after verification; never hand
+		// OpenSSH an untrusted ControlPath.
+		ensureSshControlDir();
 		return;
 	}
 	const pending = pendingConnections.get(key);

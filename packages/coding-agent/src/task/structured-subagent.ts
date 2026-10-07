@@ -22,6 +22,7 @@ import {
 	validateAgentCompactionThresholdOverrides,
 } from "../config/compaction-threshold";
 import { type ServiceTierInheritSettingValue, validateAgentServiceTierOverrides } from "../config/service-tier";
+import { isProviderEnabled, isUserSourceEnabled } from "../capability";
 import type { EffectiveExtensionRoots } from "../capability/types";
 import type { CustomTool } from "../extensibility/custom-tools/types";
 import { sessionLocalProtocolOptions } from "../internal-urls/context";
@@ -334,10 +335,12 @@ export function invalidModelSelectorReason(model: unknown, label: string): strin
 }
 
 /**
- * In-flight agent discovery, keyed by resolved cwd plus the effective extension
- * roots. Concurrent preflights (task batch items, eval `agent()` fan-out) share
- * one disk scan; the entry is dropped when the scan settles, so any later call
- * rescans and policy resolution stays as fresh as before. The live
+ * In-flight agent discovery, keyed by resolved cwd, the effective extension
+ * roots and the provider/source toggles `discoverAgents` consults. Concurrent
+ * preflights (task batch items, eval `agent()` fan-out) share one disk scan;
+ * the entry is dropped when the scan settles, so any later call rescans and
+ * policy resolution stays as fresh as before. A toggle flipped mid-scan changes
+ * the key, so later callers rescan under the new policy. The live
  * `discoverAgents` binding is part of the entry so spies swapped mid-flight
  * never receive a stale result.
  */
@@ -345,7 +348,13 @@ const inflightDiscovery = new Map<string, { fn: typeof discoverAgents; promise: 
 
 function discoverAgentsShared(cwd: string, extensionRoots?: EffectiveExtensionRoots): Promise<DiscoveryResult> {
 	const fn = discoverAgents;
-	const key = `${path.resolve(cwd)}\0${JSON.stringify(extensionRoots ?? null)}`;
+	const policy = [
+		isProviderEnabled("omp-plugins"),
+		isProviderEnabled("claude-plugins"),
+		isUserSourceEnabled("claude-plugins"),
+		isUserSourceEnabled("claude"),
+	].join(",");
+	const key = `${path.resolve(cwd)}\0${policy}\0${JSON.stringify(extensionRoots ?? null)}`;
 	const existing = inflightDiscovery.get(key);
 	if (existing && existing.fn === fn) return existing.promise;
 	const promise = fn(cwd, undefined, extensionRoots);
