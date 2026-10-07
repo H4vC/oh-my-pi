@@ -18,6 +18,8 @@ import { col, kbd, node, row, span, text } from "@oh-my-pi/pi-tui/native/describ
 import type { StreamConsoleEvent, StreamMuxHost } from "./streamer";
 
 const HISTORY_LIMIT = 50;
+/** Log entries retained; older ones scroll out for good. */
+const LOG_LIMIT = 500;
 const PURPLE = chalk.hex("#a855f7");
 const CHAT_COLORS: readonly ((text: string) => string)[] = [
 	chalk.cyan,
@@ -51,6 +53,13 @@ class StreamConsoleComponent implements Component, Focusable {
 	readonly #logLines: string[] = [];
 	/** Native twin of {@link #logLines}: one keyed text node per entry, built once. */
 	readonly #logNodes: NativeNode[] = [];
+	/** Stable key source for {@link #logNodes}; indices shift once the log is capped. */
+	#logSerial = 0;
+	/** {@link #logLines} truncated to {@link #logWidth}; rebuilt only when the width changes. */
+	#logRendered: string[] = [];
+	#logWidth: number | undefined;
+	/** True when {@link #logRendered} changed since it was last handed to the scroll view. */
+	#logDirty = false;
 	#native: { revision: number; node: NativeNode } | undefined;
 	#revision = 0;
 	readonly #panes = new Map<number, PaneSummary>();
@@ -176,7 +185,14 @@ class StreamConsoleComponent implements Component, Focusable {
 	/** Append one log entry in both presentations. */
 	#log(ansi: string, spans: readonly TspSpan[]): void {
 		this.#logLines.push(ansi);
-		this.#logNodes.push(node("text", { spans }, undefined, `${this.#logNodes.length}`));
+		this.#logNodes.push(node("text", { spans }, undefined, `${this.#logSerial++}`));
+		if (this.#logWidth !== undefined) this.#logRendered.push(truncateToWidth(ansi, this.#logWidth));
+		if (this.#logLines.length > LOG_LIMIT) {
+			this.#logLines.shift();
+			this.#logNodes.shift();
+			if (this.#logWidth !== undefined) this.#logRendered.shift();
+		}
+		this.#logDirty = true;
 	}
 
 	render(width: number): readonly string[] {
@@ -199,7 +215,15 @@ class StreamConsoleComponent implements Component, Focusable {
 			`/title <text> · /quit · ${formatKeyHints(["up", "down"])} history · ${formatKeyHint("ctrl+c")} quit`,
 		);
 
-		this.#logView.setLines(this.#logLines.map(line => truncateToWidth(line, width)));
+		if (width !== this.#logWidth) {
+			this.#logRendered = this.#logLines.map(line => truncateToWidth(line, width));
+			this.#logWidth = width;
+			this.#logDirty = true;
+		}
+		if (this.#logDirty) {
+			this.#logView.setLines(this.#logRendered);
+			this.#logDirty = false;
+		}
 		this.#logView.setHeight(bodyHeight);
 		return [
 			truncateToWidth(header, width),
