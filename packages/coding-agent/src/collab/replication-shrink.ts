@@ -93,7 +93,7 @@ export const MAX_REPLICATED_DEPTH = 1000;
  *
  * The final pass clamps every string to 64 B and every array to one element.
  * Payloads that still exceed the ceiling after it are handled by the typed
- * placeholders in {@link shrinkReplicatedEntry} / {@link shrinkReplicatedEvent}.
+ * placeholders in {@link serializeReplicatedEntry} / {@link serializeReplicatedEvent}.
  */
 interface ShrinkPass {
 	stringCap: number;
@@ -299,7 +299,7 @@ function shrinkWalk(root: unknown, stringCap: number, arrayLimit: number): unkno
  *
  * `structuredClone` throws `RangeError` on a payload nested past the engine's
  * recursion limit, and a copy that throws inside the host's hello handler
- * lands *before* {@link shrinkReplicatedEntry} gets the chance to bound the
+ * lands *before* {@link serializeReplicatedEntry} gets the chance to bound the
  * offending entry, so the joining guest never receives its `final` chunk
  * (issue #11433). The host copies through the walk instead — today only for a
  * snapshot entry that does not serialize as-is and must have its images
@@ -324,8 +324,9 @@ export function copyForReplication<T>(value: T): T {
  *
  * Returns `value` itself when it already fits. `json` is `null` when no pass
  * fits {@link MAX_REPLICATED_PAYLOAD_BYTES} — the size lives in object keys,
- * which are identity and nothing here may drop — which is why the two
- * exported wrappers below own the ceiling guarantee.
+ * which are identity and nothing here may drop — which is why
+ * {@link serializeReplicatedEntry} / {@link serializeReplicatedEvent} own the
+ * ceiling guarantee.
  */
 function shrinkPayloadShape<T>(value: T): { value: T; json: string | null } {
 	const json = jsonUnderCeiling(value);
@@ -345,7 +346,8 @@ function omittedDetail(type: string, bytes: number | null): string {
 
 /**
  * Bound one replicated session entry under
- * {@link MAX_REPLICATED_PAYLOAD_BYTES}.
+ * {@link MAX_REPLICATED_PAYLOAD_BYTES}, returning it with its JSON so callers
+ * can embed it in a frame without serializing the entry a second time.
  *
  * Shrinking is shape-preserving whenever it can be. When it cannot — size in
  * the keys, or a payload that is not serializable at all — the entry is
@@ -366,14 +368,6 @@ function omittedDetail(type: string, bytes: number | null): string {
  * Never throws: it is called from the `onEntryAppended` chokepoint, whose
  * caller swallows exceptions, and from the snapshot chunker, where a throw
  * would strand the guest without a `final` chunk.
- */
-export function shrinkReplicatedEntry(entry: ReplicatedEntry): ReplicatedEntry {
-	return serializeReplicatedEntry(entry).value;
-}
-
-/**
- * {@link shrinkReplicatedEntry} plus the bounded entry's JSON, so callers can
- * embed it in a frame without serializing the entry a second time.
  */
 export function serializeReplicatedEntry(entry: ReplicatedEntry): SerializedReplication<ReplicatedEntry> {
 	const shrunk = shrinkPayloadShape(entry);
@@ -408,21 +402,15 @@ export function oversizedEntryNotice(entryType: string): Extract<AgentSessionEve
 }
 
 /**
- * Bound one replicated agent event under {@link MAX_REPLICATED_PAYLOAD_BYTES}.
+ * Bound one replicated agent event under {@link MAX_REPLICATED_PAYLOAD_BYTES},
+ * returning it with its JSON — the host's per-token streaming path serializes
+ * each `message_update` once.
  *
  * Events carry no identity to preserve, so an event that survives the
  * shape-preserving passes is replaced by a `notice` naming the omitted type —
  * notices never enter agent state and never reach the model, which keeps the
  * substitution out of the guest's context instead of silently diverging from
  * the host's view.
- */
-export function shrinkReplicatedEvent(event: AgentSessionEvent): AgentSessionEvent {
-	return serializeReplicatedEvent(event).value;
-}
-
-/**
- * {@link shrinkReplicatedEvent} plus the bounded event's JSON — the host's
- * per-token streaming path, which serializes each `message_update` once.
  */
 export function serializeReplicatedEvent(event: AgentSessionEvent): SerializedReplication<AgentSessionEvent> {
 	const shrunk = shrinkPayloadShape(event);

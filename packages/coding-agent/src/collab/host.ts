@@ -38,6 +38,10 @@ import {
 	type CollabParticipant,
 	type CollabPromptDetails,
 	type CollabSessionState,
+	encodeEntryFrame,
+	encodeEventFrame,
+	encodeSnapshotChunk,
+	type EncodedFrame,
 	formatCollabLink,
 	formatCollabWebLink,
 	generateRoomId,
@@ -481,7 +485,7 @@ export class CollabHost {
 					// (PR #11999 review). Notices never enter agent state.
 					this.#send({ t: "event", event: oversizedEntryNotice(entry.type) });
 				}
-				this.#socket?.send(`{"t":"entry","entry":${bounded.json}}`);
+				this.#socket?.send(encodeEntryFrame(bounded.json));
 			}
 			// Model/thinking/title changes land as entries while idle; refresh
 			// guest state promptly (debounce + JSON diff dedupe).
@@ -692,7 +696,7 @@ export class CollabHost {
 	/** Broadcast one session event, bounded and serialized exactly once. */
 	#broadcastEvent(event: AgentSessionEvent): void {
 		if (!this.#broadcastAllowed()) return;
-		this.#socket?.send(`{"t":"event","event":${serializeReplicatedEvent(event).json}}`);
+		this.#socket?.send(encodeEventFrame(serializeReplicatedEvent(event).json));
 	}
 
 	#handleFrame(frame: CollabFrame, fromPeer: number): void {
@@ -786,9 +790,10 @@ export class CollabHost {
 		if (!socket) return;
 		// Serialize the snapshot synchronously: live traffic queued after this
 		// cannot overtake it, and host rewrites of an entry in place cannot leak
-		// into it later, so the entries need no defensive deep copy. Chunk
-		// frames are assembled from these strings only as the transport drains.
-		const snapshot = this.#ctx.sessionManager.snapshotForReplication(value => value);
+		// into it later, so the live entries are read without a defensive deep
+		// copy. Chunk frames are assembled from these strings only as the
+		// transport drains.
+		const snapshot = this.#ctx.sessionManager.snapshotForReplication();
 		const snapshotEntries = this.#serializeSnapshotEntries(snapshot.entries.filter(isWireSessionEntry));
 		const state = this.#buildState();
 		// State broadcasts pause while no guest is joined, so the dedupe baseline
@@ -860,8 +865,7 @@ export class CollabHost {
 		const stripImages = unserializable || total > WELCOME_IMAGE_STRIP_THRESHOLD;
 		let stripped = 0;
 		const json: string[] = [];
-		for (let i = 0; i < entries.length; i++) {
-			const entry = entries[i] as ReplicatedEntry;
+		for (const [i, entry] of entries.entries()) {
 			let text = raw[i] ?? null;
 			let source = entry;
 			// `"image` covers every image carrier the stripper handles: `image`
@@ -877,7 +881,7 @@ export class CollabHost {
 					text = null;
 				}
 			}
-			if (text === null || (bytes[i] as number) > MAX_REPLICATED_PAYLOAD_BYTES) {
+			if (text === null || (bytes[i] ?? 0) > MAX_REPLICATED_PAYLOAD_BYTES) {
 				// Never throws, and always returns a bounded payload: a throw here
 				// would end the train without its `final: true` terminator, and the
 				// guest would time out its join while the host lists it as joined.
@@ -897,9 +901,9 @@ export class CollabHost {
 	 * still emits one `final` chunk so the guest never blocks on a missing
 	 * terminator. Each batch's strings are released once its frame is built.
 	 */
-	*#snapshotChunks(entries: string[], bytes: number[]): Generator<string> {
+	*#snapshotChunks(entries: string[], bytes: number[]): Generator<EncodedFrame> {
 		if (entries.length === 0) {
-			yield '{"t":"snapshot-chunk","entries":[],"final":true}';
+			yield encodeSnapshotChunk([], true);
 			return;
 		}
 		let i = 0;
@@ -907,14 +911,14 @@ export class CollabHost {
 			const start = i;
 			let batchBytes = 0;
 			while (i < entries.length) {
-				const entryBytes = bytes[i] as number;
+				const entryBytes = bytes[i] ?? 0;
 				if (i > start && batchBytes + entryBytes > SNAPSHOT_CHUNK_BYTES) break;
 				batchBytes += entryBytes;
 				i++;
 			}
-			const batch = entries.slice(start, i).join(",");
+			const batch = entries.slice(start, i);
 			entries.fill("", start, i);
-			yield `{"t":"snapshot-chunk","entries":[${batch}],"final":${i >= entries.length}}`;
+			yield encodeSnapshotChunk(batch, i >= entries.length);
 		}
 	}
 
