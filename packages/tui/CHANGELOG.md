@@ -5,6 +5,9 @@
 ### Changed
 
 - Model mentions (`^`), `/switch` completions, and model picker search stay responsive on every keystroke with large model catalogs ([#14595](https://github.com/can1357/oh-my-pi/pull/14595) by [@H4vC](https://github.com/H4vC))
+- Limited the debug log viewer to 50,000 entries ([#14686](https://github.com/can1357/oh-my-pi/pull/14686) by [@H4vC](https://github.com/H4vC))
+- Sped up the raw SSE viewer, git diff pane, rewind selector, annotation review, startup splash (~2×), agent hub, and jobs/copy/usage/session/OAuth pickers ([#14686](https://github.com/can1357/oh-my-pi/pull/14686) by [@H4vC](https://github.com/H4vC))
+- Limited plan and annotation review undo history to 100 steps ([#14686](https://github.com/can1357/oh-my-pi/pull/14686) by [@H4vC](https://github.com/H4vC))
 
 ### Fixed
 
@@ -15,6 +18,8 @@
 - Fixed the Ask dialog footer showing the question-switch keys without a label; they now read `⇥/←/→ question` ([#14269](https://github.com/can1357/oh-my-pi/issues/14269), [#14590](https://github.com/can1357/oh-my-pi/pull/14590) by [@tahakotil](https://github.com/tahakotil))
 - `/agents` New agent no longer fails with a JSON parse error when the generated system prompt contains a markdown code fence ([#12255](https://github.com/can1357/oh-my-pi/issues/12255), [#14589](https://github.com/can1357/oh-my-pi/pull/14589) by [@tahakotil](https://github.com/tahakotil))
 - Fixed a `glob` result that ended in a timeout being shown as merely "truncated" in the transcript, which read like a result-limit cut; partial listings from a timed-out scan are now labelled "timed out" ([#6370](https://github.com/can1357/oh-my-pi/issues/6370), [#14426](https://github.com/can1357/oh-my-pi/pull/14426) by [@F0Rextasy](https://github.com/F0Rextasy))
+- Fixed debug log viewer re-formatting every row each frame (select-all over 20k rows: ~3 s → ~2 ms per frame) ([#14686](https://github.com/can1357/oh-my-pi/pull/14686) by [@H4vC](https://github.com/H4vC))
+- Fixed plan review slowing down on long annotated plans ([#14686](https://github.com/can1357/oh-my-pi/pull/14686) by [@H4vC](https://github.com/H4vC))
 
 ## [18.6.3] - 2026-10-06
 
