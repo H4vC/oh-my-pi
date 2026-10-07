@@ -7,6 +7,11 @@
 - Fixed Ultrafast turns not counting toward the Premium Reqs stat: each message now records the service tier its provider reported serving, and the backfill counts it without needing discovery metadata ([#14471](https://github.com/can1357/oh-my-pi/pull/14471) by [@eggpeat](https://github.com/eggpeat)).
 - Fixed the stats dashboard menu button showing on desktop, where clicking it dimmed the page without opening navigation ([#14406](https://github.com/can1357/oh-my-pi/pull/14406) by [@lin-snow](https://github.com/lin-snow)).
 
+### Changed
+
+- Reduced dashboard refetching: syncs that change nothing no longer trigger reloads, and unchanged traces are not re-downloaded ([#14724](https://github.com/can1357/oh-my-pi/pull/14724) by [@H4vC](https://github.com/H4vC))
+- Cancelled abandoned dashboard requests (e.g. large traces when switching sessions) and bounded the in-memory trace cache ([#14724](https://github.com/can1357/oh-my-pi/pull/14724) by [@H4vC](https://github.com/H4vC))
+
 ## [18.6.0] - 2026-10-03
 
 ### Fixed
