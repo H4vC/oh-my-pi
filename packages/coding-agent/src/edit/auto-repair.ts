@@ -29,12 +29,8 @@ import { cfgEditAutoRepairEnabled } from "./settings";
 const CONTEXT_LINES = 6;
 /** Largest repair region worth sending to a small model. */
 const MAX_REGION_LINES = 150;
-/**
- * Total full-file parses one culprit isolation may spend (singles, then pairs,
- * then the greedy peel). Each trial rebuilds and tree-sitter-parses the whole
- * file on the event loop; past this budget callers get the plain warning.
- */
-const MAX_ISOLATION_PARSES = 32;
+/** Hunk count above which the O(n²) pair search is skipped for the O(n) greedy peel. */
+const MAX_PAIR_SEARCH_HUNKS = 24;
 /** Initial attempt plus one feedback retry. */
 const MAX_ATTEMPTS = 2;
 const COMPLETION_MAX_TOKENS = 8192;
@@ -118,38 +114,31 @@ function revertHunks(a: string[], b: string[], hunks: EditHunk[], set: readonly 
 
 /**
  * Find the smallest hunk set whose reversion restores the parse: singles,
- * then pairs, then a greedy peel that re-applies hunks one at a time while
- * the file keeps parsing. Bounded by {@link MAX_ISOLATION_PARSES}; pairs only
- * spend what remains above the greedy peel's reserve.
+ * then pairs (bounded), then a greedy peel that re-applies hunks one at a
+ * time while the file keeps parsing.
  */
 function isolateCulpritHunks(path: string, a: string[], b: string[], hunks: EditHunk[]): number[] | undefined {
 	const n = hunks.length;
 	if (n === 0) return undefined;
-	let budget = MAX_ISOLATION_PARSES;
 	const scratch: string[] = [];
 	const trial: number[] = [];
-	const parsesReverted = (set: readonly number[]): boolean => {
-		budget--;
-		return parsesSource(revertHunks(a, b, hunks, set, scratch), path);
-	};
+	const parsesReverted = (set: readonly number[]): boolean =>
+		parsesSource(revertHunks(a, b, hunks, set, scratch), path);
 
 	for (let i = 0; i < n; i++) {
-		if (budget === 0) return undefined;
 		trial[0] = i;
 		trial.length = 1;
 		if (parsesReverted(trial)) return [i];
 	}
 
-	// The peel costs one parse per hunk, plus one when no hunk peels off.
-	const peelReserve = n + 1;
-	if (budget < peelReserve) return undefined;
-	trial.length = 2;
-	pairs: for (let i = 0; i < n; i++) {
-		for (let j = i + 1; j < n; j++) {
-			if (budget <= peelReserve) break pairs;
-			trial[0] = i;
-			trial[1] = j;
-			if (parsesReverted(trial)) return [i, j];
+	if (n <= MAX_PAIR_SEARCH_HUNKS) {
+		trial.length = 2;
+		for (let i = 0; i < n; i++) {
+			for (let j = i + 1; j < n; j++) {
+				trial[0] = i;
+				trial[1] = j;
+				if (parsesReverted(trial)) return [i, j];
+			}
 		}
 	}
 
