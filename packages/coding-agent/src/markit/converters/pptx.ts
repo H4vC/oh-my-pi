@@ -2,7 +2,7 @@
 import * as path from "node:path";
 import { XMLParser } from "@oh-my-pi/pi-utils/xml";
 import type { ConversionResult, Converter, StreamInfo } from "../types";
-import { ZipPackage } from "../zip-package";
+import { ZipPackage } from "@oh-my-pi/pi-utils/ar";
 
 const EXTENSIONS = [".pptx"];
 const MIMETYPES = ["application/vnd.openxmlformats-officedocument.presentationml.presentation"];
@@ -137,7 +137,7 @@ export class PptxConverter implements Converter {
 		}
 		// If we couldn't resolve from rels, fall back to finding slide files
 		if (slidePaths.length === 0) {
-			const slideFiles = Object.keys(zip.members)
+			const slideFiles = [...zip.members]
 				.filter(f => /^ppt\/slides\/slide\d+\.xml$/.test(f))
 				.sort((a, b) => {
 					const na = parseInt(a.match(/slide(\d+)/)?.[1] || "0", 10);

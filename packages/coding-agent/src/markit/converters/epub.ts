@@ -3,7 +3,7 @@
 import { XMLParser } from "@oh-my-pi/pi-utils/xml";
 import { createTurndown, normalizeTablesHtml } from "../../utils/turndown";
 import type { ConversionResult, Converter, StreamInfo } from "../types";
-import { ZipPackage } from "../zip-package";
+import { ZipPackage } from "@oh-my-pi/pi-utils/ar";
 
 const EXTENSIONS = [".epub"];
 const MIMETYPES = ["application/epub", "application/epub+zip", "application/x-epub+zip"];

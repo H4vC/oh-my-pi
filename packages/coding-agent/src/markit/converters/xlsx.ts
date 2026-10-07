@@ -2,7 +2,7 @@
 
 import { XMLParser } from "@oh-my-pi/pi-utils/xml";
 import type { ConversionResult, Converter, StreamInfo } from "../types";
-import { ZipPackage } from "../zip-package";
+import { ZipPackage } from "@oh-my-pi/pi-utils/ar";
 
 const EXTENSIONS = [".xlsx"];
 const MIMETYPES = ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"];

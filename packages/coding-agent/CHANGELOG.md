@@ -8,8 +8,6 @@
 
 ### Changed
 
-- Clarified how agents request line ranges in `read` calls with complete examples ([#13956](https://github.com/can1357/oh-my-pi/pull/13956) by [@Dante-dan](https://github.com/Dante-dan)).
-- Sped up DOCX, PPTX, XLSX and EPUB conversion and cut its memory use on media-heavy documents ([#14709](https://github.com/can1357/oh-my-pi/pull/14709) by [@H4vC](https://github.com/H4vC))
 - Inside a Tern pane, browser opens with `headed: false` now show as a Tern picture-in-picture too; only `app.tern: false` (or `browser.tern` / `PI_BROWSER_TERN=0`) opens Chromium instead
 - Inside a Tern pane, `/fork` opens the fork in a new pane beside the original, which keeps the original session
 - Roughly halved browser `extract` time in text mode on large pages ([#14668](https://github.com/can1357/oh-my-pi/pull/14668) by [@H4vC](https://github.com/H4vC))
@@ -30,6 +28,7 @@
 - Fetching URLs on hosts that are not Mastodon, Lemmy or Discourse no longer re-probes those platforms on every request; a host found not to run one is skipped for 10 minutes ([#14707](https://github.com/can1357/oh-my-pi/pull/14707) by [@H4vC](https://github.com/H4vC))
 - Sped up fetching Hacker News, GitHub, NuGet, docs.rs, Mastodon/Lemmy/Discourse and binary (PDF/document) URLs ([#14708](https://github.com/can1357/oh-my-pi/pull/14708) by [@H4vC](https://github.com/H4vC))
 - Sped up Perplexity OAuth search streaming ([#14708](https://github.com/can1357/oh-my-pi/pull/14708) by [@H4vC](https://github.com/H4vC))
+- Sped up DOCX, PPTX, XLSX and EPUB conversion and cut its memory use on media-heavy documents ([#14709](https://github.com/can1357/oh-my-pi/pull/14709) by [@H4vC](https://github.com/H4vC))
 ### Fixed
 
 - Fixed `/new` keeping plan mode (and its plan-role model) or goal mode active in the new session ([#14653](https://github.com/can1357/oh-my-pi/issues/14653))
