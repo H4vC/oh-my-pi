@@ -49,25 +49,16 @@ export function extractMessages(sessionManager: ReadonlySessionManagerLike): Hin
 	return messages;
 }
 
-/** Substantive-content verdict per user message object; entries replace (never mutate) messages. */
-const userTurnVerdicts = new WeakMap<object, boolean>();
-
 /**
  * Count user turns exactly as `extractMessages(sessionManager).filter(m => m.role === "user").length`,
- * without extracting assistant text or allocating the message list. Per-message verdicts are memoized,
- * so repeated calls on a growing session only inspect new user messages.
+ * without extracting assistant text or allocating the message list. Not memoized: messages may be
+ * rewritten in place (e.g. image stripping), so each call re-inspects current content.
  */
 export function countUserTurns(sessionManager: ReadonlySessionManagerLike): number {
 	let count = 0;
 	for (const entry of sessionManager.getEntries()) {
 		if (entry.type !== "message" || entry.message.role !== "user") continue;
-		const msg = entry.message;
-		let substantive = userTurnVerdicts.get(msg);
-		if (substantive === undefined) {
-			substantive = hasSubstantiveContent(extractUserText(msg));
-			userTurnVerdicts.set(msg, substantive);
-		}
-		if (substantive) count++;
+		if (hasSubstantiveContent(extractUserText(entry.message))) count++;
 	}
 	return count;
 }

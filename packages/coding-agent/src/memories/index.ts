@@ -806,7 +806,8 @@ async function* persistableMessagesFromBack(file: Bun.BunFile, size: number): As
  *
  * Equivalent to `truncateByApproxTokens(JSON.stringify(persistableMessages), tokenLimit)`, but
  * streams the rollout in byte windows and serializes messages from the front and back only until
- * the head/tail budgets fill, so peak memory stays bounded regardless of rollout size.
+ * the head/tail budgets fill. Peak memory is bounded by the window size plus the largest single
+ * JSONL record (a record spanning windows is carried until its newline), not by rollout size.
  */
 export async function buildStage1RolloutItems(rolloutPath: string, tokenLimit: number): Promise<string> {
 	const file = Bun.file(rolloutPath);
