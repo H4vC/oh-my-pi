@@ -68,14 +68,6 @@ interface StreamState {
 }
 
 /**
- * Live audio is forwarded to the worker in ~100 ms batches (16 kHz) instead of one
- * IPC message per 20 ms capture callback. The worker's endpointer is frame-based, so
- * batching only delays partial/segment detection by at most one batch; `stop()`
- * flushes the remainder before the final flush.
- */
-const STREAM_AUDIO_BATCH_SAMPLES = 1_600;
-
-/**
  * Hidden subcommand on the main CLI that boots the speech-recognition worker in
  * the spawned subprocess. Kept in sync with the dispatch in `cli.ts`.
  */
@@ -170,35 +162,12 @@ export class SttClient {
 		});
 		this.#host.syncWorkerRef();
 		worker.send({ type: "stream_start", id, modelKey, language: options.language });
-		let batch = new Float32Array(STREAM_AUDIO_BATCH_SAMPLES);
-		let batched = 0;
-		const flushBatch = (): void => {
-			if (batched === 0) return;
-			// Structured clone ships the whole backing buffer, so a partial batch is sliced.
-			const audio = batched === STREAM_AUDIO_BATCH_SAMPLES ? batch : batch.slice(0, batched);
-			worker.send({ type: "stream_audio", id, audio });
-			batch = new Float32Array(STREAM_AUDIO_BATCH_SAMPLES);
-			batched = 0;
-		};
 		const handle: SttStreamHandle = {
 			pushAudio: audio => {
-				if (settled) return;
-				if (batched + audio.length > STREAM_AUDIO_BATCH_SAMPLES) {
-					flushBatch();
-					if (audio.length >= STREAM_AUDIO_BATCH_SAMPLES) {
-						worker.send({ type: "stream_audio", id, audio });
-						return;
-					}
-				}
-				batch.set(audio, batched);
-				batched += audio.length;
-				if (batched === STREAM_AUDIO_BATCH_SAMPLES) flushBatch();
+				if (!settled) worker.send({ type: "stream_audio", id, audio });
 			},
 			stop: () => {
-				if (!settled) {
-					flushBatch();
-					worker.send({ type: "stream_stop", id });
-				}
+				if (!settled) worker.send({ type: "stream_stop", id });
 				return promise;
 			},
 			cancel: () => {
