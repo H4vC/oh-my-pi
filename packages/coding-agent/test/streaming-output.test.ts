@@ -896,6 +896,22 @@ describe("OutputSink head-retain mode", () => {
 		expect(capped).toBe(dumped.output);
 		expect(saved).toBeUndefined();
 	});
+
+	test("preview() matches the dump body mid-stream and onChunk already sees the chunk", async () => {
+		const previews: string[] = [];
+		const sink: OutputSink = new OutputSink({
+			spillThreshold: 64,
+			headBytes: 16,
+			onChunk: () => previews.push(sink.preview()),
+		});
+		for (let i = 0; i < 40; i++) sink.push(`row ${i}\n`);
+		expect(previews.at(-1)).toEndWith("row 39\n");
+		const preview = sink.preview();
+		const dumped = await sink.dump();
+		expect(preview).toBe(dumped.output);
+		expect(preview).toStartWith("row 0\n");
+		expect(preview).toContain("elided");
+	});
 });
 
 describe("OutputSink maxColumns (per-line cap)", () => {
