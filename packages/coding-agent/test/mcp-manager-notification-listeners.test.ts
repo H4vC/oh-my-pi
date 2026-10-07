@@ -178,6 +178,34 @@ describe("MCPManager notification listeners", () => {
 		}
 	});
 
+	it("runs a refresh queued during a failed tools refresh instead of dropping it", async () => {
+		const manager = new MCPManager(workDir);
+		const collector = makeFrameCollector();
+		manager.addNotificationListener(collector.listener);
+
+		try {
+			await manager.connectServers({ alpha: serverConfig() }, {});
+			// The handshake's list_changed refresh fans out only after it settles.
+			await collector.awaitFrame("alpha", "notifications/tools/list_changed");
+
+			let calls = 0;
+			manager.setOnToolsChanged(async () => {
+				calls++;
+				if (calls === 1) {
+					// A tools/list_changed arriving mid-flight marks the refresh dirty…
+					void manager.refreshServerTools("alpha");
+					// …and then the in-flight pass fails.
+					throw new Error("in-flight refresh failed");
+				}
+			});
+
+			await manager.refreshServerTools("alpha");
+			expect(calls).toBe(2);
+		} finally {
+			await manager.disconnectAll();
+		}
+	});
+
 	it("refreshServerTools awaits an async setOnToolsChanged handler before resolving", async () => {
 		// Verifies the second-layer guarantee (issue raised in review):
 		// #onToolsChanged in the sdk.ts wiring calls session.refreshMCPTools()
