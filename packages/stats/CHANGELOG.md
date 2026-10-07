@@ -10,6 +10,7 @@
 ### Changed
 
 - Reduced dashboard refetching: syncs that change nothing no longer trigger reloads, and unchanged traces are not re-downloaded ([#14724](https://github.com/can1357/oh-my-pi/pull/14724) by [@H4vC](https://github.com/H4vC))
+- Reduced dashboard re-rendering during syncs and trace timeline hover, pan and zoom ([#14727](https://github.com/can1357/oh-my-pi/pull/14727) by [@H4vC](https://github.com/H4vC))
 - Cancelled abandoned dashboard requests (e.g. large traces when switching sessions) and bounded the in-memory trace cache ([#14724](https://github.com/can1357/oh-my-pi/pull/14724) by [@H4vC](https://github.com/H4vC))
 
 ## [18.6.0] - 2026-10-03

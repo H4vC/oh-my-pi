@@ -111,6 +111,22 @@
 	cursor: grabbing;
 }
 
+/* Scene canvas with the hover/selection overlay stacked on top. */
+.traces-canvas-stack {
+	position: relative;
+	flex-shrink: 0;
+}
+
+.traces-canvas-stack > canvas {
+	display: block;
+}
+
+.traces-canvas-overlay {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+}
+
 .traces-chevron {
 	display: inline-flex;
 	background: none;
