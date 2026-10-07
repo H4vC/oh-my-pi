@@ -135,7 +135,7 @@ import { HistoryStorage } from "../session/history-storage";
 import { syncTextPrediction, textPredictionBackend } from "../predict/client";
 import { setWordPredictionHost } from "@oh-my-pi/pi-tui/prompt/word-completion";
 import { USER_INTERRUPT_LABEL } from "../session/messages";
-import { resolveMarkdownLinkHrefs, resolveMarkdownLinkTargets } from "../internal-urls/hyperlink-targets";
+import { resolveMarkdownLinkHrefs } from "../internal-urls/hyperlink-targets";
 import type { ResolveContext } from "../internal-urls/index";
 import { modelMentionDisplayName } from "@oh-my-pi/pi-tui/prompt/model-mention-syntax";
 import { modelMentionChipLabel, shiftImageMarkers } from "@oh-my-pi/pi-tui/prompt/composer-attachments";
@@ -1565,9 +1565,6 @@ export class InteractiveMode implements InteractiveModeContext {
 	}
 	get tableChartsVisible(): boolean {
 		return this.#focusController.target === undefined;
-	}
-	resolveAssistantMessageLinks(texts: readonly string[]): Promise<ReadonlyMap<string, string>> {
-		return resolveMarkdownLinkTargets(texts, this.#linkResolveContext());
 	}
 	resolveAssistantMessageLinkHrefs(hrefs: readonly string[]): Promise<ReadonlyMap<string, string>> {
 		return resolveMarkdownLinkHrefs(hrefs, this.#linkResolveContext());

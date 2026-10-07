@@ -1,29 +1,15 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as url from "node:url";
-import { getMarkdownLinkUrls, TERMINAL } from "@oh-my-pi/pi-tui";
+import { TERMINAL } from "@oh-my-pi/pi-tui";
 import { fileUriForTerminal } from "@oh-my-pi/pi-tui/render/hyperlink";
 import { extractUriScheme, InternalUrlRouter, parseInternalUrl, type ResolveContext } from "./index";
 import { expandPath } from "../tools/path-utils";
 
 /**
- * Resolve Markdown hyperlinks to existing local resources or absolute file URLs.
- * Relative paths use the calling session's cwd; missing, virtual, and remote targets stay unchanged.
- */
-export async function resolveMarkdownLinkTargets(
-	texts: readonly string[],
-	context?: ResolveContext,
-): Promise<ReadonlyMap<string, string>> {
-	const hrefs = new Set<string>();
-	for (const text of texts) {
-		for (const href of getMarkdownLinkUrls(text)) hrefs.add(href);
-	}
-	return resolveMarkdownLinkHrefs(hrefs, context);
-}
-
-/**
- * Resolve already-extracted Markdown link destinations (see
- * {@link resolveMarkdownLinkTargets}) without re-lexing the source text.
+ * Resolve Markdown link destinations (as extracted by `getMarkdownLinkUrls`)
+ * to existing local resources or absolute file URLs. Relative paths use the
+ * calling session's cwd; missing, virtual, and remote targets stay unchanged.
  */
 export async function resolveMarkdownLinkHrefs(
 	hrefs: Iterable<string>,

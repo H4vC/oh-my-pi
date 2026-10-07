@@ -23,13 +23,8 @@ export interface AssistantMessageHost {
 	readonly hideToolActivity: boolean;
 	readonly toolOutputExpanded: boolean;
 	readonly ui: { requestRender(): void; readonly imageBudget: ImageBudget };
-	resolveAssistantMessageLinks(texts: readonly string[]): Promise<ReadonlyMap<string, string>>;
-	/**
-	 * Resolve already-extracted link destinations. Preferred over
-	 * {@link resolveAssistantMessageLinks} when present, so the host does not
-	 * re-lex the assistant text.
-	 */
-	resolveAssistantMessageLinkHrefs?(hrefs: readonly string[]): Promise<ReadonlyMap<string, string>>;
+	/** Resolve already-extracted Markdown link destinations to local targets. */
+	resolveAssistantMessageLinkHrefs(hrefs: readonly string[]): Promise<ReadonlyMap<string, string>>;
 }
 
 const kMarkdownLinkTargets = Symbol("markdownLinkTargets");
@@ -76,13 +71,7 @@ export async function refreshAssistantMessageLinkTargets(
 		for (const href of assistantMessageLinkHrefs(message)) hrefs.add(href);
 	}
 	if (hrefs.size === 0) return previous;
-	const resolved = ctx.resolveAssistantMessageLinkHrefs
-		? await ctx.resolveAssistantMessageLinkHrefs([...hrefs])
-		: await ctx.resolveAssistantMessageLinks(
-				messages.flatMap(message =>
-					message.content.flatMap(content => (content.type === "text" ? [content.text] : [])),
-				),
-			);
+	const resolved = await ctx.resolveAssistantMessageLinkHrefs([...hrefs]);
 	let changed = false;
 	for (const href of hrefs) {
 		if (previous.get(href) !== resolved.get(href)) {
