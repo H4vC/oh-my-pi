@@ -10,7 +10,8 @@ function createDisplayFormatMemo(): LRUCache<string, string> {
 	return new LRUCache<string, string>({
 		max: 64,
 		maxSize: 4_000_000,
-		sizeCalculation: (formatted, source) => formatted.length + source.length,
+		// LRUCache rejects sizes <= 0; empty sources (cells not yet streamed) still cost one.
+		sizeCalculation: (formatted, source) => formatted.length + source.length + 1,
 	});
 }
 
