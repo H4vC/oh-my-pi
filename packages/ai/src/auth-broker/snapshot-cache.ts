@@ -30,11 +30,6 @@ const WRITE_COALESCE_MS = 2_000;
  * `generatedAt` — its TTL clock — never lags the newest confirmation by more.
  */
 const UNCHANGED_REWRITE_MS = 60_000;
-/** Bound on cached AES keys; one per broker token, so a handful at most. */
-const MAX_CACHED_KEYS = 16;
-
-/** AES keys per broker token: deriving one costs a SHA-256 digest plus an `importKey`. */
-const aesKeys = new Map<string, Promise<CryptoKey>>();
 /** Cache paths whose abandoned temp siblings this process already swept. */
 const sweptCachePaths = new Set<string>();
 
@@ -283,7 +278,7 @@ async function sweepStaleTempFiles(cachePath: string): Promise<void> {
 }
 
 async function encryptCachePayload(snapshot: SnapshotResponse, token: string, url: string): Promise<Uint8Array> {
-	const key = await aesKeyFor(token);
+	const key = await deriveAesKey(token, ["encrypt"]);
 	const iv = new Uint8Array(IV_LENGTH);
 	globalThis.crypto.getRandomValues(iv);
 	const plaintext = TEXT_ENCODER.encode(JSON.stringify(snapshot));
@@ -321,7 +316,7 @@ async function decryptCachePayload(data: Uint8Array, token: string, url: string)
 		logger.debug("auth-broker snapshot cache version mismatch", { version: data[VERSION_OFFSET] });
 		return null;
 	}
-	const key = await aesKeyFor(token);
+	const key = await deriveAesKey(token, ["decrypt"]);
 	const iv = asStrict(data.subarray(IV_OFFSET, HEADER_LENGTH));
 	const ciphertext = asStrict(data.subarray(HEADER_LENGTH));
 	try {
@@ -351,20 +346,9 @@ function cacheAdditionalData(url: string): Uint8Array<ArrayBuffer> {
 	return additionalData;
 }
 
-/** Cached AES-256 key for `token` (SHA-256 of the token); failed derivations are not cached. */
-function aesKeyFor(token: string): Promise<CryptoKey> {
-	const cached = aesKeys.get(token);
-	if (cached) return cached;
-	if (aesKeys.size >= MAX_CACHED_KEYS) aesKeys.clear();
-	const key = (async () => {
-		const digest = await globalThis.crypto.subtle.digest("SHA-256", TEXT_ENCODER.encode(token));
-		return globalThis.crypto.subtle.importKey("raw", digest, AES_ALGORITHM, false, ["encrypt", "decrypt"]);
-	})();
-	aesKeys.set(token, key);
-	key.catch(() => {
-		if (aesKeys.get(token) === key) aesKeys.delete(token);
-	});
-	return key;
+async function deriveAesKey(token: string, usages: Array<"encrypt" | "decrypt">): Promise<CryptoKey> {
+	const digest = await globalThis.crypto.subtle.digest("SHA-256", TEXT_ENCODER.encode(token));
+	return globalThis.crypto.subtle.importKey("raw", digest, AES_ALGORITHM, false, usages);
 }
 
 function randomHex(byteLength: number): string {

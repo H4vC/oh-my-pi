@@ -188,15 +188,13 @@ function delayResult(ms: number): { promise: Promise<"timeout">; cancel: () => v
 
 class GenerationGate {
 	readonly #storage: AuthStorage;
-	readonly #source: SnapshotSource;
 	readonly #unsubscribe: () => void;
 	readonly #pollTimer: NodeJS.Timeout;
 	#pollInFlight = false;
 	#waiters: Map<number, Set<() => void>> = new Map();
 
-	constructor(storage: AuthStorage, source: SnapshotSource, pollIntervalMs: number) {
+	constructor(storage: AuthStorage, pollIntervalMs: number) {
 		this.#storage = storage;
-		this.#source = source;
 		this.#unsubscribe = storage.credentials.onGeneration(generation => this.#wake(generation));
 		this.#pollTimer = setInterval(() => {
 			void this.#pollExternalChanges();
@@ -246,7 +244,7 @@ class GenerationGate {
 		if (this.#pollInFlight) return;
 		this.#pollInFlight = true;
 		try {
-			await this.#source.poll();
+			await this.#storage.credentials.poll();
 		} catch (error) {
 			logger.debug("Auth broker external store change poll failed", { error: String(error) });
 		} finally {
@@ -376,28 +374,23 @@ function buildCredentialBlockGroups(
 	return byCredentialId;
 }
 
-/**
- * Generation-scoped snapshot inputs: the redacted credential rows and their
- * persisted blocks. Both change only alongside the pool generation — local
- * writes bump it directly, other processes' commits bump it through `poll()`.
- */
+/** Credential rows of one pool generation; reloads that change rows bump it. */
 interface GenerationSnapshotRows {
 	generation: number;
 	credentials: AuthCredentialSnapshotEntry[];
-	blocks: StoredCredentialBlock[];
 }
 
 /**
- * Snapshot builder shared by every HTTP handler and SSE connection. Lists
- * credentials and blocks once per pool generation; only the time-relative
- * projection (`serverNowMs`, `generatedAt`, `rotatesInMs`, the refresher
- * countdown, block expiry) is recomputed per response.
+ * Snapshot builder shared by every HTTP handler and SSE connection. Credential
+ * rows are listed once per pool generation; persisted blocks are re-listed per
+ * response because not every block write bumps the generation
+ * (`CredentialBlocks.mark()` persists without one).
  */
 class SnapshotSource {
 	readonly #storage: AuthStorage;
 	readonly #refresher: AuthBrokerRefresher | undefined;
 	#rows: GenerationSnapshotRows | undefined;
-	#polling: Promise<boolean> | undefined;
+	#reloading: Promise<unknown> | undefined;
 
 	constructor(storage: AuthStorage, refresher: AuthBrokerRefresher | undefined) {
 		this.#storage = storage;
@@ -409,23 +402,21 @@ class SnapshotSource {
 	}
 
 	/**
-	 * Adopt commits other store connections made since the last poll. A poll is
-	 * two cheap reads (`PRAGMA data_version` plus the auth revision) and reloads
-	 * only when another connection committed; this process's own writes already
-	 * updated the pool and bumped its generation. Callers arriving while a
-	 * reload is in flight wait it out and then poll themselves, so none serves
-	 * the pre-reload pool or misses a commit that raced the in-flight check.
+	 * Re-read the store before serving, so writes made on the broker's own store
+	 * handle outside `AuthStorage` are served too (`poll()` sees only other
+	 * connections' commits). Callers arriving while a reload is in flight wait it
+	 * out and then reload themselves, so none serves the pre-reload pool.
 	 */
-	async poll(): Promise<void> {
-		while (this.#polling) {
-			await this.#polling.catch(() => false);
+	async reload(): Promise<void> {
+		while (this.#reloading) {
+			await this.#reloading.catch(() => undefined);
 		}
-		const polling = this.#storage.credentials.poll();
-		this.#polling = polling;
+		const reloading = this.#storage.credentials.reload();
+		this.#reloading = reloading;
 		try {
-			await polling;
+			await reloading;
 		} finally {
-			if (this.#polling === polling) this.#polling = undefined;
+			if (this.#reloading === reloading) this.#reloading = undefined;
 		}
 	}
 
@@ -435,7 +426,7 @@ class SnapshotSource {
 		const serverNowMs = Date.now();
 		const { wire, nextSweepAt } = resolveRefresherSchedule(this.#refresher, serverNowMs);
 		const blocksByCredentialId = buildCredentialBlockGroups(
-			rows.blocks,
+			this.#storage.blocks.list(rows.credentials.map(entry => entry.id)),
 			serverNowMs,
 			clientSupportsCodexMeterBlockScopes,
 		);
@@ -456,11 +447,7 @@ class SnapshotSource {
 	#currentRows(): GenerationSnapshotRows {
 		if (this.#rows?.generation === this.#storage.credentials.generation) return this.#rows;
 		const snapshot = this.#storage.credentials.snapshot();
-		const rows: GenerationSnapshotRows = {
-			generation: snapshot.generation,
-			credentials: snapshot.credentials,
-			blocks: this.#storage.blocks.list(snapshot.credentials.map(entry => entry.id)),
-		};
+		const rows: GenerationSnapshotRows = { generation: snapshot.generation, credentials: snapshot.credentials };
 		this.#rows = rows;
 		return rows;
 	}
@@ -473,7 +460,7 @@ async function serveSnapshot(
 	gate: GenerationGate,
 	peer: string,
 ): Promise<Response> {
-	await source.poll();
+	await source.reload();
 	const clientSupportsCodexMeterBlockScopes = supportsCodexMeterBlockScopes(req);
 	let currentGeneration = source.generation;
 	const clientGeneration = parseGenerationTag(req.headers.get("if-none-match"));
@@ -497,7 +484,7 @@ async function serveSnapshot(
 	waitController.abort();
 	if (result === "aborted" || req.signal.aborted) return empty(499, snapshotHeaders(currentGeneration));
 
-	await source.poll();
+	await source.reload();
 	currentGeneration = source.generation;
 	if (currentGeneration !== clientGeneration) {
 		const body = source.build(clientSupportsCodexMeterBlockScopes);
@@ -677,10 +664,10 @@ class SnapshotStreamHub {
 			do {
 				this.#bumpPending = false;
 				try {
-					await this.#source.poll();
+					await this.#source.reload();
 				} catch (error) {
 					// The in-memory pool is still serviceable; deliver what it holds.
-					logger.debug("auth-broker stream store poll failed", { error: String(error) });
+					logger.debug("auth-broker stream store reload failed", { error: String(error) });
 				}
 				if (this.#subscribers.size === 0) return;
 				try {
@@ -763,7 +750,7 @@ function serveSnapshotStream(
 	const stream = new ReadableStream<Uint8Array>({
 		async start(c) {
 			controller = c;
-			await source.poll();
+			await source.reload();
 			const initial = source.build(subscriber.codexMeterBlockScopes);
 			subscriber.lastGeneration = initial.generation;
 			for (const entry of initial.credentials) subscriber.sent.set(entry.id, fingerprintEntry(entry));
@@ -814,7 +801,7 @@ export function startAuthBroker(opts: AuthBrokerServerOptions): AuthBrokerServer
 			});
 	refresher?.start();
 	const snapshotSource = new SnapshotSource(opts.storage, refresher);
-	const generationGate = new GenerationGate(opts.storage, snapshotSource, externalChangePollMs);
+	const generationGate = new GenerationGate(opts.storage, externalChangePollMs);
 	const streamHub = new SnapshotStreamHub(opts.storage, snapshotSource);
 
 	const server = Bun.serve({

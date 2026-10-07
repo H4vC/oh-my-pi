@@ -20,6 +20,7 @@
 - Sped up loading the auth modules (`AuthStorage`) by no longer pulling in the provider stream modules for env API key lookup ([#14672](https://github.com/can1357/oh-my-pi/pull/14672) by [@H4vC](https://github.com/H4vC))
 - Reduced usage-report cache memory by not caching the provider's `raw` payload ([#14672](https://github.com/can1357/oh-my-pi/pull/14672) by [@H4vC](https://github.com/H4vC))
 - Sped up account ranking, OAuth preflight and credential rate-limit checks by cutting SQLite reads and write locks ([#14672](https://github.com/can1357/oh-my-pi/pull/14672) by [@H4vC](https://github.com/H4vC))
+- Reduced auth broker server and client CPU use for credential sync and SSE streams ([#14673](https://github.com/can1357/oh-my-pi/pull/14673) by [@H4vC](https://github.com/H4vC))
 
 ## [18.7.0] - 2026-10-06
 
@@ -32,10 +33,6 @@
 - Fixed Ultrafast service-tier billing and usage accounting: GPT-6 Astra now applies its published premium rates—6× on the OpenAI API and 8× included usage on Codex—and is counted toward the premium-request limit.
 - Fixed Vertex AI authentication on Windows when credentials are created with `gcloud auth application-default login`.
 - Fixed selecting Cursor accounts by email through `auth.accountPolicies` and `/session pin`; newly refreshed and existing accounts now retain the account email.
-
-### Changed
-
-- Reduced auth broker server and client CPU use for credential sync and SSE streams ([#14673](https://github.com/can1357/oh-my-pi/pull/14673) by [@H4vC](https://github.com/H4vC))
 
 ## [18.6.3] - 2026-10-06
 

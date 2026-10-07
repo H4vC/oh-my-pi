@@ -149,14 +149,8 @@ describe("broker /v1/credentials/disabled round-trip", () => {
 	test("revalidateCredentials re-hydrates broker-side identity changes past a stale snapshot", async () => {
 		// Client connected before this credential existed (e.g. a re-login that
 		// swapped an org-less row for an org-scoped one while a disk-cached
-		// snapshot was still fresh). The login commits from another process's
-		// connection, which the broker adopts through its store change poll.
-		const loginStore = await SqliteAuthCredentialStore.open(path.join(tempDir, "broker.db"));
-		try {
-			await loginStore.saveOAuth("anthropic", { ...mintOAuth("late@example.test"), orgId: "org-late" });
-		} finally {
-			loginStore.close();
-		}
+		// snapshot was still fresh).
+		await serverStore!.saveOAuth("anthropic", { ...mintOAuth("late@example.test"), orgId: "org-late" });
 		await clientStorage!.credentials.revalidate();
 		const rows = clientStorage!.credentials.all().anthropic;
 		const list = Array.isArray(rows) ? rows : [rows];
