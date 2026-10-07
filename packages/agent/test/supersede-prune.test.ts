@@ -232,36 +232,6 @@ describe("pruneSupersededToolResults — tail case", () => {
 		expect(resultText(result2)).toBe(FILE_CONTENT);
 	});
 
-	test("minimumSavings gate holds back warm passes below the threshold", () => {
-		const [call1, result1] = readPair("src/foo.ts", FILE_CONTENT, T0);
-		const [call2, result2] = readPair("src/foo.ts", FILE_CONTENT, T0 + 1_000);
-		const entries: SessionEntry[] = [call1, result1, call2, result2];
-
-		const gated = pruneSupersededToolResults(entries, tokenizer, cfg({ minimumSavings: 1_000_000, now: T0 + 1_000 }));
-		expect(gated.prunedCount).toBe(0);
-		expect(resultText(result1)).toBe(FILE_CONTENT);
-
-		const ungated = pruneSupersededToolResults(entries, tokenizer, cfg({ minimumSavings: 1, now: T0 + 1_000 }));
-		expect(ungated.prunedCount).toBe(1);
-		expect(resultText(result1)).toBe(SUPERSEDED_NOTICE);
-	});
-
-	test("idle flush prunes regardless of minimumSavings", () => {
-		const [call1, result1] = readPair("src/foo.ts", FILE_CONTENT, T0);
-		const [call2, result2] = readPair("src/foo.ts", FILE_CONTENT, T0 + 1_000);
-		const entries: SessionEntry[] = [call1, result1, call2, result2];
-
-		const result = pruneSupersededToolResults(
-			entries,
-			tokenizer,
-			cfg({ minimumSavings: 1_000_000, idleFlushMs: 30 * 60_000, now: T0 + 1_000 + 30 * 60_000 }),
-		);
-
-		expect(result.prunedCount).toBe(1);
-		expect(resultText(result1)).toBe(SUPERSEDED_NOTICE);
-		expect(resultText(result2)).toBe(FILE_CONTENT);
-	});
-
 	test("resolves a sent result's tool call that sits before the compaction boundary", () => {
 		const [call1, result1] = readPair("src/foo.ts", FILE_CONTENT, T0);
 		const [call2, result2] = readPair("src/foo.ts", FILE_CONTENT, T0 + 1_000);

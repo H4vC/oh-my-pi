@@ -27,8 +27,6 @@
 
 ### Changed
 
-- Clarified how agents request line ranges in `read` calls with complete examples ([#13956](https://github.com/can1357/oh-my-pi/pull/13956) by [@Dante-dan](https://github.com/Dante-dan)).
-- Reduced session rewrites: per-turn stale-result pruning waits until it saves at least 20,000 tokens; the idle flush still prunes everything ([#14678](https://github.com/can1357/oh-my-pi/pull/14678) by [@H4vC](https://github.com/H4vC))
 - Improved JSON and JSONL query streaming and pagination to reduce resource usage, support partial results, and provide clearer continuation between result pages.
 - Clarified the `read` tool documentation with complete examples for requesting line ranges.
 

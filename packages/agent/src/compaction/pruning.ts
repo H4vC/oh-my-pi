@@ -144,13 +144,6 @@ export interface SupersedePruneConfig {
 	 * by the flush. Default 30 min — callers on long retention override it.
 	 */
 	idleFlushMs?: number;
-	/**
-	 * Only prune when this pass's estimated savings total at least this many
-	 * tokens. Applies to warm (per-turn) passes only: every prune rewrites
-	 * persisted history, so smaller candidate sets wait until they accumulate or
-	 * the idle flush, which always prunes. Default 0 (no gate).
-	 */
-	minimumSavings?: number;
 	/** Clock override for tests. */
 	now?: number;
 	/**
@@ -411,7 +404,6 @@ export function pruneSupersededToolResults(
 
 	let tokensSaved = 0;
 	for (const candidate of toPrune) tokensSaved += estimatePrunedSavings(candidate.tokens, candidate.notice);
-	if (!idle && tokensSaved < (config.minimumSavings ?? 0)) return NOTHING_PRUNED;
 
 	const prunedAt = Date.now();
 	const steps = toPrune.map(candidate => blankToolResult(candidate.message, candidate.notice, prunedAt));
