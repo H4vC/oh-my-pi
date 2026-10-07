@@ -18,21 +18,35 @@ type MatcherEntries = readonly { path: string; digest: string }[];
 /** Hook results and context for one arguments object; each `{ value }` is set once computed. */
 interface ArgumentsInspection {
 	tool: TtsrTool | undefined;
-	/** {@link argumentsSize} when inspected; in-band tool streams grow argument strings in place. */
-	size: number;
+	/**
+	 * {@link argumentsFingerprint} when inspected. Arguments objects are mutated
+	 * in place (streams append, reused calls are rewritten), so reuse requires
+	 * the full contents to hash the same, not just the same sizes.
+	 */
+	fingerprint: number | bigint;
 	digest?: { value: string | undefined };
 	entries?: { value: MatcherEntries | undefined };
 	context?: { id: string; name: string; contentIndex: number; cwd: string; value: TtsrMatchContext };
 }
 
-/** Total key and top-level string/array length; grows whenever an in-band stream appends to an argument. */
-function argumentsSize(args: Record<string, unknown>): number {
-	let size = 0;
-	for (const key in args) {
-		const value = args[key];
-		size += key.length + 1 + (typeof value === "string" || Array.isArray(value) ? value.length : 0);
+/** Past this depth the fingerprint stops descending; parsed tool arguments are never this deep. */
+const FINGERPRINT_MAX_DEPTH = 32;
+
+/**
+ * Content hash over every key and primitive value of the arguments tree,
+ * chained through `Bun.hash` seeds so it allocates no serialized copy. Any
+ * change a matcher hook could observe — nested, same-length, or appended —
+ * changes it.
+ */
+function argumentsFingerprint(value: unknown, seed: number | bigint = 0, depth = 0): number | bigint {
+	if (typeof value === "string") return Bun.hash(value, Bun.hash("s", seed));
+	if (value === null || typeof value !== "object") return Bun.hash(String(value), Bun.hash(typeof value, seed));
+	if (depth >= FINGERPRINT_MAX_DEPTH) return Bun.hash("…", seed);
+	let hash = Bun.hash(Array.isArray(value) ? "[" : "{", seed);
+	for (const [key, child] of Object.entries(value)) {
+		hash = argumentsFingerprint(child, Bun.hash(key, hash), depth + 1);
 	}
-	return size;
+	return Bun.hash(Array.isArray(value) ? "]" : "}", hash);
 }
 
 /** Resolves tool calls against live tool definitions and the session cwd. */
@@ -159,11 +173,11 @@ export class TtsrToolInspector {
 			tools.find(candidate => candidate.name === toolCall.name) ??
 			tools.find(candidate => candidate.customWireName !== undefined && candidate.customWireName === toolCall.name);
 		const args: unknown = toolCall.arguments;
-		if (!isRecord(args)) return { tool, size: -1 };
-		const size = argumentsSize(args);
+		if (!isRecord(args)) return { tool, fingerprint: -1 };
+		const fingerprint = argumentsFingerprint(args);
 		const cached = this.#inspections.get(args);
-		if (cached && cached.tool === tool && cached.size === size) return cached;
-		const inspection: ArgumentsInspection = { tool, size };
+		if (cached && cached.tool === tool && cached.fingerprint === fingerprint) return cached;
+		const inspection: ArgumentsInspection = { tool, fingerprint };
 		this.#inspections.set(args, inspection);
 		return inspection;
 	}

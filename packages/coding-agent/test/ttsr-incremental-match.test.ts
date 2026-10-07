@@ -58,6 +58,28 @@ describe("TTSR incremental stream matching", () => {
 		// A rewritten (non-extending) snapshot drops what the old one matched.
 		expect(manager.checkSnapshot("clean", TEXT)).toEqual([]);
 	});
+
+	it("matches a condition that arrives late in a snapshot growing in small chunks, with linear cost", () => {
+		const chunk = "const value = compute(input);\n";
+		const run = (chunks: number): number => {
+			const manager = new TtsrManager({ enabled: true });
+			manager.addRule(rule("forbidden", "FORBIDDEN_\\w+\\("));
+			let snapshot = "";
+			const start = Bun.nanoseconds();
+			for (let index = 0; index < chunks; index++) {
+				snapshot += chunk;
+				expect(manager.checkSnapshot(snapshot, TEXT, { final: false })).toEqual([]);
+			}
+			snapshot += "FORBIDDEN_api(1);\n";
+			expect(names(manager.checkSnapshot(snapshot, TEXT))).toEqual(["forbidden"]);
+			return Bun.nanoseconds() - start;
+		};
+		const smallNs = Math.min(run(250), run(250), run(250));
+		// 8 times the chunks: a full regex rescan per update would take ~64 times as long.
+		let largeNs = Number.POSITIVE_INFINITY;
+		for (let attempt = 0; attempt < 3 && largeNs >= 32 * smallNs; attempt++) largeNs = Math.min(largeNs, run(2_000));
+		expect(largeNs).toBeLessThan(32 * smallNs);
+	});
 });
 
 describe("TTSR tool inspection cache", () => {
@@ -82,5 +104,37 @@ describe("TTSR tool inspection cache", () => {
 		args.content = "safe FORBIDDEN";
 		expect(inspector.digest(toolCall)).toBe("safe FORBIDDEN");
 		expect(inspector.matchContext(toolCall, 0).filePaths).toContain("src/a.ts");
+	});
+
+	it("re-inspects reused arguments rewritten to same-length values, including nested ones", () => {
+		const write: TtsrTool = {
+			name: "write",
+			// Reads a nested field too, so a nested in-place edit changes the digest.
+			matcherDigest: args => {
+				if (!args || typeof args !== "object" || !("content" in args) || typeof args.content !== "string") {
+					return undefined;
+				}
+				const meta = "meta" in args && args.meta && typeof args.meta === "object" ? args.meta : undefined;
+				const mode = meta && "mode" in meta && typeof meta.mode === "string" ? meta.mode : "";
+				return `${args.content}:${mode}`;
+			},
+		};
+		const inspector = new TtsrToolInspector(
+			() => [write],
+			() => "/repo",
+		);
+		const meta = { mode: "a" };
+		const args: Record<string, unknown> = { path: "a.ts", content: "safe", meta };
+		const toolCall: ToolCall = { type: "toolCall", id: "call-1", name: "write", arguments: args };
+		expect(inspector.digest(toolCall)).toBe("safe:a");
+		expect(inspector.matchContext(toolCall, 0).filePaths).toContain("a.ts");
+
+		args.path = "b.ts";
+		args.content = "evil";
+		expect(inspector.digest(toolCall)).toBe("evil:a");
+		expect(inspector.matchContext(toolCall, 0).filePaths).toContain("b.ts");
+
+		meta.mode = "b";
+		expect(inspector.digest(toolCall)).toBe("evil:b");
 	});
 });
