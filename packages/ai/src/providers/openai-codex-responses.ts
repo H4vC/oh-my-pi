@@ -453,20 +453,8 @@ type CodexWebSocketSessionState = {
 	fallbackCount: number;
 	lastFallbackAt?: number;
 	prewarmed: boolean;
-	stats: Omit<OpenAICodexWebSocketDebugStats, "lastTurn">;
-	lastTurn?: CodexTurnDiagnosticsRecord;
+	stats: OpenAICodexWebSocketDebugStats;
 };
-
-/**
- * Latest turn diagnostics. Request diagnostics re-serialize the whole input and
- * tools, so the request is kept by reference and only measured when a reader
- * asks for it ({@link getOpenAICodexWebSocketDebugStats} or CODEX_DEBUG).
- */
-interface CodexTurnDiagnosticsRecord {
-	source?: { request: Record<string, unknown>; transport: CodexTransport; canAppendBeforeRequest: boolean };
-	request?: OpenAICodexTurnRequestDiagnostics;
-	usage?: OpenAICodexTurnUsageDiagnostics;
-}
 
 interface CodexTurnStateCell {
 	value?: string;
@@ -2038,7 +2026,7 @@ async function openCodexSseTransport(
 	// delivery, service tier); copying the whole transcript would be wasted work.
 	const requestBodyForState: RequestBody = {
 		model: wireBody.model,
-		stream_options: wireBody.stream_options,
+		stream_options: wireBody.stream_options ? { ...wireBody.stream_options } : undefined,
 		service_tier: wireBody.service_tier,
 	};
 	return { eventStream: await open(wireBody), requestBodyForState, transport: "sse" };
@@ -3532,11 +3520,8 @@ export function getOpenAICodexWebSocketDebugStats(
 		providerSessionState?: Map<string, ProviderSessionState>;
 	},
 ): OpenAICodexWebSocketDebugStats | undefined {
-	const state = getCodexWebSocketStateForPublicSession(model, options);
-	if (!state) return undefined;
-	return state.lastTurn
-		? { ...state.stats, lastTurn: resolveCodexTurnDiagnostics(state.lastTurn) }
-		: { ...state.stats };
+	const stats = getCodexWebSocketStateForPublicSession(model, options)?.stats;
+	return stats ? { ...stats } : undefined;
 }
 
 export function getOpenAICodexTransportDetails(
@@ -3739,24 +3724,12 @@ function recordCodexTurnRequestDiagnostics(
 		state.stats.lastDeltaInputItems = undefined;
 		state.stats.lastPreviousResponseId = undefined;
 	}
-	state.lastTurn = { source: { request, transport, canAppendBeforeRequest } };
-	CODEX_DEBUG &&
-		logger.debug("[codex] codex turn request diagnostics", {
-			diagnostics: resolveCodexTurnDiagnostics(state.lastTurn).request,
-		});
-}
-
-function resolveCodexTurnDiagnostics(record: CodexTurnDiagnosticsRecord): OpenAICodexTurnDiagnostics {
-	if (!record.request) {
-		const source = record.source!;
-		record.request = buildCodexTurnRequestDiagnostics(
-			source.request,
-			source.transport,
-			source.canAppendBeforeRequest,
-		);
-		record.source = undefined;
-	}
-	return record.usage ? { request: record.request, usage: record.usage } : { request: record.request };
+	// Measured at send time: the request object may be reused or mutated by an
+	// `onPayload` hook afterwards, and retaining it would pin the transcript.
+	state.stats.lastTurn = {
+		request: buildCodexTurnRequestDiagnostics(request, transport, canAppendBeforeRequest),
+	};
+	CODEX_DEBUG && logger.debug("[codex] codex turn request diagnostics", { diagnostics: state.stats.lastTurn.request });
 }
 
 function recordCodexTurnUsageDiagnostics(
@@ -3764,7 +3737,7 @@ function recordCodexTurnUsageDiagnostics(
 	rawUsage: CodexResponseUsage | undefined,
 	displayedUsage: Usage,
 ): void {
-	if (!state?.lastTurn || !rawUsage) return;
+	if (!state?.stats.lastTurn || !rawUsage) return;
 	const details = rawUsage.input_tokens_details;
 	const outputDetails = rawUsage.output_tokens_details;
 	const rawInputTokens = rawUsage.input_tokens ?? 0;
@@ -3793,9 +3766,11 @@ function recordCodexTurnUsageDiagnostics(
 		displayedOrchestrationCacheReadTokens: displayedUsage.orchestration?.cacheRead ?? 0,
 		displayedOrchestrationOutputTokens: displayedUsage.orchestration?.output ?? 0,
 	};
-	state.lastTurn.usage = usageDiagnostics;
-	CODEX_DEBUG &&
-		logger.debug("[codex] codex turn diagnostics", { diagnostics: resolveCodexTurnDiagnostics(state.lastTurn) });
+	state.stats.lastTurn = {
+		...state.stats.lastTurn,
+		usage: usageDiagnostics,
+	};
+	CODEX_DEBUG && logger.debug("[codex] codex turn diagnostics", { diagnostics: state.stats.lastTurn });
 }
 
 const CODEX_CHAIN_TOP_LEVEL_EXCLUDE_MAP = {
