@@ -8,10 +8,6 @@
 
 ### Changed
 
-- Clarified how agents request line ranges in `read` calls with complete examples ([#13956](https://github.com/can1357/oh-my-pi/pull/13956) by [@Dante-dan](https://github.com/Dante-dan)).
-- Fixed multi-second freezes after large pastes with unclosed tags in title/auto-thinking preprocessing ([#14720](https://github.com/can1357/oh-my-pi/pull/14720) by [@H4vC](https://github.com/H4vC))
-- Sped up image resizing up to ~2.6× with identical output ([#14720](https://github.com/can1357/oh-my-pi/pull/14720) by [@H4vC](https://github.com/H4vC))
-- Stopped text prediction from touching the filesystem on every keystroke while SmolLM weights download ([#14720](https://github.com/can1357/oh-my-pi/pull/14720) by [@H4vC](https://github.com/H4vC))
 - Inside a Tern pane, browser opens with `headed: false` now show as a Tern picture-in-picture too; only `app.tern: false` (or `browser.tern` / `PI_BROWSER_TERN=0`) opens Chromium instead
 - Inside a Tern pane, `/fork` opens the fork in a new pane beside the original, which keeps the original session
 - Roughly halved browser `extract` time in text mode on large pages ([#14668](https://github.com/can1357/oh-my-pi/pull/14668) by [@H4vC](https://github.com/H4vC))
@@ -40,6 +36,12 @@
 - Sped up concurrent subagent launches by sharing one agent discovery scan ([#14713](https://github.com/can1357/oh-my-pi/pull/14713) by [@H4vC](https://github.com/H4vC))
 - Sped up ssh:// file operations by reusing verified connections for 30 s ([#14713](https://github.com/can1357/oh-my-pi/pull/14713) by [@H4vC](https://github.com/H4vC))
 - Reduced collab host overhead: nothing is mirrored while no guest is joined, and frames and guest joins serialize once ([#14714](https://github.com/can1357/oh-my-pi/pull/14714) by [@H4vC](https://github.com/H4vC))
+- Reduced per-turn advisor work: advisor deltas are rendered only when a single-block fallback or requeue needs them ([#14717](https://github.com/can1357/oh-my-pi/pull/14717) by [@H4vC](https://github.com/H4vC))
+- Reduced memory use of local memory extraction and `run_experiment` on large inputs ([#14718](https://github.com/can1357/oh-my-pi/pull/14718) by [@H4vC](https://github.com/H4vC))
+- Sped up Mnemopi session start ([#14718](https://github.com/can1357/oh-my-pi/pull/14718) by [@H4vC](https://github.com/H4vC))
+- Fixed multi-second freezes after large pastes with unclosed tags in title/auto-thinking preprocessing ([#14720](https://github.com/can1357/oh-my-pi/pull/14720) by [@H4vC](https://github.com/H4vC))
+- Sped up image resizing up to ~2.6× by decoding the source once ([#14720](https://github.com/can1357/oh-my-pi/pull/14720) by [@H4vC](https://github.com/H4vC))
+- Stopped text prediction from touching the filesystem on every keystroke while SmolLM weights download ([#14720](https://github.com/can1357/oh-my-pi/pull/14720) by [@H4vC](https://github.com/H4vC))
 ### Fixed
 
 - Fixed `/new` keeping plan mode (and its plan-role model) or goal mode active in the new session ([#14653](https://github.com/can1357/oh-my-pi/issues/14653))
@@ -53,6 +55,7 @@
 - Sped up TUI repaints of live stream and `/record` rows ([#14705](https://github.com/can1357/oh-my-pi/pull/14705) by [@H4vC](https://github.com/H4vC))
 - Fixed quadratic slowdown in `omp cleanse` on large tsc/clippy/golangci output ([#14706](https://github.com/can1357/oh-my-pi/pull/14706) by [@H4vC](https://github.com/H4vC))
 - Fixed documents served as `application/octet-stream` being downloaded twice ([#14708](https://github.com/can1357/oh-my-pi/pull/14708) by [@H4vC](https://github.com/H4vC))
+- Fixed collab TUI guests rebuilding the transcript per token ([#14715](https://github.com/can1357/oh-my-pi/pull/14715) by [@H4vC](https://github.com/H4vC))
 
 ## [18.7.0] - 2026-10-06
 

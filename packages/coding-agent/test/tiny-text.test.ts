@@ -87,6 +87,14 @@ describe("preprocessTinyMessage", () => {
 		expect(prepared.endsWith(" TAIL")).toBe(true);
 		expect(prepared.length).toBeLessThanOrEqual(MAX_TINY_MESSAGE_CHARS);
 	});
+
+	it("keeps prose between two large fenced blocks", () => {
+		const message = `\`\`\`\n${"SOURCE_NOISE ".repeat(2000)}\n\`\`\`\nPlease fix login redirect\n\`\`\`\n${"TRACE_NOISE ".repeat(2000)}\n\`\`\``;
+		const prepared = preprocessTinyMessage(message);
+		expect(prepared).toContain("Please fix login redirect");
+		expect(prepared).not.toContain("SOURCE_NOISE");
+		expect(prepared).not.toContain("TRACE_NOISE");
+	});
 });
 
 describe("formatTitleUserMessage", () => {
