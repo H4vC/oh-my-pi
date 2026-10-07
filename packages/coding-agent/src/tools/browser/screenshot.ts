@@ -397,3 +397,32 @@ export function createPngDiff(baseline: Uint8Array, current: Uint8Array): { png:
 		pixelChangeRatio: width * height === 0 ? 0 : changed / (width * height),
 	};
 }
+
+/** Scopes (page, full page, each selector) whose latest PNG is kept for change detection. */
+const SCREENSHOT_HISTORY_LIMIT = 4;
+
+/**
+ * Bounded per-scope PNG history behind `tab.screenshot({ ifChanged | threshold })`. Keeps the
+ * {@link SCREENSHOT_HISTORY_LIMIT} most recently captured scopes; an evicted scope restarts at revision 1.
+ */
+export class ScreenshotChangeTracker {
+	readonly #entries = new Map<string, ScreenshotHistory>();
+
+	/** Compare `png` with the scope's previous capture without recording it. */
+	compare(scope: string, png: Uint8Array, threshold: number): ScreenshotChangeResult {
+		const previous = this.#entries.get(scope);
+		const pixelChangeRatio = previous ? pngPixelChangeRatio(previous.png, png) : 1;
+		const changed = !previous || pixelChangeRatio > threshold;
+		const revision = previous ? previous.revision + (changed ? 1 : 0) : 1;
+		return { changed, revision, pixelChangeRatio };
+	}
+
+	/** Record `png` as the scope's latest capture, evicting the least recently captured scope past the limit. */
+	record(scope: string, png: Uint8Array, revision: number): void {
+		this.#entries.delete(scope);
+		this.#entries.set(scope, { png, revision });
+		if (this.#entries.size <= SCREENSHOT_HISTORY_LIMIT) return;
+		const oldest = this.#entries.keys().next();
+		if (!oldest.done) this.#entries.delete(oldest.value);
+	}
+}

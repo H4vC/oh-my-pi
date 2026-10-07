@@ -193,10 +193,9 @@ import {
 	formatScreenshotLegend,
 	installScreenshotAnnotations,
 	type PdfOptions,
-	pngPixelChangeRatio,
 	type ScreenshotAnnotationTarget,
 	type ScreenshotChangeResult,
-	type ScreenshotHistory,
+	ScreenshotChangeTracker,
 	type ScreenshotOptions,
 	screenshotQuality,
 	screenshotScope,
@@ -1356,6 +1355,12 @@ export class WorkerCore {
 	#unsub: () => void;
 	#isolated: boolean;
 	#uninstallRejectionGuard: () => void;
+	/** Set by {@link terminate}; the inline teardown finishes once the active run settles. */
+	#terminated = false;
+	/** Set once a close handshake starts; {@link terminate} then leaves teardown to it. */
+	#closing = false;
+	/** Session carrying the `Page.frameNavigated` listener, kept so close can remove it. */
+	#frameNavigatedClient?: CDPSession;
 	#mode?: WorkerInitPayload["mode"];
 	#activateForScreenshot = true;
 	#dialogs?: RuntimeDialogController;
@@ -1366,7 +1371,7 @@ export class WorkerCore {
 	#tracing?: BrowserTracingController;
 	#ariaSnapshotBaselines = new Map<string, AriaSnapshotBaseline>();
 	#emulation?: BrowserEmulationController;
-	#screenshotHistory = new Map<string, ScreenshotHistory>();
+	readonly #screenshotChanges = new ScreenshotChangeTracker();
 	#webmcp?: WebMcpController;
 	readonly #recording = new RecordingController();
 	/**
@@ -1384,6 +1389,36 @@ export class WorkerCore {
 			void this.#handleMessage(msg as WorkerInbound);
 		});
 		this.#uninstallRejectionGuard = this.#installRejectionGuard();
+	}
+
+	/**
+	 * Teardown for an inline worker the supervisor terminates without a close handshake — the
+	 * in-process analogue of killing the worker thread. Without it the process-wide rejection
+	 * guard keeps this core, its page, and its CDP connection alive forever. An active run is
+	 * aborted and the guard released only once that run settles.
+	 */
+	terminate(): void {
+		// A close in flight already tears everything down; disconnecting under it would fail its awaits.
+		if (this.#terminated || this.#closing) return;
+		this.#terminated = true;
+		this.#unsub();
+		this.#detachFrameNavigated();
+		const active = this.#active;
+		if (active) {
+			active.ac.abort(postmortem.markExpectedCleanupError(new ToolAbortError()));
+			return;
+		}
+		this.#finishTermination();
+	}
+
+	#finishTermination(): void {
+		this.#uninstallRejectionGuard();
+		if (this.#browser?.connected) void this.#browser.disconnect().catch(() => undefined);
+	}
+
+	#detachFrameNavigated(): void {
+		this.#frameNavigatedClient?.off("Page.frameNavigated", this.#onFrameNavigated);
+		this.#frameNavigatedClient = undefined;
 	}
 
 	#installRejectionGuard(): () => void {
@@ -1513,7 +1548,8 @@ export class WorkerCore {
 				this.#observeDialogs();
 				if (payload.dialogs) this.#applyDialogPolicy(payload.dialogs);
 			}
-			this.#page.mainFrame().client.on("Page.frameNavigated", this.#onFrameNavigated);
+			this.#frameNavigatedClient = this.#page.mainFrame().client;
+			this.#frameNavigatedClient.on("Page.frameNavigated", this.#onFrameNavigated);
 			if (payload.mode === "headless" || payload.emulateFocus) {
 				// Background Chromium tabs stop producing frames, stalling rAF,
 				// IntersectionObserver, and input acknowledgements. Keep owned tabs
@@ -1552,6 +1588,11 @@ export class WorkerCore {
 				await page.close().catch(() => undefined);
 			}
 			this.#transport.send({ type: "init-failed", error: errorPayload(error) });
+		}
+		// Terminated while init was still running: the listeners and connection it just set up are orphaned.
+		if (this.#terminated) {
+			this.#detachFrameNavigated();
+			if (!this.#active) this.#finishTermination();
 		}
 	}
 
@@ -1809,6 +1850,7 @@ export class WorkerCore {
 			}
 			failure = this.#foldFloatingRejections(active, failure);
 			if (this.#active?.id === msg.id) this.#active = null;
+			if (this.#terminated && !this.#active) this.#finishTermination();
 		}
 		if (failure) {
 			this.#transport.send({ type: "result", id: msg.id, ok: false, error: errorPayload(failure.error) });
@@ -2795,28 +2837,31 @@ export class WorkerCore {
 			parseAriaRefSelector(selector) !== null
 				? await this.#resolveAriaRef(selector)
 				: asElementHandle(await untilAborted(signal, () => page.$(normalizeSelector(selector))));
-		let comparisonBuffer: Uint8Array;
-		let buffer: Uint8Array;
+		const scope = screenshotScope(opts);
+		let comparison: Uint8Array | undefined;
+		let changeResult: ScreenshotChangeResult | undefined;
+		let buffer: Uint8Array | undefined;
 		try {
-			comparisonBuffer = await captureScreenshotBuffer(page, opts, signal, resolveSelector, "png");
-			buffer =
-				captureFormat === "png"
-					? comparisonBuffer
-					: await captureScreenshotBuffer(page, opts, signal, resolveSelector, captureFormat);
+			// The PNG comparison capture doubles as the result when no other format was requested;
+			// an unchanged capture skips the formatted one entirely.
+			if (changeDetection) {
+				comparison = await captureScreenshotBuffer(page, opts, signal, resolveSelector, "png");
+				changeResult = this.#screenshotChanges.compare(scope, comparison, threshold);
+			}
+			if (!changeResult || changeResult.changed) {
+				buffer =
+					comparison && captureFormat === "png"
+						? comparison
+						: await captureScreenshotBuffer(page, opts, signal, resolveSelector, captureFormat);
+			}
 		} finally {
 			await cleanupAnnotations();
 		}
-		let changeResult: ScreenshotChangeResult | undefined;
-		if (changeDetection) {
-			const scope = screenshotScope(opts);
-			const previous = this.#screenshotHistory.get(scope);
-			const pixelChangeRatio = previous ? pngPixelChangeRatio(previous.png, comparisonBuffer) : 1;
-			const changed = !previous || pixelChangeRatio > threshold;
-			const revision = previous ? previous.revision + (changed ? 1 : 0) : 1;
-			this.#screenshotHistory.set(scope, { png: comparisonBuffer, revision });
-			changeResult = { changed, revision, pixelChangeRatio };
-			if (!changed) return changeResult;
+		if (comparison && changeResult) {
+			this.#screenshotChanges.record(scope, comparison, changeResult.revision);
+			if (!changeResult.changed) return changeResult;
 		}
+		if (!buffer) throw new ToolError("tab.screenshot() captured no image");
 		const resized = await resizeImage(
 			{ type: "image", data: buffer.toBase64(), mimeType: captureMime },
 			{ maxWidth: 1024, maxHeight: 1024, maxBytes: 150 * 1024, jpegQuality: 70, excludeWebP: session.excludeWebP },
@@ -3122,8 +3167,10 @@ export class WorkerCore {
 	}
 
 	async #close(): Promise<void> {
+		this.#closing = true;
 		this.#unsub();
 		this.#uninstallRejectionGuard();
+		this.#detachFrameNavigated();
 		this.#clearElementCache();
 		const page = this.#page;
 		await this.#recording.close().catch(error => {

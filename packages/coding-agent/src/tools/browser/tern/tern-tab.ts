@@ -88,10 +88,9 @@ import {
 	type DiffScreenshotResult,
 	formatScreenshotLegend,
 	type PdfOptions,
-	pngPixelChangeRatio,
 	type ScreenshotAnnotationTarget,
 	type ScreenshotChangeResult,
-	type ScreenshotHistory,
+	ScreenshotChangeTracker,
 	type ScreenshotOptions,
 	screenshotQuality,
 	screenshotScope,
@@ -375,7 +374,7 @@ export class TernTab implements InProcessRunTab {
 	readonly #buttons = new Set<"left" | "right" | "middle">();
 	readonly #mods: TernModifier[] = [];
 	// Screenshots, snapshots, recording, WebMCP.
-	readonly #screenshotHistory = new Map<string, ScreenshotHistory>();
+	readonly #screenshotChanges = new ScreenshotChangeTracker();
 	readonly #ariaBaselines = new Map<string, AriaSnapshotBaseline>();
 	readonly #recording = new RecordingController();
 	#webmcp: WebMcpController | undefined;
@@ -1803,29 +1802,32 @@ export class TernTab implements InProcessRunTab {
 				legend.push({ ...box, role: element?.role ?? "generic", name: element?.name });
 			}
 		}
-		let comparison: Buffer;
-		let buffer: Buffer;
+		const scope = screenshotScope(opts);
+		let comparison: Buffer | undefined;
+		let change: ScreenshotChangeResult | undefined;
+		let buffer: Buffer | undefined;
 		try {
 			const capture = { selector: opts.selector, fullPage: opts.fullPage };
-			comparison = await this.captureBytes({ ...capture, format: "png" }, frame);
-			buffer =
-				format === "png"
-					? comparison
-					: await this.captureBytes({ ...capture, format, quality: opts.quality }, frame);
+			// The PNG comparison capture doubles as the result when no other format was requested;
+			// an unchanged capture skips the formatted one entirely.
+			if (changeDetection) {
+				comparison = await this.captureBytes({ ...capture, format: "png" }, frame);
+				change = this.#screenshotChanges.compare(scope, comparison, threshold);
+			}
+			if (!change || change.changed) {
+				buffer =
+					comparison && format === "png"
+						? comparison
+						: await this.captureBytes({ ...capture, format, quality: opts.quality }, frame);
+			}
 		} finally {
 			if (annotation) await this.#kit("removeOverlay", [annotation.token]).catch(() => undefined);
 		}
-		let change: ScreenshotChangeResult | undefined;
-		if (changeDetection) {
-			const scope = screenshotScope(opts);
-			const previous = this.#screenshotHistory.get(scope);
-			const pixelChangeRatio = previous ? pngPixelChangeRatio(previous.png, comparison) : 1;
-			const changed = !previous || pixelChangeRatio > threshold;
-			const revision = previous ? previous.revision + (changed ? 1 : 0) : 1;
-			this.#screenshotHistory.set(scope, { png: comparison, revision });
-			change = { changed, revision, pixelChangeRatio };
-			if (!changed) return change;
+		if (comparison && change) {
+			this.#screenshotChanges.record(scope, comparison, change.revision);
+			if (!change.changed) return change;
 		}
+		if (!buffer) throw new ToolError("tab.screenshot() captured no image");
 		const resized = await resizeImage(
 			{ type: "image", data: buffer.toString("base64"), mimeType: mime },
 			{

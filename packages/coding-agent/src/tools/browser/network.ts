@@ -12,6 +12,12 @@ export const RESPONSE_BODY_LIMIT_BYTES = 1024 * 1024;
 const ROUTE_INTERCEPT_PRIORITY = 10;
 const PASS_THROUGH_INTERCEPT_PRIORITY = 0;
 const REQUEST_RECORD = Symbol("omp.browser.requestRecord");
+/**
+ * Byte budget for loaded response bodies kept alive by the request log (the raw body Puppeteer
+ * caches on the response plus the capped copy). Past it the least recently loaded bodies are
+ * released; their records stay listed but no longer return a body.
+ */
+const RETAINED_BODY_BUDGET_BYTES = 64 * 1024 * 1024;
 
 /** URL pattern accepted by persistent tab routes and request filters. */
 export type NetworkPattern = string | RegExp;
@@ -112,9 +118,12 @@ export interface NetworkRequestsOptions {
 export type HarContentPolicy = "text" | "all" | "none";
 
 interface StoredRequest extends NetworkRequestRecord {
-	request: HTTPRequest;
 	response?: HTTPResponse;
+	/** Response status text, kept after a released body drops `response`. */
+	statusText?: string;
 	bodyPromise?: Promise<NetworkResponseBody | undefined>;
+	/** Bytes this record's loaded body counts against `RETAINED_BODY_BUDGET_BYTES`. */
+	bodyWeight?: number;
 }
 
 interface RequestWithRecord extends HTTPRequest {
@@ -167,6 +176,9 @@ export class BrowserNetworkManager {
 	#harSession?: HarSession;
 	/** Main-frame document requests that have neither a response nor a final failure/finish yet. */
 	readonly #pendingNavigations = new Set<HTTPRequest>();
+	/** Records holding a loaded body, least recently loaded first. */
+	readonly #retainedBodies = new Set<StoredRequest>();
+	#retainedBodyBytes = 0;
 
 	readonly #onRequest = async (request: HTTPRequest): Promise<void> => {
 		const record = this.#rememberRequest(request);
@@ -213,6 +225,7 @@ export class BrowserNetworkManager {
 		const record = (response.request() as RequestWithRecord)[REQUEST_RECORD];
 		if (!record) return;
 		record.response = response;
+		record.statusText = response.statusText();
 		record.status = response.status();
 		record.ok = response.ok();
 		record.responseHeaders = response.headers();
@@ -352,6 +365,8 @@ export class BrowserNetworkManager {
 	clearRequests(): void {
 		this.#records.length = 0;
 		this.#recordsById.clear();
+		this.#retainedBodies.clear();
+		this.#retainedBodyBytes = 0;
 	}
 
 	/** Begin collecting subsequent request-log entries for a HAR file. */
@@ -372,7 +387,7 @@ export class BrowserNetworkManager {
 		const entries: Record<string, unknown>[] = [];
 		for (const record of records) {
 			const body = session.content === "none" ? undefined : await this.#loadBody(record, signal);
-			const statusText = record.response?.statusText() ?? record.failureText ?? "";
+			const statusText = record.statusText ?? record.failureText ?? "";
 			entries.push(buildHarEntry(record, body, session.content, statusText));
 		}
 		const har = buildHarLog(entries);
@@ -407,14 +422,15 @@ export class BrowserNetworkManager {
 			resourceType: request.resourceType(),
 			requestHeaders: request.headers(),
 			sizes: { requestBody: postData === undefined ? 0 : Buffer.byteLength(postData) },
-			request,
 		};
 		this.#records.push(record);
 		this.#recordsById.set(record.id, record);
 		tagged[REQUEST_RECORD] = record;
 		while (this.#records.length > REQUEST_LOG_LIMIT) {
 			const removed = this.#records.shift();
-			if (removed) this.#recordsById.delete(removed.id);
+			if (!removed) continue;
+			this.#recordsById.delete(removed.id);
+			if (this.#retainedBodies.delete(removed)) this.#retainedBodyBytes -= removed.bodyWeight ?? 0;
 		}
 		return record;
 	}
@@ -447,10 +463,34 @@ export class BrowserNetworkManager {
 
 	async #loadBody(record: StoredRequest, signal?: AbortSignal): Promise<NetworkResponseBody | undefined> {
 		if (!record.response) return undefined;
-		record.bodyPromise ??= loadResponseBody(record.response);
+		if (!record.bodyPromise) {
+			const promise = loadResponseBody(record.response);
+			record.bodyPromise = promise;
+			// Account on settle, not on the caller's await: an aborted caller still leaves the body cached.
+			void promise.then(loaded => {
+				if (loaded && record.bodyPromise === promise && this.#recordsById.get(record.id) === record) {
+					this.#retainBody(record, loaded);
+				}
+			});
+		}
 		const loaded = await untilAborted(signal, () => record.bodyPromise!);
 		if (loaded && record.sizes.responseBody === undefined) record.sizes.responseBody = loaded.bytes;
 		return loaded;
+	}
+
+	#retainBody(record: StoredRequest, loaded: NetworkResponseBody): void {
+		record.bodyWeight = loaded.bytes + Math.min(loaded.bytes, RESPONSE_BODY_LIMIT_BYTES);
+		this.#retainedBodies.add(record);
+		this.#retainedBodyBytes += record.bodyWeight;
+		for (const oldest of this.#retainedBodies) {
+			if (this.#retainedBodyBytes <= RETAINED_BODY_BUDGET_BYTES || oldest === record) break;
+			// Dropping the response releases Puppeteer's cached raw body along with the capped copy.
+			this.#retainedBodies.delete(oldest);
+			this.#retainedBodyBytes -= oldest.bodyWeight ?? 0;
+			oldest.bodyWeight = undefined;
+			oldest.bodyPromise = undefined;
+			oldest.response = undefined;
+		}
 	}
 }
 
