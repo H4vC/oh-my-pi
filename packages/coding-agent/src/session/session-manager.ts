@@ -583,6 +583,15 @@ class SessionEntryIndex {
 		this.#branchCache = undefined;
 	}
 
+	/**
+	 * Stop extending the issued branch view in place: the next insert starts a
+	 * fresh memo. For inserts whose leaf move is undone right after, which must
+	 * not grow a view held by callers.
+	 */
+	detachBranchView(): void {
+		this.#branchCache = undefined;
+	}
+
 	childrenOf(parentId: string): SessionEntry[] {
 		return [...(this.#children.get(parentId) ?? [])];
 	}
@@ -3292,6 +3301,9 @@ export class SessionManager {
 			timestamp: nowIso(),
 			message,
 		};
+		// The leaf is restored below, so the entry never joins the active branch;
+		// keep it out of any branch view already handed out.
+		this.#index.detachBranchView();
 		this.#recordEntry(entry);
 		this.#index.setLeaf(activeLeafId);
 		return entry.id;
