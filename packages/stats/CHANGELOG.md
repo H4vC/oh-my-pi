@@ -7,6 +7,11 @@
 - Fixed Ultrafast turns not counting toward the Premium Reqs stat: each message now records the service tier its provider reported serving, and the backfill counts it without needing discovery metadata ([#14471](https://github.com/can1357/oh-my-pi/pull/14471) by [@eggpeat](https://github.com/eggpeat)).
 - Fixed the stats dashboard menu button showing on desktop, where clicking it dimmed the page without opening navigation ([#14406](https://github.com/can1357/oh-my-pi/pull/14406) by [@lin-snow](https://github.com/lin-snow)).
 
+### Changed
+
+- Stopped dashboard background ingest a minute after the last page closes ([#14723](https://github.com/can1357/oh-my-pi/pull/14723) by [@H4vC](https://github.com/H4vC))
+- Sped up session syncs, stats database opening, package import and the `/usage`, models and timeseries endpoints ([#14723](https://github.com/can1357/oh-my-pi/pull/14723) by [@H4vC](https://github.com/H4vC))
+
 ## [18.6.0] - 2026-10-03
 
 ### Fixed
