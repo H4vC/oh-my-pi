@@ -14,6 +14,8 @@
 
 - MiniMax Token Plan (`minimax-code`, `minimax-code-cn`) now uses MiniMax's recommended Anthropic-compatible API, and `/login` checks keys against the same endpoint ([#13696](https://github.com/can1357/oh-my-pi/pull/13696) by [@eggpeat](https://github.com/eggpeat))
 - Google Antigravity now lists Claude Opus 5.5 and Sonnet 5.5 once each, with selectable low, medium, and high thinking levels ([#14195](https://github.com/can1357/oh-my-pi/pull/14195) by [@eggpeat](https://github.com/eggpeat)).
+- Sped up model cache reads from `models.db` (~6× faster for large rows) ([#14676](https://github.com/can1357/oh-my-pi/pull/14676) by [@H4vC](https://github.com/H4vC))
+- Sped up repeated catalog-wide model builds (~88→38 ms) ([#14676](https://github.com/can1357/oh-my-pi/pull/14676) by [@H4vC](https://github.com/H4vC))
 
 ### Fixed
 
