@@ -67,6 +67,7 @@ import {
 	setProjectDir,
 } from "@oh-my-pi/pi-utils";
 import chalk from "@oh-my-pi/pi-utils/chalk";
+import { pickTableChart } from "../auto-graph/planner";
 import { restartArgv } from "../cli/flag-tables";
 import type { CollabGuestLink } from "../collab/guest";
 import { CollabController } from "../collab/controller";
@@ -219,6 +220,8 @@ import {
 	VibeSessionRegistry,
 } from "../vibe/runtime";
 import { AssistantMessageComponent } from "@oh-my-pi/pi-tui/chat/assistant-message";
+import { setSvgFigureRendering } from "@oh-my-pi/pi-tui/chat/svg-figure";
+import { setTableCharts } from "@oh-my-pi/pi-tui/chat/table-chart";
 import { setTranscriptActionHandler } from "@oh-my-pi/pi-tui/chat/transcript-actions";
 import { StatusNotice } from "@oh-my-pi/pi-tui/chrome/status-notice";
 import { ReadToolGroupComponent } from "@oh-my-pi/pi-tui/chat/read-tool-group";
@@ -362,8 +365,10 @@ import {
 	cfgTuiHyperlinks,
 	cfgTuiImeSafeCursor,
 	cfgTuiMaxInlineImages,
+	cfgTuiAutoGraph,
 	cfgTuiMouse,
 	cfgTuiRenderMermaid,
+	cfgTuiRenderSvg,
 	cfgTuiResizeScrollback,
 	cfgTuiTextSizing,
 	cfgTuiTight,
@@ -427,6 +432,8 @@ const cfgLiveUiSettings = combine({
 	"display.showTokenUsage": cfgDisplayShowTokenUsage,
 	"display.showTurnTime": cfgDisplayShowTurnTime,
 	"tui.renderMermaid": cfgTuiRenderMermaid,
+	"tui.renderSvg": cfgTuiRenderSvg,
+	"tui.autoGraph": cfgTuiAutoGraph,
 	"tui.textSizing": cfgTuiTextSizing,
 	"tui.tight": cfgTuiTight,
 	"tui.hyperlinks": cfgTuiHyperlinks,
@@ -1556,6 +1563,9 @@ export class InteractiveMode implements InteractiveModeContext {
 	get assistantImagesVisible(): boolean {
 		return cfgTerminalShowImages.get(this.settings);
 	}
+	get tableChartsVisible(): boolean {
+		return this.#focusController.target === undefined;
+	}
 	resolveAssistantMessageLinks(texts: readonly string[]): Promise<ReadonlyMap<string, string>> {
 		return resolveMarkdownLinkTargets(texts, this.#linkResolveContext());
 	}
@@ -1763,6 +1773,8 @@ export class InteractiveMode implements InteractiveModeContext {
 
 		setTuiTight(cfgTuiTight.get(settings));
 		setMarkdownMermaidRendering(cfgTuiRenderMermaid.get(settings));
+		setSvgFigureRendering(cfgTuiRenderSvg.get(settings));
+		this.#applyAutoGraphSetting();
 		this.#applyTextSizingSetting();
 		// Keep generic pi-tui renderers aligned with the coding-agent setting.
 		applyHyperlinkSetting();
@@ -3394,6 +3406,15 @@ export class InteractiveMode implements InteractiveModeContext {
 		setTerminalTextSizing(cfgTuiTextSizing.get(this.settings) && TERMINAL.supportsTextSizing);
 	}
 
+	/** Charts under assistant tables per `tui.autoGraph`; `smart` picks multi-series charts through the session's judge. */
+	#applyAutoGraphSetting(): void {
+		const mode = cfgTuiAutoGraph.get(this.settings);
+		setTableCharts(
+			mode,
+			mode === "smart" ? request => pickTableChart(request, this.session.tableChartJudge()) : undefined,
+		);
+	}
+
 	/**
 	 * Apply live UI side effects for settings changed through any path (`/settings`,
 	 * `cfg://`, `settings.set()`, on-disk reload). One coalesced {@link cfgLiveUiSettings}
@@ -3503,6 +3524,14 @@ export class InteractiveMode implements InteractiveModeContext {
 		}
 		if (any("tui.renderMermaid")) {
 			setMarkdownMermaidRendering(cfgTuiRenderMermaid.get(this.settings));
+			rebuildChat = true;
+		}
+		if (any("tui.renderSvg")) {
+			setSvgFigureRendering(cfgTuiRenderSvg.get(this.settings));
+			rebuildChat = true;
+		}
+		if (any("tui.autoGraph")) {
+			this.#applyAutoGraphSetting();
 			rebuildChat = true;
 		}
 		if (any("tui.textSizing")) {
@@ -4697,8 +4726,10 @@ export class InteractiveMode implements InteractiveModeContext {
 	async #clearTransientModeState(options?: {
 		preserveVibe?: boolean;
 		vibeScopeAlreadySuspended?: boolean;
+		restorePlanModel?: boolean;
 	}): Promise<void> {
 		if (this.planModeEnabled || this.planModePaused) {
+			const previousModel = this.#planModePreviousModelState;
 			this.session.setPlanModeState(undefined);
 			try {
 				const previousPresentation = this.#planModePreviousToolPresentation;
@@ -4719,6 +4750,9 @@ export class InteractiveMode implements InteractiveModeContext {
 				this.#pendingPlanModelSwitch = false;
 				this.#planModeHasEntered = false;
 				this.#updatePlanModeStatus();
+			}
+			if (options?.restorePlanModel && previousModel) {
+				await this.#restorePlanPreviousModel(previousModel);
 			}
 		}
 
@@ -4778,9 +4812,13 @@ export class InteractiveMode implements InteractiveModeContext {
 		// flags and settings, and that set — not a historical one — is what exiting
 		// vibe must restore.
 		const vibeToolsetLostToTeardown = this.vibeModeEnabled && !preserveVibe;
+		// A session that records no model (a `/new` boundary) keeps the live model,
+		// which during plan mode is the transient plan-role model; hand it the
+		// pre-plan model instead. A recorded model was already restored by switchSession.
 		await this.#clearTransientModeState({
 			preserveVibe,
 			vibeScopeAlreadySuspended,
+			restorePlanModel: Object.keys(sessionContext.models).length === 0,
 		});
 		await VibeSessionRegistry.global().rehydrate(vibeSession);
 		const goalEnabled = cfgGoalEnabled.get(this.session.settings);
