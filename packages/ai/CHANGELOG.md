@@ -12,6 +12,10 @@
 - Fixed Vertex AI on Windows ignoring credentials from `gcloud auth application-default login`, which gcloud writes to `%APPDATA%\gcloud\application_default_credentials.json` rather than `~/.config/gcloud` ([#14549](https://github.com/can1357/oh-my-pi/pull/14549) by [@jorgoose](https://github.com/jorgoose))
 - Fixed `auth.accountPolicies` and `/session pin` being unable to select a Cursor account by email: Cursor logins now store the account email, and accounts stored earlier gain it at their next token refresh ([#14511](https://github.com/can1357/oh-my-pi/pull/14511) by [@will-bogusz](https://github.com/will-bogusz))
 
+### Changed
+
+- Sped up in-band tool-call dialect parsing for long tool calls ([#14671](https://github.com/can1357/oh-my-pi/pull/14671) by [@H4vC](https://github.com/H4vC))
+
 ## [18.6.3] - 2026-10-06
 
 ### Added
