@@ -1428,8 +1428,9 @@ export class SessionAdvisors {
 				transformProviderContext: this.#transformProviderContext,
 				intentTracing: false,
 				transformAssistantMessage: message => {
-					quarantinedAdvisorOutput = quarantineAdvisorUnsafeOutput(
-						message,
+					// Thunk is resolved synchronously inside the call, so it sees the
+					// same input/messages an eager argument would.
+					quarantinedAdvisorOutput = quarantineAdvisorUnsafeOutput(message, () =>
 						buildAdvisorQuarantineSourceText(currentAdvisorInput, advisorAgent.state.messages),
 					);
 				},
