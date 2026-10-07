@@ -162,6 +162,21 @@ describe("StatusLineComponent context breakdown", () => {
 		expect(usageCalls()).toBe(2);
 	});
 
+	it("re-queries when streaming tool-call arguments grow in place", () => {
+		const args: Record<string, unknown> = { path: "a.ts" };
+		const tail = { role: "assistant", content: [{ type: "toolCall", name: "write", arguments: args }] };
+		const { session, usageCalls } = makeSession({ messages: [userMessage("hi"), tail] });
+		const comp = statusLines.track(new StatusLineComponent(session, statusLineHost));
+
+		comp.getCachedContextBreakdown();
+		args.content = "streamed file body".repeat(8);
+		comp.getCachedContextBreakdown();
+		args.content = `${args.content as string} and more`;
+		comp.getCachedContextBreakdown();
+
+		expect(usageCalls()).toBe(3);
+	});
+
 	it("re-queries when the message array is replaced (branch switch / rebuild)", () => {
 		const { session, usageCalls } = makeSession({
 			messages: [userMessage("a"), userMessage("b")],

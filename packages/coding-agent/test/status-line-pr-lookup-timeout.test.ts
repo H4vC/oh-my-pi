@@ -195,3 +195,53 @@ describe("StatusLineComponent PR lookup timeout guard", () => {
 		}
 	});
 });
+
+/** Drain the lookup's await → setCachedPr → finally chain (the gh mock resolves immediately). */
+async function flushMicrotasks(): Promise<void> {
+	for (let i = 0; i < 5; i++) await Promise.resolve();
+}
+
+// Regression: every generic invalidate() (fired on nearly every agent event)
+// expired the settled PR, so the next paint spawned `gh pr view` plus a GitHub
+// API call per event. Activity may still surface an opened/merged PR, but only
+// once a minute; HEAD moves and repo switches still re-check immediately.
+describe("StatusLineComponent PR refresh floor", () => {
+	it("re-checks the PR after generic activity at most once per floor; git invalidation bypasses it", async () => {
+		let now = 5_000_000;
+		vi.spyOn(Date, "now").mockImplementation(() => now);
+		const run = vi.spyOn(github, "run").mockResolvedValue({
+			exitCode: 0,
+			stdout: JSON.stringify({ number: 7, url: "https://github.com/x/y/pull/7" }),
+			stderr: "",
+		});
+		const component = new StatusLineComponent(makeSession(), statusLineHost);
+		component.updateSettings(gitSegmentSettings);
+		try {
+			component.getTopBorder(80);
+			await flushMicrotasks();
+			expect(run).toHaveBeenCalledTimes(1);
+			expect(component.getTopBorder(80).content).toContain("#7");
+
+			for (let i = 0; i < 5; i++) {
+				now += 1_000;
+				component.invalidate();
+				component.getTopBorder(80);
+				await flushMicrotasks();
+			}
+			expect(run).toHaveBeenCalledTimes(1);
+
+			// Past the floor the next frame re-checks, with no further invalidate().
+			now += 60_000;
+			component.getTopBorder(80);
+			await flushMicrotasks();
+			expect(run).toHaveBeenCalledTimes(2);
+
+			component.invalidateGitCaches();
+			component.getTopBorder(80);
+			await flushMicrotasks();
+			expect(run).toHaveBeenCalledTimes(3);
+		} finally {
+			component.dispose();
+		}
+	});
+});

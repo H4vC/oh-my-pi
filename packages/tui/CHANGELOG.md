@@ -5,6 +5,7 @@
 ### Changed
 
 - Model mentions (`^`), `/switch` completions, and model picker search stay responsive on every keystroke with large model catalogs ([#14595](https://github.com/can1357/oh-my-pi/pull/14595) by [@H4vC](https://github.com/H4vC))
+- Reduced status-line work: the `pr` segment re-checks at most once per 60 s, 80 ms repaints happen only with the animated `pi` segment, and git refreshes follow cache expiry instead of a 1 s poll ([#14691](https://github.com/can1357/oh-my-pi/pull/14691) by [@H4vC](https://github.com/H4vC))
 
 ### Fixed
 

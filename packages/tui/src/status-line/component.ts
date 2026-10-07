@@ -51,8 +51,10 @@ import type {
 	ComposerFactsSource,
 	EffectiveStatusLineSettings,
 	SegmentView,
+	SeparatorDef,
 	StatusLineSegmentId,
 	StatusLineSegmentOptions,
+	StatusLineSeparatorStyle,
 	StatusLineSettings,
 } from "./types";
 
@@ -148,6 +150,15 @@ const GIT_STATUS_TTL_MS = 10_000;
 const JJ_REFRESH_TTL_MS = 5000;
 const JJ_COMMAND_TIMEOUT_MS = 5_000;
 const WATCHER_FAILURE_POLL_TTL_MS = 5000;
+/**
+ * Floor between PR re-lookups triggered by generic activity
+ * ({@link StatusLineComponent.invalidate}). A tool may open, close, or merge a
+ * PR without moving HEAD, so activity still refreshes the `pr` segment — but
+ * each refresh spawns `gh pr view` plus a GitHub API round-trip, and
+ * invalidate() fires on nearly every agent event. Branch/repo changes bypass
+ * the floor via {@link StatusLineComponent.invalidateGitCaches}.
+ */
+const PR_ACTIVITY_REFRESH_MS = 60_000;
 /** Brand-color fade duration across working-state edges (rust omp's `BRAND_FADE`). */
 const BRAND_FADE_MS = 450;
 /** Repaint cadence while the brand fade is in flight (rust omp's `FADE_FRAME`). */
@@ -215,11 +226,46 @@ function reportMatchesExactIdentity(report: UsageReport, identity: OAuthAccountI
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
+ * Serialized length of tool-call arguments, memoized per arguments object.
+ * Streaming providers may grow the same object in place, so each entry keeps
+ * a cheap shape check (key count plus summed top-level string lengths) and is
+ * recomputed when it differs, without re-serializing the whole (possibly
+ * multi-KB edit/write) payload on every status-line rebuild.
+ */
+const toolArgumentsLengthCache = new WeakMap<object, { check: number; length: number }>();
+
+function toolArgumentsShapeCheck(args: object): number {
+	let check = 0;
+	for (const key in args) {
+		const value = (args as Record<string, unknown>)[key];
+		check += 1 + (typeof value === "string" ? value.length : 0);
+	}
+	return check;
+}
+
+function toolArgumentsLength(args: unknown): number {
+	if (typeof args === "string") return args.length;
+	if (args === null || typeof args !== "object") return String(args).length;
+	const check = toolArgumentsShapeCheck(args);
+	const cached = toolArgumentsLengthCache.get(args);
+	if (cached !== undefined && cached.check === check) return cached.length;
+	let length: number;
+	try {
+		length =
+			JSON.stringify(args, (_key, value) => (typeof value === "bigint" ? value.toString() : value))?.length ?? 0;
+	} catch {
+		length = String(args).length;
+	}
+	toolArgumentsLengthCache.set(args, { check, length });
+	return length;
+}
+
+/**
  * Cheap structural fingerprint of a message's tokenizable content. O(blocks) —
- * only reads string `.length` and primitives, never copies or serializes.
- * Detects in-place growth of the streaming tail (and other in-place mutations)
- * so the cached `getContextUsage()` result is recomputed when — and only when —
- * the numbers it depends on change.
+ * only reads string `.length`, primitives, and memoized tool-argument sizes;
+ * never copies. Detects growth of the streaming tail (in-place text appends,
+ * freshly parsed tool arguments) so the cached `getContextUsage()` result is
+ * recomputed when — and only when — the numbers it depends on change.
  */
 function messageFingerprint(msg: AgentMessage): string {
 	const role = (msg as { role?: string }).role ?? "";
@@ -301,15 +347,7 @@ function messageFingerprint(msg: AgentMessage): string {
 					redactedLen += b.data.length;
 				} else if (b.type === "toolCall") {
 					if (typeof b.name === "string") textLen += b.name.length;
-					if (b.arguments !== undefined) {
-						try {
-							textLen += JSON.stringify(b.arguments, (_key, value) =>
-								typeof value === "bigint" ? value.toString() : value,
-							).length;
-						} catch {
-							textLen += String(b.arguments).length;
-						}
-					}
+					if (b.arguments !== undefined) textLen += toolArgumentsLength(b.arguments);
 				}
 			}
 		}
@@ -419,6 +457,25 @@ interface CachedStatusLine {
 	inputRevision: number;
 	previewTitle: string | undefined;
 	externalInputs: StatusLineExternalInputs;
+}
+
+/** Dot separator of the plain (borderless) layouts; carries no caps. */
+const PLAIN_SEPARATOR: SeparatorDef = { left: "·", right: "·" };
+
+/** A separator style's glyphs and cell widths: theme-pure, so measured once per theme. */
+interface SeparatorMetrics {
+	themeRef: unknown;
+	themeEpoch: number;
+	style: StatusLineSeparatorStyle;
+	def: SeparatorDef;
+	leftSepWidth: number;
+	rightSepWidth: number;
+	/** Left group's closing cap (`endCaps.right`); 0 without caps. */
+	leftCapWidth: number;
+	/** Right group's opening cap (`endCaps.left`); 0 without caps. */
+	rightCapWidth: number;
+	/** Band layout's flush-left soft cap; 0 without caps. */
+	bandCapWidth: number;
 }
 
 interface ActiveRepoCache {
@@ -580,10 +637,21 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 	};
 	#statusLineInputRevision = 0;
 	#statusLineClockTick = 0;
+	/**
+	 * Earliest wall-clock ms at which a TTL-throttled VCS cache the render path
+	 * served goes stale (git/jj status, watcher-less branch poll, repository
+	 * re-probe, PR activity refresh); `Infinity` when none can. The first frame
+	 * past it expires the render memo so the getters refetch — instead of a
+	 * fixed polling tick that rebuilt the whole bar every second.
+	 */
+	#vcsStaleAt = Number.POSITIVE_INFINITY;
 	/** Reused probe buffer for {@link #readStatusLineExternalInputs}; handed to the new cache entry on a miss. */
 	#externalInputsProbe = new StatusLineExternalInputs();
 	/** `adjustHsv` result for the gauge's threshold tint; pure in its source hex. */
 	#dimmedAccentMemo: { sourceHex: string; hex: string } | undefined;
+	/** Separator widths for the plain and the styled (box/band) layouts; see {@link #separatorMetrics}. */
+	#plainSeparatorMetrics: SeparatorMetrics | undefined;
+	#styledSeparatorMetrics: SeparatorMetrics | undefined;
 	/** Gauge boundary markers; a pure function of the session's compaction settings, model, and window. */
 	#compactionBoundariesMemo:
 		| {
@@ -703,10 +771,15 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 	// than poison the fresh cache or advance its throttle.
 	#jjCacheGeneration = 0;
 
-	// PR lookup caching (invalidated on branch/repo context changes)
+	// PR lookup caching (invalidated on branch/repo context changes; generic
+	// activity re-checks at most every PR_ACTIVITY_REFRESH_MS)
 	#cachedPr: { number: number; url: string } | null | undefined = undefined;
 	#cachedPrContext: PrCacheContext | undefined = undefined;
 	#prLookupInFlight = false;
+	/** When the last PR lookup settled; anchors {@link PR_ACTIVITY_REFRESH_MS}. */
+	#prSettledAt = 0;
+	/** Generic activity ({@link invalidate}) since the last PR lookup settled. */
+	#prActivityPending = false;
 	#defaultBranch?: string;
 	#defaultBranchCwd: string | undefined = undefined;
 	#lastTokensPerSecond: number | null = null;
@@ -807,25 +880,44 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 	#resolveRepository(cache: ActiveRepoCache): VcsRepo | null {
 		if (cache.repository) return cache.repository;
 		const now = Date.now();
-		if (now - cache.repositoryCheckedAt < WATCHER_FAILURE_POLL_TTL_MS) return null;
-		cache.repository = vcs.repo(cache.effectiveGitCwd);
-		cache.repositoryCheckedAt = now;
+		if (now - cache.repositoryCheckedAt >= WATCHER_FAILURE_POLL_TTL_MS) {
+			cache.repository = vcs.repo(cache.effectiveGitCwd);
+			cache.repositoryCheckedAt = now;
+		}
+		// Still absent: re-probe on the bounded interval so a later `git init` shows up.
+		if (!cache.repository) this.#noteVcsStaleAt(cache.repositoryCheckedAt + WATCHER_FAILURE_POLL_TTL_MS);
 		return cache.repository;
 	}
 
 	#resolveDisplayRepository(cache: ActiveRepoCache): VcsRepo | null {
 		if (cache.displayRepository) return cache.displayRepository;
 		const now = Date.now();
-		if (now - cache.displayRepositoryCheckedAt < WATCHER_FAILURE_POLL_TTL_MS) return null;
-		let display: VcsRepo | null;
-		try {
-			display = vcs.repoForDisplay(cache.effectiveGitCwd);
-		} catch {
-			display = null;
+		if (now - cache.displayRepositoryCheckedAt >= WATCHER_FAILURE_POLL_TTL_MS) {
+			let display: VcsRepo | null;
+			try {
+				display = vcs.repoForDisplay(cache.effectiveGitCwd);
+			} catch {
+				display = null;
+			}
+			cache.displayRepository = display ?? cache.repository;
+			cache.displayRepositoryCheckedAt = now;
 		}
-		cache.displayRepository = display ?? cache.repository;
-		cache.displayRepositoryCheckedAt = now;
+		if (!cache.displayRepository) {
+			this.#noteVcsStaleAt(cache.displayRepositoryCheckedAt + WATCHER_FAILURE_POLL_TTL_MS);
+		}
 		return cache.displayRepository;
+	}
+
+	/** Lower {@link #vcsStaleAt} to `at` when a served VCS cache expires sooner. */
+	#noteVcsStaleAt(at: number): void {
+		if (at < this.#vcsStaleAt) this.#vcsStaleAt = at;
+	}
+
+	/** Expire the render memo once a served VCS cache has gone stale, so this frame refetches. */
+	#expireStaleVcsRender(nowMs: number): void {
+		if (nowMs < this.#vcsStaleAt) return;
+		this.#vcsStaleAt = Number.POSITIVE_INFINITY;
+		this.#invalidateStatusLineRenderCache();
 	}
 
 	/**
@@ -916,13 +1008,16 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 	 * badge represents that same agent. Bash and eval jobs always count.
 	 */
 	runningBackgroundJobCount(): number {
-		return (
-			this.session
-				.getAsyncJobSnapshot()
-				?.running.filter(
-					job => job.type !== "task" || job.agentId === undefined || !this.#runningSubagentIds.has(job.agentId),
-				).length ?? 0
-		);
+		const include = (job: { type: string; agentId?: string }): boolean =>
+			job.type !== "task" || job.agentId === undefined || !this.#runningSubagentIds.has(job.agentId);
+		if (this.session.countRunningAsyncJobs) return this.session.countRunningAsyncJobs(include);
+		const running = this.session.getAsyncJobSnapshot()?.running;
+		if (!running) return 0;
+		let count = 0;
+		for (const job of running) {
+			if (include(job)) count++;
+		}
+		return count;
 	}
 
 	/**
@@ -1351,9 +1446,10 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 		// event, re-introducing the render-path spawn churn the async resolve
 		// was designed to avoid. Explicit Git/repository invalidation (watcher
 		// HEAD-move, cwd/repo switch) goes through {@link invalidateGitCaches}.
-		// A tool may open, close, or merge a PR without moving HEAD. Expire the
-		// settled PR context on ordinary activity while leaving HEAD work intact.
-		this.#cachedPrContext = undefined;
+		// A tool may open, close, or merge a PR without moving HEAD, so ordinary
+		// activity marks the settled PR stale; #lookupPr re-checks it once
+		// PR_ACTIVITY_REFRESH_MS has passed since the last lookup settled.
+		this.#prActivityPending = true;
 	}
 	#invalidateSessionCaches(): void {
 		this.#clearUsageStartTimer();
@@ -1441,7 +1537,9 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 			taggedRepository[GIT_VIEW] = gitRepository;
 		}
 		if (!gitRepository) {
-			if (this.#jjBranchActive || Date.now() - this.#jjBranchLastFetch < JJ_REFRESH_TTL_MS) {
+			if (this.#jjBranchActive) return this.#cachedJjBranch;
+			if (Date.now() - this.#jjBranchLastFetch < JJ_REFRESH_TTL_MS) {
+				this.#noteVcsStaleAt(this.#jjBranchLastFetch + JJ_REFRESH_TTL_MS);
 				return this.#cachedJjBranch;
 			}
 			const request: JjResolveRequest = {
@@ -1468,6 +1566,7 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 					if (this.#jjCacheGeneration === generation) this.#jjBranchLastFetch = Date.now();
 				}
 				if (this.#jjCacheGeneration !== generation || this.#disposed) return;
+				this.#noteVcsStaleAt(this.#jjBranchLastFetch + JJ_REFRESH_TTL_MS);
 				const changed = next !== this.#cachedJjBranch;
 				this.#cachedJjBranch = next;
 				if (changed) {
@@ -1481,6 +1580,9 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 			this.#gitWatcherUnavailable &&
 			(this.#branchLastFetch === undefined || Date.now() - this.#branchLastFetch >= WATCHER_FAILURE_POLL_TTL_MS);
 		if (this.#cachedBranch !== undefined && this.#cachedBranchCwd === gitCwd && !fallbackCacheExpired) {
+			if (this.#gitWatcherUnavailable && this.#branchLastFetch !== undefined) {
+				this.#noteVcsStaleAt(this.#branchLastFetch + WATCHER_FAILURE_POLL_TTL_MS);
+			}
 			return this.#cachedBranch;
 		}
 
@@ -1533,6 +1635,9 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 				this.#cachedBranchRepoId = repoId;
 				this.#cachedBranch = next;
 				this.#branchLastFetch = Date.now();
+				if (this.#gitWatcherUnavailable) {
+					this.#noteVcsStaleAt(this.#branchLastFetch + WATCHER_FAILURE_POLL_TTL_MS);
+				}
 				if (prev !== next) {
 					this.#invalidateStatusLineRenderCache();
 					this.#onBranchChange?.();
@@ -1553,6 +1658,7 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 		this.#cachedBranchCwd = gitCwd;
 		this.#cachedBranchRepoId = gitHeadPath;
 		this.#branchLastFetch = Date.now();
+		if (this.#gitWatcherUnavailable) this.#noteVcsStaleAt(this.#branchLastFetch + WATCHER_FAILURE_POLL_TTL_MS);
 		if (!head) {
 			this.#cachedBranch = null;
 			return null;
@@ -1594,7 +1700,9 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 		const repository = this.#resolveRepository(activeRepoCache);
 		if (!repository) return null;
 		if (repository.kind() === "jj") {
-			if (this.#jjStatusActive || Date.now() - this.#jjStatusLastFetch < JJ_REFRESH_TTL_MS) {
+			if (this.#jjStatusActive) return this.#cachedJjStatus;
+			if (Date.now() - this.#jjStatusLastFetch < JJ_REFRESH_TTL_MS) {
+				this.#noteVcsStaleAt(this.#jjStatusLastFetch + JJ_REFRESH_TTL_MS);
 				return this.#cachedJjStatus;
 			}
 			const request: JjResolveRequest = {
@@ -1616,6 +1724,7 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 					if (this.#jjCacheGeneration === generation) this.#jjStatusLastFetch = Date.now();
 				}
 				if (this.#jjCacheGeneration !== generation || this.#disposed) return;
+				this.#noteVcsStaleAt(this.#jjStatusLastFetch + JJ_REFRESH_TTL_MS);
 				const prev = this.#cachedJjStatus;
 				this.#cachedJjStatus = next;
 				if (JSON.stringify(prev) !== JSON.stringify(next)) {
@@ -1630,6 +1739,7 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 			return this.#cachedGitStatusCwd === gitCwd ? this.#cachedGitStatus : null;
 		}
 		if (this.#cachedGitStatusCwd === gitCwd && Date.now() - this.#gitStatusLastFetch < GIT_STATUS_TTL_MS) {
+			this.#noteVcsStaleAt(this.#gitStatusLastFetch + GIT_STATUS_TTL_MS);
 			return this.#cachedGitStatus;
 		}
 
@@ -1649,6 +1759,8 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 					this.#cachedGitStatusCwd = gitCwd;
 					this.#gitStatusLastFetch = this.#gitStatusGeneration === generation ? Date.now() : 0;
 					this.#gitStatusInFlightCwd = undefined;
+					// A zeroed stamp (superseded generation) is already due: refetch next frame.
+					this.#noteVcsStaleAt(this.#gitStatusLastFetch + GIT_STATUS_TTL_MS);
 					if (!this.#disposed && JSON.stringify(prev) !== JSON.stringify(nextStatus)) {
 						this.#invalidateStatusLineRenderCache();
 						this.#onBranchChange?.();
@@ -1688,6 +1800,18 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 		if (this.#resolveRepository(activeRepoCache)?.kind() !== "git") return null;
 		const branch = this.#getBranchLabel(activeRepoCache, this.#resolveRepository(activeRepoCache));
 		const currentContext = branch ? createPrCacheContext(branch, this.#cachedBranchRepoId ?? null) : null;
+
+		// Generic activity (invalidate) may have opened or merged a PR: expire the
+		// settled lookup, but only once the floor since it settled has passed.
+		if (this.#prActivityPending) {
+			const refreshAt = this.#prSettledAt + PR_ACTIVITY_REFRESH_MS;
+			if (Date.now() >= refreshAt) {
+				this.#prActivityPending = false;
+				this.#cachedPrContext = undefined;
+			} else {
+				this.#noteVcsStaleAt(refreshAt);
+			}
+		}
 
 		if (canReuseCachedPr(this.#cachedPr, this.#cachedPrContext, currentContext)) {
 			return this.#cachedPr ?? null;
@@ -1751,6 +1875,7 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 				setCachedPr(null);
 			} finally {
 				this.#prLookupInFlight = false;
+				this.#prSettledAt = Date.now();
 				if (!this.#disposed) {
 					this.#invalidateStatusLineRenderCache();
 					this.#onBranchChange?.();
@@ -2637,19 +2762,30 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 
 	/**
 	 * Smallest wall-clock unit that can change a visible configured segment.
-	 * A zero tick keeps truly static bars cached indefinitely; active animation,
-	 * clocks, countdowns, and VCS fallback polling advance only at their own
-	 * display/probe cadence.
+	 * A zero tick keeps truly static bars cached indefinitely; animation, clocks,
+	 * and countdowns advance only at their own display cadence. VCS refreshes are
+	 * deadline-driven ({@link #expireStaleVcsRender}), not ticked.
 	 */
 	#statusLineClock(nowMs: number, effectiveSettings: EffectiveStatusLineSettings): number {
 		const leftSegments = effectiveSettings.leftSegments;
 		const rightSegments = effectiveSettings.rightSegments;
-		const meter = this.#meter();
-		if (meter.activeStartedAt !== null || this.#brandFade !== null) {
+		const turnActive = this.#meter().activeStartedAt !== null;
+		// The `pi` brand is the only spinner-rate animation: its braille spinner
+		// while a turn runs and its color fade across turn edges. While
+		// focus-proxied it shows the viewed agent's id instead.
+		if (
+			(turnActive || this.#brandFade !== null) &&
+			this.#focusedAgentId === undefined &&
+			(leftSegments.includes("pi") || rightSegments.includes("pi"))
+		) {
 			return Math.floor(nowMs / SPINNER_ADVANCE_MS);
 		}
 		const includesTime = leftSegments.includes("time") || rightSegments.includes("time");
 		if (
+			// A running turn also moves readouts that have no invalidation path of
+			// their own (background-job badge, live and vibe-worker tok/s): refresh
+			// them once a second instead of on the spinner tick.
+			turnActive ||
 			leftSegments.includes("time_spent") ||
 			rightSegments.includes("time_spent") ||
 			(this.#loopModeStatus?.limit?.kind === "duration" &&
@@ -2661,12 +2797,6 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 		if (includesTime) {
 			return Math.floor(nowMs / 60_000);
 		}
-		if (this.#gitEnabled() && (hasGitBackedSegment(leftSegments) || hasGitBackedSegment(rightSegments))) {
-			return Math.floor(nowMs / 1_000);
-		}
-		if (this.#gitEnabled() && (hasPathSegment(leftSegments) || hasPathSegment(rightSegments))) {
-			return Math.floor(nowMs / WATCHER_FAILURE_POLL_TTL_MS);
-		}
 		return 0;
 	}
 
@@ -2675,6 +2805,7 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 		const externalInputs = this.#externalInputsProbe;
 		this.#readStatusLineExternalInputs(externalInputs);
 		const nowMs = Date.now();
+		this.#expireStaleVcsRender(nowMs);
 		const clockTick = this.#statusLineClock(nowMs, effectiveSettings);
 		if (clockTick !== this.#statusLineClockTick) {
 			this.#statusLineClockTick = clockTick;
@@ -2708,6 +2839,33 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 		};
 		this.#statusLineRenderCache[layout] = result;
 		return result;
+	}
+
+	/**
+	 * Separator glyphs and cell widths for the plain or styled layouts, measured
+	 * once per theme (and style) instead of on every rebuild.
+	 */
+	#separatorMetrics(plain: boolean, style: StatusLineSeparatorStyle): SeparatorMetrics {
+		const themeEpoch = getThemeEpoch();
+		const memo = plain ? this.#plainSeparatorMetrics : this.#styledSeparatorMetrics;
+		if (memo && memo.themeRef === theme && memo.themeEpoch === themeEpoch && (plain || memo.style === style)) {
+			return memo;
+		}
+		const def = plain ? PLAIN_SEPARATOR : getSeparator(style, theme);
+		const metrics: SeparatorMetrics = {
+			themeRef: theme,
+			themeEpoch,
+			style,
+			def,
+			leftSepWidth: visibleWidth(def.left),
+			rightSepWidth: visibleWidth(def.right),
+			leftCapWidth: def.endCaps ? visibleWidth(def.endCaps.right) : 0,
+			rightCapWidth: def.endCaps ? visibleWidth(def.endCaps.left) : 0,
+			bandCapWidth: def.endCaps ? visibleWidth(theme.sep.powerlineCapLeft) : 0,
+		};
+		if (plain) this.#plainSeparatorMetrics = metrics;
+		else this.#styledSeparatorMetrics = metrics;
+		return metrics;
 	}
 
 	/**
@@ -2746,9 +2904,8 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 			nowMs,
 			previewTitle,
 		);
-		const separatorDef = plain
-			? { left: "·", right: "·" }
-			: getSeparator(effectiveSettings.separator ?? "powerline-thin", theme);
+		const separators = this.#separatorMetrics(plain, effectiveSettings.separator ?? "powerline-thin");
+		const separatorDef = separators.def;
 
 		// `transparent` reuses the empty-string sentinel (`\x1b[49m`) so the bar
 		// inherits the terminal's default background, matching custom themes that
@@ -2819,17 +2976,18 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 		const leftWidths = left.map(part => visibleWidth(part));
 		const rightWidths = right.map(part => visibleWidth(part));
 
-		const leftSepWidth = visibleWidth(separatorDef.left);
-		const rightSepWidth = visibleWidth(separatorDef.right);
+		const leftSepWidth = separators.leftSepWidth;
+		const rightSepWidth = separators.rightSepWidth;
 		// Transparent mode drops powerline caps (they need a bg fill to bridge),
 		// so the width budget excludes them too.
-		const leftCapWidth = separatorDef.endCaps && !transparentBg ? visibleWidth(separatorDef.endCaps.right) : 0;
-		const rightCapWidth = separatorDef.endCaps && !transparentBg ? visibleWidth(separatorDef.endCaps.left) : 0;
+		const capsVisible = separatorDef.endCaps !== undefined && !transparentBg;
+		const leftCapWidth = capsVisible ? separators.leftCapWidth : 0;
+		const rightCapWidth = capsVisible ? separators.rightCapWidth : 0;
 		// The band layout opens flush against the terminal edge with a soft cap
 		// (rust omp's status band). Like the other caps it needs an opaque
 		// background to bridge, and only powerline separator styles carry caps.
-		const bandCap = layout === "band" && separatorDef.endCaps && !transparentBg ? theme.sep.powerlineCapLeft : "";
-		const bandCapWidth = visibleWidth(bandCap);
+		const bandCap = layout === "band" && capsVisible ? theme.sep.powerlineCapLeft : "";
+		const bandCapWidth = bandCap ? separators.bandCapWidth : 0;
 
 		const groupWidth = (widths: number[], capWidth: number, sepWidth: number): number => {
 			if (widths.length === 0) return 0;
@@ -3096,29 +3254,51 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 		}
 		const thresholdColor = getSessionAccentAnsi(dimmedAccent.hex) ?? usedColor;
 
+		// Emit runs, not cells: each stretch of plain rule between markers and
+		// labels is one `repeat`, and color escapes change only at run edges.
+		// Precedence per cell: percent label > threshold > speculation > window label.
+		const percentEnd = percentStart >= 0 ? percentStart + percentLabel.length : -1;
+		const windowEnd = windowStart >= 0 ? windowStart + windowLabel.length : -1;
 		let out = "\x1b[49m";
 		let activeColor = "";
-		for (let i = 0; i < gapWidth; i++) {
-			let color = i < usedCount ? usedColor : unusedColor;
-			let glyph = horizontal;
-			if (percentStart >= 0 && i >= percentStart && i < percentStart + percentLabel.length) {
+		let i = 0;
+		while (i < gapWidth) {
+			let color: string;
+			let text: string;
+			if (i >= percentStart && i < percentEnd) {
+				const end = Math.min(percentEnd, gapWidth);
 				color = percentOverflow ? overflowColor : usedColor;
-				glyph = percentLabel.charAt(i - percentStart);
+				text = percentLabel.slice(i - percentStart, end - percentStart);
+				i = end;
 			} else if (i === thresholdIdx) {
 				color = thresholdColor;
-				glyph = thresholdGlyph;
+				text = thresholdGlyph;
+				i++;
 			} else if (i === speculationIdx) {
 				color = speculationColor;
-				glyph = speculationGlyph;
-			} else if (windowStart >= 0 && i >= windowStart && i < windowStart + windowLabel.length) {
-				color = thresholdColor;
-				glyph = windowLabel.charAt(i - windowStart);
+				text = speculationGlyph;
+				i++;
+			} else {
+				const inWindow = i >= windowStart && i < windowEnd;
+				let end = Math.min(inWindow ? windowEnd : i < usedCount ? usedCount : gapWidth, gapWidth);
+				if (percentStart > i && percentStart < end) end = percentStart;
+				if (thresholdIdx > i && thresholdIdx < end) end = thresholdIdx;
+				if (speculationIdx > i && speculationIdx < end) end = speculationIdx;
+				if (!inWindow && windowStart > i && windowStart < end) end = windowStart;
+				if (inWindow) {
+					color = thresholdColor;
+					text = windowLabel.slice(i - windowStart, end - windowStart);
+				} else {
+					color = i < usedCount ? usedColor : unusedColor;
+					text = horizontal.repeat(end - i);
+				}
+				i = end;
 			}
 			if (color !== activeColor) {
 				out += color;
 				activeColor = color;
 			}
-			out += glyph;
+			out += text;
 		}
 		return `${out}\x1b[39m`;
 	}
@@ -3305,6 +3485,7 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 		const probe = this.#nativeInputsProbe;
 		this.#readStatusLineExternalInputs(probe);
 		const nowMs = Date.now();
+		this.#expireStaleVcsRender(nowMs);
 		const clockTick = this.#nativeClock(nowMs, effectiveSettings);
 		const memo = this.#nativeMemo;
 		if (
@@ -3491,7 +3672,8 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 	/**
 	 * Wall-clock granularity of the native bar. Spinners, turn timers and the
 	 * brand fade are terminal-clocked, so only wall-clock text (time, loop
-	 * countdowns) and VCS fallback polling advance it.
+	 * countdowns) advances it; VCS refreshes are deadline-driven
+	 * ({@link #expireStaleVcsRender}).
 	 */
 	#nativeClock(nowMs: number, effectiveSettings: EffectiveStatusLineSettings): number {
 		const segments = [...effectiveSettings.leftSegments, ...effectiveSettings.rightSegments];
@@ -3503,8 +3685,6 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 			return Math.floor(nowMs / 1_000);
 		}
 		if (includesTime) return Math.floor(nowMs / 60_000);
-		if (this.#gitEnabled() && hasGitBackedSegment(segments)) return Math.floor(nowMs / 1_000);
-		if (this.#gitEnabled() && hasPathSegment(segments)) return Math.floor(nowMs / WATCHER_FAILURE_POLL_TTL_MS);
 		return 0;
 	}
 
