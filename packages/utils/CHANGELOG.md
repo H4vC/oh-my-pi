@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Sped up `chalk` styling (~25× faster per `chalk.bold` call), `parseStreamingJson` (~40%) and logger record writes (~2×) ([#14665](https://github.com/can1357/oh-my-pi/pull/14665) by [@H4vC](https://github.com/H4vC))
+
 ## [18.6.3] - 2026-10-06
 
 ### Breaking Changes
