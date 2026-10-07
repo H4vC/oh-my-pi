@@ -24,8 +24,6 @@ import { create, toBinary } from "@oh-my-pi/pi-catalog/discovery/protobuf";
 import { $env, logger } from "@oh-my-pi/pi-utils";
 import { frameConnectMessage } from "../connect-frame";
 
-export { frameConnectMessage };
-
 const NOT_IMPLEMENTED_SUFFIX = "not implemented by this client";
 
 type ProtoUnknownField = { no: number; wireType: number; data: Uint8Array };

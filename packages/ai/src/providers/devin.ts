@@ -285,12 +285,14 @@ export const streamDevin: StreamFunction<"devin-agent"> = (
 
 			const reader = body.getReader();
 			const frameDecoder = new ConnectFrameDecoder({
-				maxPayloadBytes: MAX_CONNECT_FRAME_PAYLOAD,
-				oversize: len =>
-					new AIError.ProviderResponseError(
-						`Devin Connect frame length ${len} exceeds ${MAX_CONNECT_FRAME_PAYLOAD}-byte cap`,
-						{ provider: model.provider, kind: "envelope" },
-					),
+				limit: {
+					maxPayloadBytes: MAX_CONNECT_FRAME_PAYLOAD,
+					error: len =>
+						new AIError.ProviderResponseError(
+							`Devin Connect frame length ${len} exceeds ${MAX_CONNECT_FRAME_PAYLOAD}-byte cap`,
+							{ provider: model.provider, kind: "envelope" },
+						),
+				},
 			});
 
 			for (;;) {

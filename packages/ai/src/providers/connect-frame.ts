@@ -25,10 +25,13 @@ export interface ConnectFrame {
 	payload: Buffer;
 }
 
+/** Options for {@link ConnectFrameDecoder}. */
 export interface ConnectFrameDecoderOptions {
-	/** Largest accepted payload; a larger length prefix throws `oversize(length)` before buffering it. */
-	maxPayloadBytes?: number;
-	oversize?: (length: number) => Error;
+	/**
+	 * Payload cap: a length prefix above `maxPayloadBytes` throws `error(length)`
+	 * before any of that payload is buffered. Uncapped when omitted.
+	 */
+	limit?: { maxPayloadBytes: number; error: (length: number) => Error };
 }
 
 /**
@@ -43,12 +46,10 @@ export interface ConnectFrameDecoderOptions {
 export class ConnectFrameDecoder {
 	#chunks: Buffer[] = [];
 	#buffered = 0;
-	readonly #maxPayloadBytes: number | undefined;
-	readonly #oversize: ((length: number) => Error) | undefined;
+	readonly #limit: ConnectFrameDecoderOptions["limit"];
 
 	constructor(options: ConnectFrameDecoderOptions = {}) {
-		this.#maxPayloadBytes = options.maxPayloadBytes;
-		this.#oversize = options.oversize;
+		this.#limit = options.limit;
 	}
 
 	/**
@@ -67,9 +68,7 @@ export class ConnectFrameDecoder {
 				this.#chunks.splice(0, 2, Buffer.concat([this.#chunks[0], this.#chunks[1]]));
 			}
 			const length = this.#chunks[0].readUInt32BE(1);
-			if (this.#maxPayloadBytes !== undefined && length > this.#maxPayloadBytes) {
-				throw this.#oversize?.(length) ?? new Error(`Connect frame length ${length} exceeds cap`);
-			}
+			if (this.#limit && length > this.#limit.maxPayloadBytes) throw this.#limit.error(length);
 			const frameBytes = CONNECT_HEADER_BYTES + length;
 			if (this.#buffered < frameBytes) return;
 			const frame = this.#take(frameBytes);

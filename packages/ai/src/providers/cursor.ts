@@ -352,13 +352,17 @@ const CURSOR_RETRY_BASE_DELAY_MS = 500;
 const NOT_IMPLEMENTED = `Not implemented by this client`;
 
 /**
- * Per-conversation checkpoint and blob store. Bounded: each blob store holds the
- * serialized history, and an evicted conversation rebuilds from `context`
- * exactly like the first request after a restart.
+ * Per-conversation checkpoint and the blob store its blob refs point into, kept
+ * in one entry so they are always evicted together. Bounded: each blob store
+ * holds the serialized history, and an evicted conversation rebuilds from
+ * `context` exactly like the first request after a restart.
  */
-const CURSOR_CONVERSATION_CACHE_MAX = 32;
-const conversationStateCache = new LRUCache<string, ConversationStateStructure>({ max: CURSOR_CONVERSATION_CACHE_MAX });
-const conversationBlobStores = new LRUCache<string, Map<string, Uint8Array>>({ max: CURSOR_CONVERSATION_CACHE_MAX });
+interface CursorConversationEntry {
+	state: ConversationStateStructure | undefined;
+	blobs: Map<string, Uint8Array>;
+}
+const CURSOR_CONVERSATION_CACHE_MAX = 128;
+const cursorConversations = new LRUCache<string, CursorConversationEntry>({ max: CURSOR_CONVERSATION_CACHE_MAX });
 const warnedCursorKimiK3ReplayMessages = new Set<string>();
 /**
  * Base conversation id → rotated wire id (#8345). Cursor's backend can pin a
@@ -1153,12 +1157,12 @@ function streamCursorWithWireMode(
 			// and result, so the turn resumes where it stopped instead of replaying
 			// the last user message.
 			const rotatedFresh = retryContext ? false : freshRotatedConversationIds.has(conversationId);
-			activeBlobStore =
-				retryContext?.blobStore ?? conversationBlobStores.get(conversationId) ?? new Map<string, Uint8Array>();
+			const cachedConversation = cursorConversations.get(conversationId);
+			activeBlobStore = retryContext?.blobStore ?? cachedConversation?.blobs ?? new Map<string, Uint8Array>();
 			const blobStore = activeBlobStore;
-			conversationBlobStores.set(conversationId, blobStore);
-			const cachedState =
-				retryContext?.checkpoint ?? (rotatedFresh ? undefined : conversationStateCache.get(conversationId));
+			const conversationEntry: CursorConversationEntry = { state: cachedConversation?.state, blobs: blobStore };
+			cursorConversations.set(conversationId, conversationEntry);
+			const cachedState = retryContext?.checkpoint ?? (rotatedFresh ? undefined : cachedConversation?.state);
 			const builtRequest = await buildGrpcRequestForWireMode(
 				model,
 				context,
@@ -1173,7 +1177,7 @@ function streamCursorWithWireMode(
 			);
 			const { requestBytes, conversationState } = builtRequest;
 			serializedFallbackWireModelId = builtRequest.fallbackWireModelId;
-			conversationStateCache.set(conversationId, conversationState);
+			conversationEntry.state = conversationState;
 			const requestContextTools = buildMcpToolDefinitions(
 				context.tools,
 				model.requiresCursorToolSchemaProjection === true,
@@ -1286,7 +1290,8 @@ function streamCursorWithWireMode(
 			openBlockState = state;
 
 			const onConversationCheckpoint = (checkpoint: ConversationStateStructure) => {
-				conversationStateCache.set(conversationId!, checkpoint);
+				conversationEntry.state = checkpoint;
+				cursorConversations.set(conversationId!, conversationEntry);
 			};
 
 			// Client replies that carry a local result (exec output, exec control,
@@ -1348,7 +1353,8 @@ function streamCursorWithWireMode(
 							latestCheckpoint = serverMessage.message.value;
 							latestCheckpointProgressVersion = progressVersion;
 							latestCheckpointTerminal = sawTurnEnded;
-							conversationStateCache.set(conversationId!, latestCheckpoint);
+							conversationEntry.state = latestCheckpoint;
+							cursorConversations.set(conversationId!, conversationEntry);
 						}
 						const isTurnEnded = interactionCase === "turnEnded";
 						// Dispatch is fire-and-forget so the socket keeps draining while a
@@ -1698,8 +1704,7 @@ function streamCursorWithWireMode(
 				rotatedConversationIds.set(baseConversationId, rotated);
 				freshRotatedConversationIds.add(rotated);
 				// The poisoned id is never addressed again; release its side state.
-				conversationStateCache.delete(conversationId);
-				conversationBlobStores.delete(conversationId);
+				cursorConversations.delete(conversationId);
 				logger.debug("cursor conversation rotated", {
 					base: baseConversationId,
 					from: conversationId,
@@ -1733,8 +1738,7 @@ function streamCursorWithWireMode(
 				const rotated = rotatedConversationIds.get(baseConversationId);
 				for (const id of [baseConversationId, rotated]) {
 					if (id === undefined) continue;
-					conversationStateCache.delete(id);
-					conversationBlobStores.delete(id);
+					cursorConversations.delete(id);
 					successfulRotatedConversationIds.delete(id);
 					freshRotatedConversationIds.delete(id);
 				}

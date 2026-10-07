@@ -5,6 +5,11 @@
 ### Fixed
 
 - Fixed false thinking-loop detections on Gemini, DeepSeek, and Grok when the model drafts or answers with repetitive code or markup (VRML, SVG, JSON); such output is no longer discarded and retried.
+- Fixed Cursor provider leaking conversation checkpoints, blob stores and abort listeners after requests end ([#14669](https://github.com/can1357/oh-my-pi/pull/14669) by [@H4vC](https://github.com/H4vC))
+
+### Changed
+
+- Reduced CPU and memory spent decoding large Cursor and Devin streamed responses ([#14669](https://github.com/can1357/oh-my-pi/pull/14669) by [@H4vC](https://github.com/H4vC))
 
 ## [18.7.0] - 2026-10-06
 
@@ -14,14 +19,6 @@
 
 ### Fixed
 
-- Fixed Ultrafast service-tier turns being billed at standard rates; GPT-6 Astra now carries its published Ultrafast premium (6x on the OpenAI API, 8x included usage on Codex), and the premium-request counter counts them ([#14471](https://github.com/can1357/oh-my-pi/pull/14471) by [@eggpeat](https://github.com/eggpeat)).
-- Fixed Vertex AI on Windows ignoring credentials from `gcloud auth application-default login`, which gcloud writes to `%APPDATA%\gcloud\application_default_credentials.json` rather than `~/.config/gcloud` ([#14549](https://github.com/can1357/oh-my-pi/pull/14549) by [@jorgoose](https://github.com/jorgoose))
-- Fixed `auth.accountPolicies` and `/session pin` being unable to select a Cursor account by email: Cursor logins now store the account email, and accounts stored earlier gain it at their next token refresh ([#14511](https://github.com/can1357/oh-my-pi/pull/14511) by [@will-bogusz](https://github.com/will-bogusz))
-- Fixed Cursor provider leaking conversation checkpoints, blob stores and abort listeners after requests end ([#14669](https://github.com/can1357/oh-my-pi/pull/14669) by [@H4vC](https://github.com/H4vC))
-
-### Changed
-
-- Sped up Cursor and Devin streaming ([#14669](https://github.com/can1357/oh-my-pi/pull/14669) by [@H4vC](https://github.com/H4vC))
 - Fixed Ultrafast service-tier billing and usage accounting: GPT-6 Astra now applies its published premium rates—6× on the OpenAI API and 8× included usage on Codex—and is counted toward the premium-request limit.
 - Fixed Vertex AI authentication on Windows when credentials are created with `gcloud auth application-default login`.
 - Fixed selecting Cursor accounts by email through `auth.accountPolicies` and `/session pin`; newly refreshed and existing accounts now retain the account email.
