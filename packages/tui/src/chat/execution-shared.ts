@@ -134,6 +134,8 @@ export interface ExecutionCardInput {
 	readonly exitCode: number | undefined;
 	readonly truncation: TruncationMeta | undefined;
 	readonly artifactError?: OutputArtifactError;
+	/** Surface width in cells (undefined: unknown), for whether folding would hide wrapped output. */
+	readonly cols: number | undefined;
 }
 
 /**
@@ -174,7 +176,7 @@ export function describeExecutionCard(input: ExecutionCardInput): NativeNode {
 	if (input.artifactError) note(formatArtifactErrorNotice(input.artifactError), "warning");
 	if (notes.length > 0) children.push(text(notes, { wrap: "word", key: "notes" }));
 	const preview = { lines: PREVIEW_LINES };
-	const foldable = foldHidesBody(children, preview);
+	const foldable = foldHidesBody(children, preview, input.cols);
 	return card(
 		{
 			role: input.role,
@@ -210,6 +212,8 @@ export interface ExecutionToolInput {
 	readonly exitCode: number | undefined;
 	readonly truncation: TruncationMeta | undefined;
 	readonly artifactError?: OutputArtifactError;
+	/** Surface width in cells (undefined: unknown), for whether folding would hide wrapped output. */
+	readonly cols: number | undefined;
 }
 
 const EXECUTION_RUN_STATE: Record<ExecutionStatus, RunState> = {
@@ -255,7 +259,7 @@ export function describeExecutionTool(input: ExecutionToolInput): NativeNode {
 	const badges: { text: string; tone?: TspTone; title?: string }[] = [{ text: "you", tone: "user" }];
 	if (input.excluded) badges.push({ text: "not sent", title: "Not sent to the model", tone: "muted" });
 	const body = [box, ...(input.images ?? [])];
-	const foldable = foldHidesBody(body, "children");
+	const foldable = foldHidesBody(body, "children", input.cols);
 	return node(
 		"tool",
 		{

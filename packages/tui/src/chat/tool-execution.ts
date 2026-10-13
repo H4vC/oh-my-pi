@@ -992,9 +992,13 @@ export class ToolExecutionComponent extends Container {
 			this.#toolActivityVisible,
 			media,
 			getThemeEpoch(),
+			cx?.cols,
 		];
 		return this.#native.get(key, () =>
-			withHidden(dataFirst ? this.#describeTool(media) : this.#describeCard(media), !this.#toolActivityVisible),
+			withHidden(
+				dataFirst ? this.#describeTool(media, cx?.cols) : this.#describeCard(media, cx?.cols),
+				!this.#toolActivityVisible,
+			),
 		);
 	}
 
@@ -1023,17 +1027,18 @@ export class ToolExecutionComponent extends Container {
 	 * Whether folding can hide anything, now or once expanded (renderers may
 	 * show more when expanded). A body that fits gets no chevron, since folding
 	 * it would change nothing. `extra` is the part of `body` that does not come
-	 * from the renderer's view.
+	 * from the renderer's view; `cols` is the surface width.
 	 */
 	#foldable(
 		body: readonly NativeChild[],
 		extra: readonly NativeChild[],
 		preview: FoldPreview,
 		media: boolean,
+		cols: number | undefined,
 	): boolean {
-		if (foldHidesBody(body, preview)) return true;
+		if (foldHidesBody(body, preview, cols)) return true;
 		if (this.#expanded) return false;
-		return foldHidesBody([...extra, ...(this.#nativeView(media, true).body ?? [])], preview);
+		return foldHidesBody([...extra, ...(this.#nativeView(media, true).body ?? [])], preview, cols);
 	}
 
 	/** The late diagnostics section and head chip, when LSP reported after the result. */
@@ -1057,7 +1062,7 @@ export class ToolExecutionComponent extends Container {
 	 * The data-first `tool` node (§7.2): the renderer's head data, status,
 	 * timer, exit and intent as props; its body as borderless children.
 	 */
-	#describeTool(media: boolean): NativeNode {
+	#describeTool(media: boolean, cols: number | undefined): NativeNode {
 		const view = this.#nativeView(media);
 		const status = this.#nativeStatus();
 		const head = view.tool;
@@ -1073,7 +1078,7 @@ export class ToolExecutionComponent extends Container {
 		const title: TspText = head?.title ?? (head ? this.#toolLabel : (view.head ?? this.#toolLabel));
 		const declared = view.preview ?? (inline ? "none" : { lines: DEFAULT_TERMINAL_PREVIEW_LINES });
 		const preview = declared === "auto" ? { lines: DEFAULT_TERMINAL_PREVIEW_LINES } : declared;
-		const foldable = body.length > 0 && this.#foldable(body, extra, preview, media);
+		const foldable = body.length > 0 && this.#foldable(body, extra, preview, media, cols);
 		return node(
 			"tool",
 			{
@@ -1129,7 +1134,7 @@ export class ToolExecutionComponent extends Container {
 		return spans;
 	}
 
-	#describeCard(media: boolean): NativeNode {
+	#describeCard(media: boolean, cols: number | undefined): NativeNode {
 		const view = this.#nativeView(media);
 		const status = this.#nativeStatus();
 		const late = this.#lateDiagnosticsParts();
@@ -1155,7 +1160,9 @@ export class ToolExecutionComponent extends Container {
 		const role = `omp.tool.${this.#toolName}`;
 		if (view.inline) return col(children, { role });
 		const preview = cardPreview(view.preview);
-		const foldable = children.length > 1 && this.#foldable(children, [headRow, ...extra], preview, media);
+		// The card has no `children` clamp prop, but folding it still clamps only the children's own previews.
+		const foldPreview = view.preview === "children" ? "children" : preview;
+		const foldable = children.length > 1 && this.#foldable(children, [headRow, ...extra], foldPreview, media, cols);
 		return card(
 			{
 				role,

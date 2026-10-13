@@ -172,6 +172,7 @@ export class BashExecutionComponent extends Container {
 			this.#expanded,
 			this.#showImages,
 			this.#images.length,
+			cx?.cols,
 		];
 		return this.#native.get(key, () => {
 			const images = this.#images.map((image, index) =>
@@ -194,6 +195,7 @@ export class BashExecutionComponent extends Container {
 				exitCode: this.#exitCode,
 				truncation: this.#truncation,
 				artifactError: this.#artifactError,
+				cols: cx?.cols,
 			};
 			return dataFirst
 				? describeExecutionTool({

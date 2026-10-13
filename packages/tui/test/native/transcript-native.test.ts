@@ -36,6 +36,17 @@ afterEach(() => {
 	stopSharedSpinnerTicker();
 });
 
+/** A surface `cols` wide that lists every kind, or every kind but `tool` (the fallback card path). */
+function surface(cols: number, tool = true): DescribeContext {
+	return {
+		cols,
+		reduceMotion: false,
+		dark: true,
+		supports: kind => tool || kind !== "tool",
+		feature: () => true,
+	};
+}
+
 const USAGE: AssistantMessage["usage"] = {
 	input: 0,
 	output: 0,
@@ -230,13 +241,33 @@ describe("native transcript", () => {
 				body: [text(Array.from({ length: options.expanded ? 20 : 2 }, (_, i) => `row ${i}`).join("\n"))],
 			}),
 		} as unknown as AgentTool;
-		const tools = [settledWait(1), settledWait(12), new ToolExecutionComponent("growing", {}, {}, growing, ui)];
-		const [short, long, grows] = tools;
+		// Five 60-cell lines fit a 10-line clamp on a wide surface, not once wrapped on a narrow one.
+		const wide = {
+			name: "wide",
+			label: "wide",
+			description: "demo",
+			parameters: {},
+			execute: async () => ({ content: [] }),
+			mergeCallAndResult: true,
+			describeResult: () => ({ body: [text(Array.from({ length: 5 }, () => "x".repeat(60)).join("\n"))] }),
+		} as unknown as AgentTool;
+		const tools = [
+			settledWait(1),
+			settledWait(12),
+			new ToolExecutionComponent("growing", {}, {}, growing, ui),
+			new ToolExecutionComponent("wide", {}, {}, wide, ui),
+		];
+		const [short, long, grows, wraps] = tools;
 		try {
 			grows!.updateResult({ content: [{ type: "text", text: "ok" }], isError: false });
+			wraps!.updateResult({ content: [{ type: "text", text: "ok" }], isError: false });
 			expect(short!.describe().p).toMatchObject({ collapsible: false, collapsed: undefined, preview: undefined });
 			expect(long!.describe().p).toMatchObject({ collapsible: true, collapsed: true });
 			expect(grows!.describe().p).toMatchObject({ collapsible: true, collapsed: true });
+			expect(wraps!.describe(surface(120)).p).toMatchObject({ collapsible: false });
+			expect(wraps!.describe(surface(40)).p).toMatchObject({ collapsible: true, collapsed: true });
+			// Without a known width any wrapping line may outgrow the clamp.
+			expect(wraps!.describe().p).toMatchObject({ collapsible: true });
 		} finally {
 			for (const tool of tools) tool.dispose();
 		}
@@ -244,13 +275,6 @@ describe("native transcript", () => {
 
 	it("offers a background job's card a fold only once its output outgrows the output preview", () => {
 		setNativeRendering(true);
-		const toolCx: DescribeContext = {
-			cols: 100,
-			reduceMotion: false,
-			dark: true,
-			supports: () => true,
-			feature: () => true,
-		};
 		const ui = { requestRender: () => {}, requestComponentRender: () => {}, resetDisplay: () => {} };
 		const tool = new ToolExecutionComponent("bash", { command: "serve" }, {}, undefined, ui);
 		const frame = (lines: number) => ({
@@ -263,9 +287,16 @@ describe("native transcript", () => {
 			tool.updateResult(frame(1), true, "call-1");
 			tool.parkAsBackground();
 			tool.updateResult(frame(3), true, "call-1");
-			expect(tool.describe(toolCx).p).toMatchObject({ collapsible: false, collapsed: undefined });
+			expect(tool.describe(surface(100)).p).toMatchObject({ collapsible: false, collapsed: undefined });
+			// The fallback card folds the same way: only the output block's own preview clamps.
+			expect(tool.describe(surface(100, false)).p).toMatchObject({ collapsible: false, collapsed: undefined });
 			tool.updateResult(frame(40), true, "call-1");
-			expect(tool.describe(toolCx).p).toMatchObject({ collapsible: true, collapsed: true, preview: "children" });
+			expect(tool.describe(surface(100)).p).toMatchObject({
+				collapsible: true,
+				collapsed: true,
+				preview: "children",
+			});
+			expect(tool.describe(surface(100, false)).p).toMatchObject({ collapsible: true, collapsed: true });
 		} finally {
 			tool.dispose();
 		}

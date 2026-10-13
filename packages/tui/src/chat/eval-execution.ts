@@ -129,7 +129,7 @@ export class EvalExecutionComponent extends Container {
 	 */
 	override describe(cx?: DescribeContext): NativeNode {
 		const dataFirst = cx?.supports("tool") === true;
-		const key = [dataFirst, this.#outputVersion, this.#status, this.#expanded];
+		const key = [dataFirst, this.#outputVersion, this.#status, this.#expanded, cx?.cols];
 		return this.#native.get(key, () => {
 			const title = this.#language === "js" ? "JavaScript" : "Python";
 			const common = {
@@ -141,6 +141,7 @@ export class EvalExecutionComponent extends Container {
 				exitCode: this.#exitCode,
 				truncation: this.#truncation,
 				artifactError: this.#artifactError,
+				cols: cx?.cols,
 			};
 			return dataFirst
 				? describeExecutionTool({

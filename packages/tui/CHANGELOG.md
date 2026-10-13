@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Native tool cards and user `!`/`$` runs offer a collapse chevron only when collapsing hides part of their output, judged at the surface's width; short `wait`, `grep`, background job and run outputs no longer show one that does nothing ([#15644](https://github.com/can1357/oh-my-pi/pull/15644) by [@H4vC](https://github.com/H4vC))
+
 ## [18.10.4] - 2026-10-13
 
 ### Added
