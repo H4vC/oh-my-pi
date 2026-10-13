@@ -132,3 +132,34 @@ export function foldHidesBody(body: readonly NativeChild[], preview: FoldPreview
 	const lines = childLines(body, width, clamp, "sum");
 	return lines === undefined || lines > clamp;
 }
+
+/** The words a node shows itself (its `text` and `spans`), not its numbers (clocks, sizes). */
+function shownText(child: NativeChild): string | undefined {
+	if (!("k" in child) || child.p === undefined) return undefined;
+	const p: object = child.p;
+	return JSON.stringify(["text" in p ? p.text : undefined, "spans" in p ? p.spans : undefined]);
+}
+
+/**
+ * Whether two bodies show the same content: the same nodes (kind, key,
+ * hidden) with the same text, ignoring numbers that tick between two
+ * describes (elapsed clocks, ages). A body that only differs in those is the
+ * same body expanded or collapsed.
+ */
+export function sameFoldContent(a: readonly NativeChild[] | undefined, b: readonly NativeChild[] | undefined): boolean {
+	const left = a ?? [];
+	const right = b ?? [];
+	if (left.length !== right.length) return false;
+	for (let i = 0; i < left.length; i++) {
+		const x = left[i]!;
+		const y = right[i]!;
+		if (!("k" in x) || !("k" in y)) {
+			if (x !== y) return false;
+			continue;
+		}
+		if (x.k !== y.k || x.key !== y.key || (x.p?.hidden === true) !== (y.p?.hidden === true)) return false;
+		if (shownText(x) !== shownText(y)) return false;
+		if (!sameFoldContent(x.c, y.c)) return false;
+	}
+	return true;
+}

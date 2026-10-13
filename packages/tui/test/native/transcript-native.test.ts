@@ -311,6 +311,42 @@ describe("native transcript", () => {
 		}
 	});
 
+	it("keeps an eval card's fold when expanding shows status events its folded view drops", () => {
+		const ui = { requestRender: () => {}, requestComponentRender: () => {}, resetDisplay: () => {} };
+		const cell = (events: number) => ({
+			content: [{ type: "text" as const, text: "" }],
+			details: {
+				cells: [
+					{
+						index: 0,
+						code: "run()",
+						language: "python",
+						output: "",
+						status: "complete",
+						durationMs: 5,
+						statusEvents: Array.from({ length: events }, (_, i) => ({ op: "read", path: `f${i}.ts` })),
+					},
+				],
+			},
+			isError: false,
+		});
+		const tools = [8, 12].map(events => {
+			const tool = new ToolExecutionComponent("eval", { code: "run()" }, {}, undefined, ui);
+			tool.updateResult(cell(events), false, "call-1");
+			return tool;
+		});
+		const [few, many] = tools;
+		try {
+			// Eight events show in full either way; twelve fold to the newest eight under "4 earlier".
+			expect(few!.describe(surface(100)).p).toMatchObject({ collapsible: false });
+			expect(many!.describe(surface(100)).p).toMatchObject({ collapsible: true, collapsed: true });
+			many!.setExpanded(true);
+			expect(many!.describe(surface(100)).p).toMatchObject({ collapsible: true, collapsed: false });
+		} finally {
+			for (const tool of tools) tool.dispose();
+		}
+	});
+
 	it("keeps a finished todo call's checklist open", () => {
 		const ui = { requestRender: () => {}, requestComponentRender: () => {}, resetDisplay: () => {} };
 		const tool = new ToolExecutionComponent("todo", { op: "start", task: "lex" }, {}, undefined, ui);

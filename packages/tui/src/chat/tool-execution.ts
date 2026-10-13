@@ -33,7 +33,7 @@ import { plainText } from "../native/spans";
 import { diagnosticsSection, displayPath, toolHead } from "../tools/native-view";
 import type { FileDiagnosticsResult } from "../tools/lsp";
 import { NativeImageCache, readMediaPath, shownMedia } from "../native/blobs";
-import { type FoldPreview, foldHidesBody } from "../native/fold";
+import { type FoldPreview, foldHidesBody, sameFoldContent } from "../native/fold";
 import { Memo } from "../native/memo";
 import { type EditMode, type PerFileDiffPreview, renderStreamingFallback } from "../tools/edit";
 import { taskCardAgentIds } from "../tools/task";
@@ -1028,8 +1028,11 @@ export class ToolExecutionComponent extends Container {
 	 * something: a body within the collapsed clamp gets no chevron. While
 	 * collapsed, a renderer may trim its own body (grep's file cap); when its
 	 * expanded body fits the clamp too, that view is shown instead, since the
-	 * fold would leave nothing behind it. `measure` gives a view's full card
-	 * body and fold clamp; `cols` is the surface width.
+	 * fold would leave nothing behind it. A `children` fold bounds only the
+	 * code and output blocks, so there the card keeps its fold whenever the
+	 * other expand state shows different content (eval's status events).
+	 * `measure` gives a view's full card body and fold clamp; `cols` is the
+	 * surface width.
 	 */
 	#foldedView(
 		media: boolean,
@@ -1039,6 +1042,10 @@ export class ToolExecutionComponent extends Container {
 		const view = this.#nativeView(media);
 		const shown = measure(view);
 		if (foldHidesBody(shown.body, shown.preview, cols)) return { view, foldable: true };
+		if (shown.preview === "children") {
+			const other = measure(this.#nativeView(media, !this.#expanded));
+			return { view, foldable: !sameFoldContent(shown.body, other.body) };
+		}
 		if (this.#expanded) return { view, foldable: false };
 		const open = this.#nativeView(media, true);
 		const full = measure(open);
