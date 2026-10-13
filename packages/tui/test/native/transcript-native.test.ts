@@ -241,26 +241,32 @@ describe("native transcript", () => {
 				body: [text(Array.from({ length: options.expanded ? 20 : 2 }, (_, i) => `row ${i}`).join("\n"))],
 			}),
 		} as unknown as AgentTool;
+		const textTool = (name: string, value: string) =>
+			({
+				name,
+				label: name,
+				description: "demo",
+				parameters: {},
+				execute: async () => ({ content: [] }),
+				mergeCallAndResult: true,
+				describeResult: () => ({ body: [text(value)] }),
+			}) as unknown as AgentTool;
 		// Five 60-cell lines fit a 10-line clamp on a wide surface, not once wrapped on a narrow one.
-		const wide = {
-			name: "wide",
-			label: "wide",
-			description: "demo",
-			parameters: {},
-			execute: async () => ({ content: [] }),
-			mergeCallAndResult: true,
-			describeResult: () => ({ body: [text(Array.from({ length: 5 }, () => "x".repeat(60)).join("\n"))] }),
-		} as unknown as AgentTool;
+		const wide = textTool("wide", Array.from({ length: 5 }, () => "x".repeat(60)).join("\n"));
+		// Eleven 21-cell words: 241 cells is 7 rows of 40, but word wrap puts one word per row.
+		const wordy = textTool("wordy", Array.from({ length: 11 }, () => "w".repeat(21)).join(" "));
 		const tools = [
 			settledWait(1),
 			settledWait(12),
 			new ToolExecutionComponent("growing", {}, {}, growing, ui),
 			new ToolExecutionComponent("wide", {}, {}, wide, ui),
+			new ToolExecutionComponent("wordy", {}, {}, wordy, ui),
 		];
-		const [short, long, grows, wraps] = tools;
+		const [short, long, grows, wraps, words] = tools;
 		try {
-			grows!.updateResult({ content: [{ type: "text", text: "ok" }], isError: false });
-			wraps!.updateResult({ content: [{ type: "text", text: "ok" }], isError: false });
+			for (const tool of [grows, wraps, words]) {
+				tool!.updateResult({ content: [{ type: "text", text: "ok" }], isError: false });
+			}
 			expect(short!.describe().p).toMatchObject({ collapsible: false, collapsed: undefined, preview: undefined });
 			expect(long!.describe().p).toMatchObject({ collapsible: true, collapsed: true });
 			expect(grows!.describe().p).toMatchObject({ collapsible: true, collapsed: true });
@@ -268,6 +274,9 @@ describe("native transcript", () => {
 			expect(wraps!.describe(surface(40)).p).toMatchObject({ collapsible: true, collapsed: true });
 			// Without a known width any wrapping line may outgrow the clamp.
 			expect(wraps!.describe().p).toMatchObject({ collapsible: true });
+			expect(words!.describe(surface(300)).p).toMatchObject({ collapsible: false });
+			// 56 columns leave 40 for text once the card's chrome is set aside.
+			expect(words!.describe(surface(56)).p).toMatchObject({ collapsible: true, collapsed: true });
 		} finally {
 			for (const tool of tools) tool.dispose();
 		}

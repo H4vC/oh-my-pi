@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from "bun:test";
 import type { TspText } from "@oh-my-pi/pi-wire";
 import { ReadToolGroupComponent } from "../src/chat/read-tool-group";
+import { ToolExecutionComponent } from "../src/chat/tool-execution";
 import type { DescribeContext, NativeChild, NativeNode } from "../src/native/node";
 import { initTheme } from "../src/theme";
 import { globToolRenderer } from "../src/tools/glob";
@@ -76,6 +77,19 @@ describe("grep native view", () => {
 		expect(files(small)).toHaveLength(2);
 		expect(files(full)).toHaveLength(3);
 		expect(small.inline).toBe(true);
+	});
+
+	it("shows a collapsed card every file, with no fold, when the expanded list fits the clamp", () => {
+		const ui = { requestRender: () => {}, requestComponentRender: () => {}, resetDisplay: () => {} };
+		const tool = new ToolExecutionComponent("grep", { pattern: "hit" }, {}, undefined, ui);
+		try {
+			tool.updateResult({ ...result, isError: false });
+			const described = tool.describe(toolCx);
+			expect(described.p).toMatchObject({ collapsible: false, collapsed: undefined });
+			expect(collect(described.c, n => role(n) === "omp.tool.search.file")).toHaveLength(3);
+		} finally {
+			tool.dispose();
+		}
 	});
 
 	it("splits non-adjacent match lines into numbered runs with a gap row between", () => {

@@ -32,7 +32,9 @@ export type FoldPreview = { lines: number } | { tail: number } | "children" | "n
 
 /**
  * Lines `value` draws when wrapping at `width` cells (stops past `limit`);
- * undefined when a non-empty line wraps at an unknown width.
+ * undefined when a non-empty line wraps at an unknown width. Lines wider than
+ * `width` are word-wrapped (hard-breaking long words), which never yields
+ * fewer rows than a character wrap, so word-break waste is counted.
  */
 function textLines(value: string, wraps: boolean, width: number | undefined, limit: number): number | undefined {
 	let lines = 0;
@@ -41,7 +43,10 @@ function textLines(value: string, wraps: boolean, width: number | undefined, lim
 		else {
 			const cells = Bun.stringWidth(line);
 			if (cells > 0 && width === undefined) return undefined;
-			lines += width === undefined ? 1 : Math.max(1, Math.ceil(cells / width));
+			lines +=
+				width === undefined || cells <= width
+					? 1
+					: Bun.wrapAnsi(line, width, { hard: true, wordWrap: true, trim: false }).split("\n").length;
 		}
 		if (lines > limit) break;
 	}

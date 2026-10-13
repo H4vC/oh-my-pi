@@ -1024,21 +1024,38 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	/**
-	 * Whether folding can hide anything, now or once expanded (renderers may
-	 * show more when expanded). A body that fits gets no chevron, since folding
-	 * it would change nothing. `extra` is the part of `body` that does not come
-	 * from the renderer's view; `cols` is the surface width.
+	 * The view to describe and whether its card folds. Folding must hide
+	 * something: a body within the collapsed clamp gets no chevron. While
+	 * collapsed, a renderer may trim its own body (grep's file cap); when its
+	 * expanded body fits the clamp too, that view is shown instead, since the
+	 * fold would leave nothing behind it. `measure` gives a view's full card
+	 * body and fold clamp; `cols` is the surface width.
 	 */
-	#foldable(
-		body: readonly NativeChild[],
-		extra: readonly NativeChild[],
-		preview: FoldPreview,
+	#foldedView(
 		media: boolean,
 		cols: number | undefined,
-	): boolean {
-		if (foldHidesBody(body, preview, cols)) return true;
-		if (this.#expanded) return false;
-		return foldHidesBody([...extra, ...(this.#nativeView(media, true).body ?? [])], preview, cols);
+		measure: (view: NativeToolView) => { body: readonly NativeChild[]; preview: FoldPreview },
+	): { view: NativeToolView; foldable: boolean } {
+		const view = this.#nativeView(media);
+		const shown = measure(view);
+		if (foldHidesBody(shown.body, shown.preview, cols)) return { view, foldable: true };
+		if (this.#expanded) return { view, foldable: false };
+		const open = this.#nativeView(media, true);
+		const full = measure(open);
+		return foldHidesBody(full.body, full.preview, cols) ? { view, foldable: true } : { view: open, foldable: false };
+	}
+
+	/** The data-first body: the renderer's nodes, result images it does not show, late diagnostics. */
+	#toolBody(view: NativeToolView, late: NativeNode | undefined): NativeChild[] {
+		const body: NativeChild[] = [...(view.body ?? []), ...this.#nativeResultImages(view.body)];
+		if (late) body.push(late);
+		return body;
+	}
+
+	/** The data-first collapsed clamp: the view's preview, `none` for inline views, else the default lines. */
+	#toolPreview(view: NativeToolView): Exclude<NativeToolView["preview"], "auto" | undefined> {
+		const declared = view.preview ?? (view.inline === true ? "none" : { lines: DEFAULT_TERMINAL_PREVIEW_LINES });
+		return declared === "auto" ? { lines: DEFAULT_TERMINAL_PREVIEW_LINES } : declared;
 	}
 
 	/** The late diagnostics section and head chip, when LSP reported after the result. */
@@ -1063,22 +1080,21 @@ export class ToolExecutionComponent extends Container {
 	 * timer, exit and intent as props; its body as borderless children.
 	 */
 	#describeTool(media: boolean, cols: number | undefined): NativeNode {
-		const view = this.#nativeView(media);
 		const status = this.#nativeStatus();
-		const head = view.tool;
 		const late = this.#lateDiagnosticsParts();
-		const extra: NativeChild[] = this.#nativeResultImages(view.body);
-		if (late.section) extra.push(late.section);
-		const body: NativeChild[] = [...(view.body ?? []), ...extra];
+		const { view, foldable } = this.#foldedView(media, cols, v => ({
+			body: this.#toolBody(v, late.section),
+			preview: this.#toolPreview(v),
+		}));
+		const head = view.tool;
+		const body = this.#toolBody(view, late.section);
 		const inline = view.inline === true;
 		const ms = this.#elapsedMs(status);
 		const live = status === "running" || status === "pending";
 		const intent = isRecord(this.#args) ? this.#args[INTENT_FIELD] : undefined;
 		const badges = [...(head?.badges ?? []), ...(late.chip ? [late.chip] : [])];
 		const title: TspText = head?.title ?? (head ? this.#toolLabel : (view.head ?? this.#toolLabel));
-		const declared = view.preview ?? (inline ? "none" : { lines: DEFAULT_TERMINAL_PREVIEW_LINES });
-		const preview = declared === "auto" ? { lines: DEFAULT_TERMINAL_PREVIEW_LINES } : declared;
-		const foldable = body.length > 0 && this.#foldable(body, extra, preview, media, cols);
+		const preview = this.#toolPreview(view);
 		return node(
 			"tool",
 			{
@@ -1134,10 +1150,8 @@ export class ToolExecutionComponent extends Container {
 		return spans;
 	}
 
-	#describeCard(media: boolean, cols: number | undefined): NativeNode {
-		const view = this.#nativeView(media);
-		const status = this.#nativeStatus();
-		const late = this.#lateDiagnosticsParts();
+	/** The fallback card's head row: the one-line head and, once execution started, its clock. */
+	#cardHeadRow(view: NativeToolView, status: TspCardStatus): NativeNode {
 		const fallbackHead = this.#fallbackHead(view);
 		const headChildren: NativeChild[] = [
 			// One line; paths drop whole directories first (path-aware middle cut), the full head in the tooltip.
@@ -1154,15 +1168,31 @@ export class ToolExecutionComponent extends Container {
 			const took = Math.max(0, Math.round((ended ?? performance.now()) - started));
 			headChildren.push(node("elapsed", ended === undefined ? { age: took } : { age: took, stopped: took }));
 		}
-		const headRow = node("row", { gap: "sm", align: "baseline" }, headChildren, "head");
-		const extra: NativeChild[] = [...this.#nativeResultImages(view.body), ...(late.section ? [late.section] : [])];
-		const children: NativeChild[] = [headRow, ...(view.body ?? []), ...extra];
+		return node("row", { gap: "sm", align: "baseline" }, headChildren, "head");
+	}
+
+	#describeCard(media: boolean, cols: number | undefined): NativeNode {
+		const status = this.#nativeStatus();
+		const late = this.#lateDiagnosticsParts();
+		const cardChildren = (view: NativeToolView): NativeChild[] => [
+			this.#cardHeadRow(view, status),
+			...(view.body ?? []),
+			...this.#nativeResultImages(view.body),
+			...(late.section ? [late.section] : []),
+		];
+		const { view, foldable } = this.#foldedView(media, cols, v => {
+			const children = cardChildren(v);
+			return {
+				// A head with no body has nothing to fold.
+				body: children.length > 1 ? children : [],
+				// The card has no `children` clamp prop, but folding it still clamps only the children's own previews.
+				preview: v.preview === "children" ? "children" : cardPreview(v.preview),
+			};
+		});
+		const children = cardChildren(view);
 		const role = `omp.tool.${this.#toolName}`;
 		if (view.inline) return col(children, { role });
 		const preview = cardPreview(view.preview);
-		// The card has no `children` clamp prop, but folding it still clamps only the children's own previews.
-		const foldPreview = view.preview === "children" ? "children" : preview;
-		const foldable = children.length > 1 && this.#foldable(children, [headRow, ...extra], foldPreview, media, cols);
 		return card(
 			{
 				role,
