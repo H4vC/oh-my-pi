@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed tool cards in Tern (such as `wait`, `xd://report_issue` writes, small `grep` results, background jobs and `!` runs with short output) showing a collapse chevron that did nothing because the whole output already fit; the chevron now appears only when collapsing hides something ([#15644](https://github.com/can1357/oh-my-pi/pull/15644) by [@H4vC](https://github.com/H4vC))
+
 ## [18.10.4] - 2026-10-13
 
 ### Added

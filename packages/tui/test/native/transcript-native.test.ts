@@ -18,6 +18,7 @@ import { TodoReminderComponent } from "@oh-my-pi/pi-tui/chat/todo-reminder";
 import { TtsrNotificationComponent } from "@oh-my-pi/pi-tui/chat/ttsr-notification";
 import { CollapsedSyntheticMessageComponent, UserMessageComponent } from "@oh-my-pi/pi-tui/chat/user-message";
 import { text } from "@oh-my-pi/pi-tui/native/describe";
+import type { DescribeContext } from "@oh-my-pi/pi-tui/native/node";
 import { setNativeRendering } from "@oh-my-pi/pi-tui/native/state";
 import { initTheme, theme } from "@oh-my-pi/pi-tui/theme";
 import type { TspNode, TspOp } from "@oh-my-pi/pi-wire";
@@ -191,6 +192,80 @@ describe("native transcript", () => {
 			expect(tool.describe().p).toMatchObject({ status: "running", collapsed: false });
 			tool.updateResult({ content: [{ type: "text", text: "Wrote 40 lines" }], isError: false });
 			expect(tool.describe().p).toMatchObject({ status: "done", collapsed: true });
+		} finally {
+			tool.dispose();
+		}
+	});
+
+	it("offers a fold only when collapsing would hide part of the body", () => {
+		const ui = { requestRender: () => {}, requestComponentRender: () => {}, resetDisplay: () => {} };
+		const settledWait = (jobs: number) => {
+			const tool = new ToolExecutionComponent("wait", {}, {}, undefined, ui);
+			tool.setArgsComplete("call-1");
+			tool.setExecutionStarted("call-1");
+			tool.updateResult({
+				content: [{ type: "text", text: "done" }],
+				details: {
+					jobs: Array.from({ length: jobs }, (_, i) => ({
+						id: `bg_${i}`,
+						type: "bash",
+						status: "completed",
+						label: "sleep 1",
+						durationMs: 1000,
+					})),
+				},
+				isError: false,
+			});
+			return tool;
+		};
+		// A body the expanded view grows past the clamp keeps its fold while collapsed.
+		const growing = {
+			name: "growing",
+			label: "growing",
+			description: "demo",
+			parameters: {},
+			execute: async () => ({ content: [] }),
+			mergeCallAndResult: true,
+			describeResult: (_result: unknown, options: { expanded: boolean }) => ({
+				body: [text(Array.from({ length: options.expanded ? 20 : 2 }, (_, i) => `row ${i}`).join("\n"))],
+			}),
+		} as unknown as AgentTool;
+		const tools = [settledWait(1), settledWait(12), new ToolExecutionComponent("growing", {}, {}, growing, ui)];
+		const [short, long, grows] = tools;
+		try {
+			grows!.updateResult({ content: [{ type: "text", text: "ok" }], isError: false });
+			expect(short!.describe().p).toMatchObject({ collapsible: false, collapsed: undefined, preview: undefined });
+			expect(long!.describe().p).toMatchObject({ collapsible: true, collapsed: true });
+			expect(grows!.describe().p).toMatchObject({ collapsible: true, collapsed: true });
+		} finally {
+			for (const tool of tools) tool.dispose();
+		}
+	});
+
+	it("offers a background job's card a fold only once its output outgrows the output preview", () => {
+		setNativeRendering(true);
+		const toolCx: DescribeContext = {
+			cols: 100,
+			reduceMotion: false,
+			dark: true,
+			supports: () => true,
+			feature: () => true,
+		};
+		const ui = { requestRender: () => {}, requestComponentRender: () => {}, resetDisplay: () => {} };
+		const tool = new ToolExecutionComponent("bash", { command: "serve" }, {}, undefined, ui);
+		const frame = (lines: number) => ({
+			content: [{ type: "text" as const, text: Array.from({ length: lines }, (_, i) => `line ${i}`).join("\n") }],
+			details: { async: { state: "running", jobId: "bg_1", type: "bash" } },
+		});
+		try {
+			tool.setArgsComplete("call-1");
+			tool.setExecutionStarted("call-1");
+			tool.updateResult(frame(1), true, "call-1");
+			tool.parkAsBackground();
+			tool.updateResult(frame(3), true, "call-1");
+			expect(tool.describe(toolCx).p).toMatchObject({ collapsible: false, collapsed: undefined });
+			tool.updateResult(frame(40), true, "call-1");
+			expect(tool.describe(toolCx).p).toMatchObject({ collapsible: true, collapsed: true, preview: "children" });
 		} finally {
 			tool.dispose();
 		}

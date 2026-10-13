@@ -19,6 +19,7 @@ import { interruptKey } from "../chrome/keybinding-hints";
 import { DEFAULT_TERMINAL_PREVIEW_LINES, expandKeyHint } from "../render/render-utils";
 import type { TspCardStatus, TspSpan, TspText, TspTone } from "@oh-my-pi/pi-wire";
 import { card, node, span, text } from "../native/describe";
+import { foldHidesBody } from "../native/fold";
 import type { NativeChild, NativeNode } from "../native/node";
 import { runBox, runFoot, runInput, runOutput, type RunState } from "../tools/native-view";
 
@@ -172,14 +173,16 @@ export function describeExecutionCard(input: ExecutionCardInput): NativeNode {
 	if (input.truncation) note(formatTruncationMetaNotice(input.truncation), "warning");
 	if (input.artifactError) note(formatArtifactErrorNotice(input.artifactError), "warning");
 	if (notes.length > 0) children.push(text(notes, { wrap: "word", key: "notes" }));
+	const preview = { lines: PREVIEW_LINES };
+	const foldable = foldHidesBody(children, preview);
 	return card(
 		{
 			role: input.role,
 			tone: input.muted ? "muted" : undefined,
 			status: EXECUTION_CARD_STATUS[input.status],
-			collapsible: true,
-			collapsed: !input.expanded,
-			preview: { lines: PREVIEW_LINES },
+			collapsible: foldable,
+			collapsed: foldable ? !input.expanded : undefined,
+			preview: foldable ? preview : undefined,
 		},
 		children,
 	);
@@ -251,6 +254,8 @@ export function describeExecutionTool(input: ExecutionToolInput): NativeNode {
 	);
 	const badges: { text: string; tone?: TspTone; title?: string }[] = [{ text: "you", tone: "user" }];
 	if (input.excluded) badges.push({ text: "not sent", title: "Not sent to the model", tone: "muted" });
+	const body = [box, ...(input.images ?? [])];
+	const foldable = foldHidesBody(body, "children");
 	return node(
 		"tool",
 		{
@@ -265,11 +270,11 @@ export function describeExecutionTool(input: ExecutionToolInput): NativeNode {
 			exit: input.status === "error" ? input.exitCode : undefined,
 			note: input.status === "cancelled" ? "cancelled" : undefined,
 			frame: "card",
-			collapsible: true,
-			collapsed: !input.expanded,
-			preview: "children",
+			collapsible: foldable,
+			collapsed: foldable ? !input.expanded : undefined,
+			preview: foldable ? "children" : undefined,
 		},
-		[box, ...(input.images ?? [])],
+		body,
 	);
 }
 

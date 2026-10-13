@@ -33,6 +33,7 @@ import { plainText } from "../native/spans";
 import { diagnosticsSection, displayPath, toolHead } from "../tools/native-view";
 import type { FileDiagnosticsResult } from "../tools/lsp";
 import { NativeImageCache, readMediaPath, shownMedia } from "../native/blobs";
+import { type FoldPreview, foldHidesBody } from "../native/fold";
 import { Memo } from "../native/memo";
 import { type EditMode, type PerFileDiffPreview, renderStreamingFallback } from "../tools/edit";
 import { taskCardAgentIds } from "../tools/task";
@@ -1018,6 +1019,23 @@ export class ToolExecutionComponent extends Container {
 		return !this.#expanded && !(live && streamsBody(this.#toolName));
 	}
 
+	/**
+	 * Whether folding can hide anything, now or once expanded (renderers may
+	 * show more when expanded). A body that fits gets no chevron, since folding
+	 * it would change nothing. `extra` is the part of `body` that does not come
+	 * from the renderer's view.
+	 */
+	#foldable(
+		body: readonly NativeChild[],
+		extra: readonly NativeChild[],
+		preview: FoldPreview,
+		media: boolean,
+	): boolean {
+		if (foldHidesBody(body, preview)) return true;
+		if (this.#expanded) return false;
+		return foldHidesBody([...extra, ...(this.#nativeView(media, true).body ?? [])], preview);
+	}
+
 	/** The late diagnostics section and head chip, when LSP reported after the result. */
 	#lateDiagnosticsParts(): { section?: NativeNode; chip?: { text: string; tone: TspTone } } {
 		const files = this.#lateDiagnostics;
@@ -1044,16 +1062,18 @@ export class ToolExecutionComponent extends Container {
 		const status = this.#nativeStatus();
 		const head = view.tool;
 		const late = this.#lateDiagnosticsParts();
-		const body: NativeChild[] = [...(view.body ?? []), ...this.#nativeResultImages(view.body)];
-		if (late.section) body.push(late.section);
+		const extra: NativeChild[] = this.#nativeResultImages(view.body);
+		if (late.section) extra.push(late.section);
+		const body: NativeChild[] = [...(view.body ?? []), ...extra];
 		const inline = view.inline === true;
-		const hasBody = body.length > 0;
 		const ms = this.#elapsedMs(status);
 		const live = status === "running" || status === "pending";
 		const intent = isRecord(this.#args) ? this.#args[INTENT_FIELD] : undefined;
 		const badges = [...(head?.badges ?? []), ...(late.chip ? [late.chip] : [])];
 		const title: TspText = head?.title ?? (head ? this.#toolLabel : (view.head ?? this.#toolLabel));
-		const preview = view.preview ?? (inline ? "none" : { lines: DEFAULT_TERMINAL_PREVIEW_LINES });
+		const declared = view.preview ?? (inline ? "none" : { lines: DEFAULT_TERMINAL_PREVIEW_LINES });
+		const preview = declared === "auto" ? { lines: DEFAULT_TERMINAL_PREVIEW_LINES } : declared;
+		const foldable = body.length > 0 && this.#foldable(body, extra, preview, media);
 		return node(
 			"tool",
 			{
@@ -1076,9 +1096,9 @@ export class ToolExecutionComponent extends Container {
 				took: live ? undefined : ms,
 				intent: typeof intent === "string" && intent ? plainText(intent) : undefined,
 				frame: inline ? "inline" : "card",
-				collapsible: hasBody,
-				collapsed: hasBody ? this.#nativeCollapsed(status, view) : undefined,
-				preview: hasBody ? (preview === "auto" ? { lines: DEFAULT_TERMINAL_PREVIEW_LINES } : preview) : undefined,
+				collapsible: foldable,
+				collapsed: foldable ? this.#nativeCollapsed(status, view) : undefined,
+				preview: foldable ? preview : undefined,
 				tools: view.tools,
 				tone: view.tone,
 			},
@@ -1129,24 +1149,22 @@ export class ToolExecutionComponent extends Container {
 			const took = Math.max(0, Math.round((ended ?? performance.now()) - started));
 			headChildren.push(node("elapsed", ended === undefined ? { age: took } : { age: took, stopped: took }));
 		}
-		const children: NativeChild[] = [
-			node("row", { gap: "sm", align: "baseline" }, headChildren, "head"),
-			...(view.body ?? []),
-			...this.#nativeResultImages(view.body),
-			...(late.section ? [late.section] : []),
-		];
+		const headRow = node("row", { gap: "sm", align: "baseline" }, headChildren, "head");
+		const extra: NativeChild[] = [...this.#nativeResultImages(view.body), ...(late.section ? [late.section] : [])];
+		const children: NativeChild[] = [headRow, ...(view.body ?? []), ...extra];
 		const role = `omp.tool.${this.#toolName}`;
 		if (view.inline) return col(children, { role });
-		const hasBody = children.length > 1;
+		const preview = cardPreview(view.preview);
+		const foldable = children.length > 1 && this.#foldable(children, [headRow, ...extra], preview, media);
 		return card(
 			{
 				role,
 				key: this.#toolCallId,
 				tone: view.tone ?? NATIVE_STATUS_TONE[status],
 				status,
-				collapsible: hasBody,
-				collapsed: hasBody ? this.#nativeCollapsed(status, view) : undefined,
-				preview: hasBody ? cardPreview(view.preview) : undefined,
+				collapsible: foldable,
+				collapsed: foldable ? this.#nativeCollapsed(status, view) : undefined,
+				preview: foldable ? preview : undefined,
 			},
 			children,
 		);
@@ -1164,17 +1182,17 @@ export class ToolExecutionComponent extends Container {
 	 * the result view (merged renderers) or the call head over both bodies.
 	 * A renderer that throws falls back to the generic card.
 	 */
-	#nativeView(media: boolean): NativeToolView {
+	#nativeView(media: boolean, expanded = this.#expanded): NativeToolView {
 		const status = this.#nativeStatus();
 		const options: RenderResultContextOptions = {
 			media,
-			expanded: this.#expanded,
+			expanded,
 			isPartial: this.#isPartial,
 			argsComplete: this.#argsComplete,
 			executionStarted: this.#executionStarted,
 			elapsedMs: this.#elapsedMs(status),
 			cancelled: status === "cancelled",
-			renderContext: this.#buildRenderContext(),
+			renderContext: this.#buildRenderContext(expanded),
 		};
 		// Custom tools (MCP, extensions) carry their own describe hooks, mirroring
 		// the ANSI path's preference for the tool's renderCall/renderResult.
@@ -1792,7 +1810,7 @@ export class ToolExecutionComponent extends Container {
 	/**
 	 * Build render context for tools that need extra state (bash, python, edit)
 	 */
-	#buildRenderContext(): Record<string, unknown> {
+	#buildRenderContext(expanded = this.#expanded): Record<string, unknown> {
 		const context: Record<string, unknown> = {};
 		const normalizeTimeoutSeconds = (value: unknown, maxSeconds: number): number | undefined => {
 			if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
@@ -1807,13 +1825,13 @@ export class ToolExecutionComponent extends Container {
 				const output = this.#getTextOutput().trimEnd();
 				context.output = output;
 			}
-			context.expanded = this.#expanded;
+			context.expanded = expanded;
 			context.previewLines = DEFAULT_TERMINAL_PREVIEW_LINES;
 			context.timeout = normalizeTimeoutSeconds(isRecord(this.#args) ? this.#args.timeout : undefined, 3600);
 		} else if (this.#toolName === "eval" && this.#result) {
 			const output = this.#getTextOutput().trimEnd();
 			context.output = output;
-			context.expanded = this.#expanded;
+			context.expanded = expanded;
 			context.previewLines = DEFAULT_TERMINAL_PREVIEW_LINES;
 		} else if (this.#toolName === "task") {
 			// Once a result snapshot exists the task renderer's `renderResult`

@@ -226,7 +226,7 @@ describe("bash native run box", () => {
 				false,
 			);
 			const described = tool.describe(cx(["tool", "ansi", "code", "image"]));
-			expect(props(described).preview).toBe("children");
+			expect(props(described).collapsible).toBe(false);
 			expect(props(described).command).toBe("plot");
 			expect(nodes(described.c).map(child => role(child) ?? child.k)).toEqual(["omp.run", "image"]);
 		} finally {
@@ -580,8 +580,8 @@ describe("user shell runs", () => {
 		const p = props(described);
 		expect(p.target).toBeUndefined();
 		expect(p.command).toBe("ls -la");
-		expect(p.preview).toBe("children");
-		expect(p.collapsed).toBe(true);
+		// Two output lines fit the output preview: folding would hide nothing.
+		expect(p).toMatchObject({ collapsible: false, collapsed: undefined, preview: undefined });
 		expect((p.badges as { text: string }[]).map(badge => badge.text)).toEqual(["you", "not sent"]);
 		const [box, image] = nodes(described.c);
 		expect(role(box)).toBe("omp.run");
