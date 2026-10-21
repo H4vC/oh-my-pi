@@ -60,17 +60,18 @@ import { boundKeys, editorKey, editorKeys, interruptKey } from "../chrome/keybin
 import { getKeybindings } from "../keybindings";
 import type { TspPickerItem, TspPickerProps, TspSpan, TspText } from "@oh-my-pi/pi-wire";
 import type { ThemeColor } from "../theme/schema";
-import { col, keyed, node, span, text } from "../native/describe";
+import { node, span, text } from "../native/describe";
 import type { DescribeContext, NativeChild, NativeNode, NativeUiEvent } from "../native/node";
 import { actionHint, hintsRow, overlayCard } from "../native/overlay";
 import {
 	CLOSE_ACTION,
+	dockedPicker,
+	PICKER_KEY,
 	type PickerEvent,
-	picker,
 	pickerAction,
 	pickerEvent,
+	pickerFills,
 	pickerQuery,
-	pickerSize,
 } from "../native/picker";
 import { plainText } from "../native/spans";
 import type { OutlineTarget } from "../chat/transcript-outline";
@@ -1479,10 +1480,10 @@ export class TreeSelectorComponent extends OverlayPanel {
 		| undefined;
 	#pickerMemo:
 		| {
-				size: TspPickerProps["size"];
 				view: TreePickerView;
 				preview: readonly NativeChild[];
 				label: LabelInput | null;
+				fill: boolean;
 				node: NativeNode;
 		  }
 		| undefined;
@@ -1556,7 +1557,7 @@ export class TreeSelectorComponent extends OverlayPanel {
 	}
 
 	override describe(cx: DescribeContext): NativeNode {
-		return cx.supports("picker") ? this.#describePicker(cx) : this.#describeCard();
+		return cx.supports("picker") ? this.#describePicker(pickerFills(cx)) : this.#describeCard();
 	}
 
 	/**
@@ -1564,15 +1565,14 @@ export class TreeSelectorComponent extends OverlayPanel {
 	 * the reconciler hoists it into `layer` as a sheet. The label editor
 	 * takes the preview pane while open.
 	 */
-	#describePicker(cx: DescribeContext): NativeNode {
-		const size = pickerSize(cx, "lg");
+	#describePicker(fill: boolean): NativeNode {
 		const view = this.#treeList.pickerView();
 		const label = this.#labelInput;
 		const preview = label ? label.preview : this.#treeList.pickerPreview();
 		const memo = this.#pickerMemo;
 		if (
-			memo?.size === size &&
-			memo.label === label &&
+			memo?.label === label &&
+			memo.fill === fill &&
 			memo.preview === preview &&
 			memo.view.items === view.items &&
 			memo.view.order === view.order &&
@@ -1588,7 +1588,7 @@ export class TreeSelectorComponent extends OverlayPanel {
 			...(this.sessionName ? { subtitle: this.sessionName } : {}),
 			icon: "git-branch",
 			noun: "entries",
-			size,
+			size: "lg",
 			layout: "tree",
 			preview: "side",
 			...pickerQuery(this.#treeList.searchInput),
@@ -1615,8 +1615,8 @@ export class TreeSelectorComponent extends OverlayPanel {
 						CLOSE_ACTION,
 					],
 		};
-		const result = col([keyed(picker(props, preview), "picker")]);
-		this.#pickerMemo = { size, view, preview, label, node: result };
+		const result = dockedPicker(props, preview, fill);
+		this.#pickerMemo = { view, preview, label, fill, node: result };
 		return result;
 	}
 
@@ -1703,7 +1703,7 @@ export class TreeSelectorComponent extends OverlayPanel {
 
 	/** Filter tab → switch mode; entry click → highlight it and switch, exactly like Enter. */
 	handleNativeEvent(event: NativeUiEvent): void {
-		const picked = pickerEvent(event, "picker");
+		const picked = pickerEvent(event, PICKER_KEY);
 		if (picked) {
 			this.#handlePickerEvent(picked);
 			return;

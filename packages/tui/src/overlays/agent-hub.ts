@@ -90,7 +90,7 @@ import { Stack } from "../components/layout/stack";
 import { node, span, stableKey, text } from "../native/describe";
 import { type DescribeContext, leafKey, type NativeChild, type NativeNode, type NativeUiEvent } from "../native/node";
 import { hintsRow, type NativeHint, overlayCard } from "../native/overlay";
-import { CLOSE_ACTION, picker, pickerQuery, pickerSize } from "../native/picker";
+import { CLOSE_ACTION, picker, pickerQuery } from "../native/picker";
 import { Input } from "../components/input";
 
 /** A chrome-less search field: the hub draws its own prompt. */
@@ -690,20 +690,19 @@ export class AgentHubOverlayComponent<TRecord extends AgentRecordLike = AgentRec
 	// ========================================================================
 
 	/** A `picker` is its own sheet: the backend mounts it in `layer` without an `overlay` wrapper. */
-	nativeSheet(cx: DescribeContext): boolean {
-		return cx.supports("picker");
+	nativeSheet(cx: DescribeContext): "picker" | false {
+		return cx.supports("picker") && "picker";
 	}
 
 	override describe(cx: DescribeContext): NativeNode {
 		const usePicker = cx.supports("picker");
 		const nativeTree = cx.supports("tree");
 		const meter = cx.supports("meter");
-		const size = pickerSize(cx, "lg");
-		const variant = usePicker ? `picker:${meter}:${size}` : nativeTree ? "tree" : "list";
+		const variant = usePicker ? `picker:${meter}` : nativeTree ? "tree" : "list";
 		if (this.#native && this.#nativeVariant === variant) return this.#native;
 		this.#nativeVariant = variant;
 		if (usePicker) {
-			this.#native = this.#describePicker(meter, size);
+			this.#native = this.#describePicker(meter);
 			return this.#native;
 		}
 		const tabs = node("tabs", { items: SECTION_TABS, active: this.#section }, undefined, "section");
@@ -855,13 +854,13 @@ export class AgentHubOverlayComponent<TRecord extends AgentRecordLike = AgentRec
 	}
 
 	/** The hub as a data-first `picker` (§9.1): roster or activity log, selected agent as preview. */
-	#describePicker(meter: boolean, size: TspPickerProps["size"]): NativeNode {
+	#describePicker(meter: boolean): NativeNode {
 		const activity = this.#section === "activity";
 		const props: TspPickerProps = {
 			title: "Agents",
 			subtitle: this.#pickerSubtitle(),
 			icon: "users",
-			size,
+			size: "lg",
 			tabs: PICKER_TABS,
 			tab: this.#section,
 			...(activity ? this.#activityPickerProps() : this.#agentPickerProps()),

@@ -113,7 +113,7 @@ test("picker select and the Open transcript action take Enter's path on the chos
 	const focused: string[] = [];
 	const hub = createHub([agent("alpha", 3_000), agent("beta", 2_000), agent("gamma", 1_000)], focused);
 	try {
-		expect(hub.nativeSheet(pickerCx)).toBe(true);
+		expect(hub.nativeSheet(pickerCx)).toBe("picker");
 		expect(pickerProps(hub).selected).toBe("alpha");
 
 		hub.handleNativeEvent({ type: "select", key: "", item: "beta" });

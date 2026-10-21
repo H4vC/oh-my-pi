@@ -5,9 +5,9 @@
  * and Tern draws the sheet (head, scopes, tabs, fact columns, rows, preview,
  * action bar).
  *
- * A picker is its own sheet: the component returns `nativeSheet(cx)` true
- * (usually `cx.supports("picker")`) so the backend puts it directly in
- * `layer`, and `describe()` returns {@link picker}. When the terminal lacks
+ * A picker is its own sheet: the component returns `nativeSheet(cx)`
+ * `"picker"` (usually `cx.supports("picker") && "picker"`) so the backend
+ * puts it directly in `layer`, and `describe()` returns {@link picker}. When the terminal lacks
  * the kind, components keep describing their generic composition.
  *
  * Keys stay the program's: a search field is an {@link Input} (every editor
@@ -25,12 +25,16 @@ import { col, node } from "./describe";
 import type { DescribeContext, NativeChild, NativeNode, NativeUiEvent } from "./node";
 import { NARROW_SHEET_COLS } from "./overlay";
 
+/** Key of the full-pane `overlay` a filling {@link dockedPicker} sits in; {@link pickerEvent} skips it. */
+const FILL_KEY = "fill";
+
 /**
- * A picker's `size` in `cx`'s pane: `screen` (the whole pane) when it is
- * narrower than {@link NARROW_SHEET_COLS}. Memoized pickers MUST key on it.
+ * Whether a picker sheet fills `cx`'s pane: it is narrower than
+ * {@link NARROW_SHEET_COLS}. A picker has no full-pane size of its own, so a
+ * filling one sits in a `full` overlay. Memoized docked pickers MUST key on it.
  */
-export function pickerSize(cx: DescribeContext, size: "md" | "lg"): "md" | "lg" | "screen" {
-	return cx.cols < NARROW_SHEET_COLS ? "screen" : size;
+export function pickerFills(cx: DescribeContext): boolean {
+	return cx.cols < NARROW_SHEET_COLS;
 }
 
 /** The picker sheet; `preview` children fill its preview pane. */
@@ -53,10 +57,12 @@ export const PICKER_KEY = "picker";
 /**
  * The root a selector mounted in the editor slot describes: a column holding
  * the picker as child {@link PICKER_KEY}, which the reconciler hoists into
- * `layer`. Route its events with `pickerEvent(event, PICKER_KEY)`.
+ * `layer`; with `fill` ({@link pickerFills}) the picker sits in a full-pane
+ * `overlay` instead. Route its events with `pickerEvent(event, PICKER_KEY)`.
  */
-export function dockedPicker(p: TspPickerProps, preview?: readonly NativeChild[]): NativeNode {
-	return col([node("picker", p, preview, PICKER_KEY)]);
+export function dockedPicker(p: TspPickerProps, preview?: readonly NativeChild[], fill = false): NativeNode {
+	const sheet = node("picker", p, preview, PICKER_KEY);
+	return col([fill ? node("overlay", { anchor: "center", size: "full", modal: true }, [sheet], FILL_KEY) : sheet]);
 }
 
 /** Keycap names for one key id (`"alt+enter"` → `["alt", "enter"]`, `"escape"` → `["esc"]`). */
@@ -146,7 +152,8 @@ export type PickerEvent =
  * key (a hoisted child's keypath carries a `^` marker, ignored here).
  */
 export function pickerEvent(event: NativeUiEvent, key = ""): PickerEvent | undefined {
-	if (event.key.replaceAll("^", "") !== key) return undefined;
+	const path = event.key.replaceAll("^", "");
+	if (path !== key && path !== `${FILL_KEY}/${key}`) return undefined;
 	switch (event.type) {
 		case "select":
 		case "activate":
@@ -218,11 +225,7 @@ export interface SelectPickerOptions {
  * selection, the pending-confirmation strip, and `Select ⏎` / `Close esc`.
  * Memoize on {@link SelectList.pickerView}'s parts: the builder allocates.
  */
-export function selectListPicker(
-	list: SelectList,
-	o: SelectPickerOptions,
-	size: TspPickerProps["size"] = "md",
-): TspPickerProps {
+export function selectListPicker(list: SelectList, o: SelectPickerOptions): TspPickerProps {
 	const view = list.pickerView();
 	const items: TspPickerItem[] = view.items.map(item => ({
 		id: item.value,
@@ -237,7 +240,7 @@ export function selectListPicker(
 		...(o.subtitle ? { subtitle: o.subtitle } : {}),
 		...(o.icon ? { icon: o.icon } : {}),
 		noun: o.noun ?? "options",
-		size,
+		size: "md",
 		layout: "rows",
 		preview: "none",
 		...(o.searchable ? { query: view.query, cursor: view.cursor } : { query: null }),
@@ -298,7 +301,7 @@ export class SelectListSheet {
 				readonly pending: string | null;
 				readonly query: string;
 				readonly cursor: number;
-				readonly size: TspPickerProps["size"];
+				readonly fill: boolean;
 				readonly node: NativeNode;
 		  }
 		| undefined;
@@ -323,7 +326,7 @@ export class SelectListSheet {
 
 	describe(cx: DescribeContext): NativeNode {
 		const view = this.list.pickerView();
-		const size = pickerSize(cx, "md");
+		const fill = this.#docked && pickerFills(cx);
 		const memo = this.#memo;
 		if (
 			memo !== undefined &&
@@ -332,13 +335,13 @@ export class SelectListSheet {
 			memo.pending === view.pending &&
 			memo.query === view.query &&
 			memo.cursor === view.cursor &&
-			memo.size === size
+			memo.fill === fill
 		) {
 			return memo.node;
 		}
-		const props = selectListPicker(this.list, this.#options(), size);
-		const result = this.#docked ? dockedPicker(props) : picker(props);
-		this.#memo = { ...view, size, node: result };
+		const props = selectListPicker(this.list, this.#options());
+		const result = this.#docked ? dockedPicker(props, undefined, fill) : picker(props);
+		this.#memo = { ...view, fill, node: result };
 		return result;
 	}
 

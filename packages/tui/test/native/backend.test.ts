@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { type LogEvent, registerLogSink } from "@oh-my-pi/pi-utils/logger";
 import { card, md, node } from "@oh-my-pi/pi-tui/native/describe";
+import { dockedPicker, PICKER_KEY, pickerEvent } from "@oh-my-pi/pi-tui/native/picker";
 import type { NativeNode, NativeUiEvent } from "@oh-my-pi/pi-tui/native/node";
 import { nativeComponentId } from "@oh-my-pi/pi-tui/native/reconcile";
 import { settleNative } from "@oh-my-pi/pi-tui/native/settle";
@@ -313,6 +314,70 @@ describe("native backend", () => {
 		h.event({ ev: "resize", cols: 99 });
 		await h.render();
 		expect(sizes()).toEqual(narrow);
+		expect(h.errors).toEqual([]);
+	});
+
+	it("puts a picker sheet in a full-pane overlay while the pane is narrow, keeping its own events, and never a prefs sheet", async () => {
+		const pickerSheet = Object.assign(new Probe(node("picker", { title: "Models", size: "lg" })), {
+			nativeSheet: (): "picker" => "picker",
+		});
+		const prefsSheet = Object.assign(
+			new Probe(node("prefs", { title: "Settings", pages: [{ id: "a", label: "A" }], page: "a", sections: [] })),
+			{ nativeSheet: (): "prefs" => "prefs" },
+		);
+		harness = await TspHarness.start(
+			tui => {
+				tui.showOverlay(prefsSheet);
+				tui.showOverlay(pickerSheet);
+			},
+			{ cols: 99 },
+		);
+		const h = harness;
+		const pickerId = nativeComponentId(pickerSheet);
+		const prefsId = nativeComponentId(prefsSheet);
+		// Each sheet's parent: an overlay wrapper (with its size) or the layer itself.
+		const parents = (): Record<string, unknown> => {
+			const out: Record<string, unknown> = {};
+			for (const parent of h.findAll(n => (n.c ?? []).some(c => c.id === pickerId || c.id === prefsId))) {
+				for (const child of parent.c ?? []) {
+					if (child.id !== pickerId && child.id !== prefsId) continue;
+					out[child.id === pickerId ? "picker" : "prefs"] =
+						parent.k === "overlay" ? (parent.p && "size" in parent.p ? parent.p.size : undefined) : parent.id;
+				}
+			}
+			return out;
+		};
+		expect(parents()).toEqual({ picker: "full", prefs: "layer" });
+		h.event({ ev: "action", sf: h.terminal.surface!, id: pickerId, act: "close" });
+		expect(pickerSheet.events).toEqual([expect.objectContaining({ type: "action", key: "", act: "close" })]);
+
+		h.event({ ev: "resize", cols: 100 });
+		await h.render();
+		expect(parents()).toEqual({ picker: "layer", prefs: "layer" });
+
+		h.event({ ev: "resize", cols: 99 });
+		await h.render();
+		expect(parents()).toEqual({ picker: "full", prefs: "layer" });
+		expect(h.errors).toEqual([]);
+	});
+
+	it("routes a filling docked picker's events to its picker key", async () => {
+		const selector = new Probe(dockedPicker({ title: "Theme", size: "md" }, undefined, true));
+		const provider = {
+			renderFrame: () => ({ viewport: [] }),
+			acknowledgeHistory: () => {},
+			describeSurface: () => ({ main: [], dock: [selector] }),
+		};
+		harness = await TspHarness.start(tui => tui.setFrameProvider(provider), { cols: 80 });
+		const h = harness;
+		const sheet = h.find(n => n.k === "picker")!;
+		expect(h.find(n => n.k === "overlay" && (n.c ?? []).some(c => c.id === sheet.id))?.p).toMatchObject({
+			size: "full",
+		});
+		h.event({ ev: "action", sf: h.terminal.surface!, id: sheet.id, act: "close" });
+		expect(selector.events.map(event => pickerEvent(event, PICKER_KEY))).toEqual([
+			{ kind: "action", act: "close", value: undefined },
+		]);
 		expect(h.errors).toEqual([]);
 	});
 });

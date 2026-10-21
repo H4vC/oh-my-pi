@@ -170,7 +170,7 @@ describe("advisor sync backlog picker", () => {
 			supports: () => true,
 			feature: () => true,
 		};
-		expect(overlay.nativeSheet(cx)).toBe(true);
+		expect(overlay.nativeSheet(cx)).toBe("prefs");
 		expect(overlay.nativeSheet({ ...cx, feature: name => name !== "aside" })).toBe(false);
 		expect(overlay.nativeSheet({ ...cx, supports: kind => kind !== "prefs" })).toBe(false);
 	});

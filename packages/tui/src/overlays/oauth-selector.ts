@@ -17,7 +17,7 @@ import { OverlayPanel } from "../chrome/overlay-box";
 import { Input } from "../components/input";
 import { MenuSelection } from "../components/menu-selection";
 import { centeredViewportRange } from "../components/scroll-viewport";
-import type { TspPickerItem, TspPickerProps, TspSpan, TspTone } from "@oh-my-pi/pi-wire";
+import type { TspPickerItem, TspSpan, TspTone } from "@oh-my-pi/pi-wire";
 import { node, span, text } from "../native/describe";
 import type { DescribeContext, NativeNode, NativeUiEvent } from "../native/node";
 import {
@@ -27,7 +27,7 @@ import {
 	pickerAction,
 	pickerEvent,
 	pickerQuery,
-	pickerSize,
+	pickerFills,
 } from "../native/picker";
 import { overlayCard } from "../native/overlay";
 import { isNativeRendering } from "../native/state";
@@ -87,7 +87,7 @@ export class OAuthSelectorComponent extends OverlayPanel {
 	#nativeRoot: NativeNode | undefined;
 	/** Picker rows for the whole catalogue; dropped when an auth state changes. */
 	#pickerItems: readonly TspPickerItem[] | undefined;
-	#pickerRoot: { size: TspPickerProps["size"]; node: NativeNode } | undefined;
+	#pickerRoot: { fill: boolean; node: NativeNode } | undefined;
 	constructor(
 		mode: "login" | "logout",
 		authStorage: OAuthSelectorAuthSource,
@@ -506,40 +506,44 @@ export class OAuthSelectorComponent extends OverlayPanel {
 	}
 
 	#describePicker(cx: DescribeContext): NativeNode {
-		const size = pickerSize(cx, "md");
-		if (this.#pickerRoot?.size === size) return this.#pickerRoot.node;
+		const fill = pickerFills(cx);
+		if (this.#pickerRoot?.fill === fill) return this.#pickerRoot.node;
 		const all = this.#menu.items;
 		this.#pickerItems ??= all.map(provider => this.#pickerItem(provider));
 		const query = this.#menu.query;
 		const login = this.#mode === "login";
 		const search = this.#shouldRenderSearchStatus() ? pickerQuery(this.#search) : pickerQuery(null);
-		const root = dockedPicker({
-			title: login ? "Sign in" : "Sign out",
-			subtitle: login ? "Pick a provider" : "Remove stored credentials",
-			icon: "key-round",
-			noun: "providers",
-			size,
-			layout: "cards",
-			preview: "none",
-			...search,
-			placeholder: "Search providers…",
-			items: this.#pickerItems,
-			...(query.length > 0 ? { order: this.#menu.visibleItems.map(provider => provider.id) } : {}),
-			selected: this.#menu.selectedKey ?? null,
-			total: all.length,
-			empty: login ? "No OAuth providers available" : "No stored provider credentials to log out",
-			...(this.#statusMessage ? { message: this.#statusMessage } : {}),
-			actions: [
-				pickerAction(
-					"confirm",
-					login ? "Sign in" : "Sign out",
-					"enter",
-					login ? { primary: true } : { primary: true, danger: true },
-				),
-				CLOSE_ACTION,
-			],
-		});
-		this.#pickerRoot = { size, node: root };
+		const root = dockedPicker(
+			{
+				title: login ? "Sign in" : "Sign out",
+				subtitle: login ? "Pick a provider" : "Remove stored credentials",
+				icon: "key-round",
+				noun: "providers",
+				size: "md",
+				layout: "cards",
+				preview: "none",
+				...search,
+				placeholder: "Search providers…",
+				items: this.#pickerItems,
+				...(query.length > 0 ? { order: this.#menu.visibleItems.map(provider => provider.id) } : {}),
+				selected: this.#menu.selectedKey ?? null,
+				total: all.length,
+				empty: login ? "No OAuth providers available" : "No stored provider credentials to log out",
+				...(this.#statusMessage ? { message: this.#statusMessage } : {}),
+				actions: [
+					pickerAction(
+						"confirm",
+						login ? "Sign in" : "Sign out",
+						"enter",
+						login ? { primary: true } : { primary: true, danger: true },
+					),
+					CLOSE_ACTION,
+				],
+			},
+			undefined,
+			fill,
+		);
+		this.#pickerRoot = { fill, node: root };
 		return root;
 	}
 

@@ -37,18 +37,19 @@ import { MenuSelection } from "../components/menu-selection";
 import { centeredViewportRange } from "../components/scroll-viewport";
 import type { KeyName } from "../key-hint-format";
 import type { TspPickerItem, TspPickerProps } from "@oh-my-pi/pi-wire";
-import { col, keyed, node, span } from "../native/describe";
+import { node, span } from "../native/describe";
 import type { DescribeContext, NativeNode, NativeUiEvent } from "../native/node";
 import { actionHint, hintsRow, overlayCard } from "../native/overlay";
 import {
-	picker,
+	dockedPicker,
+	PICKER_KEY,
 	pickerAction,
 	pickerAge,
 	pickerDate,
 	pickerEvent,
+	pickerFills,
 	pickerHits,
 	pickerQuery,
-	pickerSize,
 } from "../native/picker";
 import { shortenPath } from "../render/render-utils";
 
@@ -61,16 +62,14 @@ function nativeEntryKey(entry: HistorySearchEntry): string {
 
 interface HistoryNativeMemo {
 	picker: boolean;
+	/** The picker fills the pane ({@link pickerFills}). */
+	fill: boolean;
 	items: readonly HistorySearchEntry[];
 	selected: HistorySearchEntry | undefined;
 	query: string;
 	cursor: number;
-	size: TspPickerProps["size"];
 	node: NativeNode;
 }
-
-/** Key of the `picker` child a dock-mounted history search describes (hoisted into `layer`). */
-const PICKER_KEY = "picker";
 
 /** Visible result rows; also the jump distance for PageUp/PageDown. */
 const MAX_VISIBLE = 10;
@@ -333,7 +332,7 @@ export class HistorySearchComponent extends OverlayPanel {
 	}
 
 	/**
-	 * With the `picker` kind: a `size:"md"` sheet (full-pane when narrow) of past prompts (first line
+	 * With the `picker` kind: a `size:"md"` sheet of past prompts (first line
 	 * with hits, age, folder) as a keyed child the reconciler hoists into
 	 * `layer`, since the selector replaces the editor in the dock. Otherwise
 	 * the query field (the `Input`, which describes itself as `input`), the
@@ -344,24 +343,24 @@ export class HistorySearchComponent extends OverlayPanel {
 		const items = this.#menu.visibleItems;
 		const selected = this.#menu.selectedItem;
 		const usePicker = cx.supports("picker");
+		const fill = usePicker && pickerFills(cx);
 		const query = usePicker ? this.#searchInput.getValue() : this.#searchInput.getValue().trim();
 		const cursor = this.#searchInput.getCursor();
-		const size = pickerSize(cx, "md");
 		const memo = this.#nativeMemo;
 		if (
 			memo &&
 			memo.picker === usePicker &&
+			memo.fill === fill &&
 			memo.items === items &&
 			memo.selected === selected &&
 			memo.query === query &&
-			memo.cursor === cursor &&
-			memo.size === size
+			memo.cursor === cursor
 		) {
 			return memo.node;
 		}
 		if (usePicker) {
-			const root = col([keyed(this.#describePicker(items, selected, query, size), PICKER_KEY)]);
-			this.#nativeMemo = { picker: true, items, selected, query, cursor, size, node: root };
+			const root = dockedPicker(this.#pickerProps(items, selected, query), undefined, fill);
+			this.#nativeMemo = { picker: true, fill, items, selected, query, cursor, node: root };
 			return root;
 		}
 
@@ -394,27 +393,26 @@ export class HistorySearchComponent extends OverlayPanel {
 			actionHint("tui.select.cancel", "cancel"),
 		]);
 		const root = overlayCard(this.nativeRole, this.title, [this.#searchInput, list, this.#nativeHints]);
-		this.#nativeMemo = { picker: false, items, selected, query, cursor, size, node: root };
+		this.#nativeMemo = { picker: false, fill, items, selected, query, cursor, node: root };
 		return root;
 	}
 
-	#describePicker(
+	#pickerProps(
 		items: readonly HistorySearchEntry[],
 		selected: HistorySearchEntry | undefined,
 		query: string,
-		size: TspPickerProps["size"],
-	): NativeNode {
+	): TspPickerProps {
 		let rows = this.#pickerItems;
 		if (rows?.items !== items) {
 			const tokens = queryTokens(query.trim());
 			rows = { items, rows: items.map(entry => historyPickerItem(entry, tokens)) };
 			this.#pickerItems = rows;
 		}
-		return picker({
+		return {
 			title: this.title,
 			icon: "history",
 			noun: "prompts",
-			size,
+			size: "md",
 			layout: "rows",
 			preview: "none",
 			...pickerQuery(this.#searchInput),
@@ -427,7 +425,7 @@ export class HistorySearchComponent extends OverlayPanel {
 				pickerAction("insert", "Insert", "enter", { primary: true }),
 				pickerAction("close", "Close", boundKeys("app.interrupt", ["escape"])[0] ?? "escape", { end: true }),
 			],
-		});
+		};
 	}
 
 	/**

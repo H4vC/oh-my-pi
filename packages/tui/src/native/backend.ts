@@ -873,7 +873,7 @@ export class NativeBackend {
 				if (!reconciler || owners.length === 0) return;
 				const field =
 					owners.findLast(owner => owner.handleInput && reconciler.focusTarget(owner) === event.id) ?? null;
-				this.#host.focusFromPointer(owners, field, overlay => overlay.nativeSheet?.(this.#cx) === true);
+				this.#host.focusFromPointer(owners, field, overlay => Boolean(overlay.nativeSheet?.(this.#cx)));
 				this.#host.requestRender();
 				return;
 			}
@@ -934,18 +934,19 @@ export class NativeBackend {
 
 	/**
 	 * The `overlay` node wrapping a TUI overlay, memoized while its placement
-	 * is unchanged; a component describing its own sheet goes in unwrapped.
+	 * is unchanged; a component describing its own sheet goes in unwrapped,
+	 * except a picker in a narrow pane, which has no full-pane size of its own.
 	 */
 	#overlayNode(overlay: NativeOverlay): NativeChild {
-		if (overlay.component.nativeSheet?.(this.#cx)) return overlay.component;
-		const own = overlay.component.nativeOverlay;
-		const anchor = own?.anchor ?? overlayAnchor(overlay.options);
-		let size = own?.size ?? overlaySize(overlay.options, this.#cx.cols);
+		const narrow = this.#cx.cols < NARROW_SHEET_COLS;
+		const sheet = overlay.component.nativeSheet?.(this.#cx);
+		if (sheet && !(sheet === "picker" && narrow)) return overlay.component;
+		const own = sheet ? undefined : overlay.component.nativeOverlay;
+		const anchor = sheet ? "center" : (own?.anchor ?? overlayAnchor(overlay.options));
+		let size = sheet ? "full" : (own?.size ?? overlaySize(overlay.options, this.#cx.cols));
 		// A centered sheet in a narrow pane fills it instead of floating with margins: `lg`, and a component's own `md`
 		// sheet (an undeclared `md` is a generic dialog sized from its options).
-		if (anchor === "center" && this.#cx.cols < NARROW_SHEET_COLS && (size === "lg" || own?.size === "md")) {
-			size = "full";
-		}
+		if (anchor === "center" && narrow && (size === "lg" || own?.size === "md")) size = "full";
 		const modal = overlay.focused || overlay.options?.fullscreen === true;
 		const role = own?.role;
 		const head = own?.head;

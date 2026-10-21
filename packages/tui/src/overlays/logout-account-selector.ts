@@ -8,8 +8,8 @@ import { formatKeyHint } from "../app-keybindings";
 import { editorKey, editorKeys } from "../chrome/keybinding-hints";
 import { node, span } from "../native/describe";
 import type { DescribeContext, NativeNode, NativeUiEvent } from "../native/node";
-import { CLOSE_ACTION, dockedPicker, PICKER_KEY, pickerAction, pickerEvent, pickerSize } from "../native/picker";
-import type { TspPickerItem, TspPickerProps } from "@oh-my-pi/pi-wire";
+import { CLOSE_ACTION, dockedPicker, PICKER_KEY, pickerAction, pickerEvent, pickerFills } from "../native/picker";
+import type { TspPickerItem } from "@oh-my-pi/pi-wire";
 import { actionHint, hintsRow, overlayCard } from "../native/overlay";
 
 const LOGOUT_SELECTOR_MAX_VISIBLE = 10;
@@ -32,7 +32,7 @@ export class LogoutAccountSelectorComponent extends OverlayPanel {
 	#nativeItems: readonly NativeNode[] | undefined;
 	#nativeHints: NativeNode | undefined;
 	#nativeRoot: NativeNode | undefined;
-	#pickerRoot: { size: TspPickerProps["size"]; node: NativeNode } | undefined;
+	#pickerRoot: { fill: boolean; node: NativeNode } | undefined;
 	#pickerItems: readonly TspPickerItem[] | undefined;
 	readonly #providerName: string;
 	readonly #accounts: readonly LogoutAccount[];
@@ -144,29 +144,33 @@ export class LogoutAccountSelectorComponent extends OverlayPanel {
 
 	override describe(cx: DescribeContext): NativeNode {
 		if (cx.supports("picker")) {
-			const size = pickerSize(cx, "md");
-			if (this.#pickerRoot?.size === size) return this.#pickerRoot.node;
-			const root = dockedPicker({
-				title: `${this.#providerName} accounts`,
-				subtitle: "Pick the account to sign out",
-				icon: "key-round",
-				noun: "accounts",
-				size,
-				layout: "cards",
-				preview: "none",
-				query: null,
-				items: (this.#pickerItems ??= this.#accounts.map(account => ({
-					id: String(account.credentialId),
-					label: account.label,
-					...(account.detail ? { detail: account.detail } : {}),
-					badges: [{ text: account.type === "oauth" ? "login" : "api key" }],
-				}))),
-				current: this.#accounts.filter(account => account.active).map(account => String(account.credentialId)),
-				selected: this.#menu.selectedKey ?? null,
-				empty: "No stored accounts to log out",
-				actions: [pickerAction("confirm", "Sign out", "enter", { primary: true, danger: true }), CLOSE_ACTION],
-			});
-			this.#pickerRoot = { size, node: root };
+			const fill = pickerFills(cx);
+			if (this.#pickerRoot?.fill === fill) return this.#pickerRoot.node;
+			const root = dockedPicker(
+				{
+					title: `${this.#providerName} accounts`,
+					subtitle: "Pick the account to sign out",
+					icon: "key-round",
+					noun: "accounts",
+					size: "md",
+					layout: "cards",
+					preview: "none",
+					query: null,
+					items: (this.#pickerItems ??= this.#accounts.map(account => ({
+						id: String(account.credentialId),
+						label: account.label,
+						...(account.detail ? { detail: account.detail } : {}),
+						badges: [{ text: account.type === "oauth" ? "login" : "api key" }],
+					}))),
+					current: this.#accounts.filter(account => account.active).map(account => String(account.credentialId)),
+					selected: this.#menu.selectedKey ?? null,
+					empty: "No stored accounts to log out",
+					actions: [pickerAction("confirm", "Sign out", "enter", { primary: true, danger: true }), CLOSE_ACTION],
+				},
+				undefined,
+				fill,
+			);
+			this.#pickerRoot = { fill, node: root };
 			return root;
 		}
 		if (this.#nativeRoot) return this.#nativeRoot;

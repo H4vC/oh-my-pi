@@ -791,8 +791,8 @@ export class SettingsSelectorComponent implements Component {
 	 * pane's right edge with the transcript beside it. Without `aside` it
 	 * fills a screen surface instead.
 	 */
-	nativeSheet(cx: DescribeContext): boolean {
-		return cx.supports("prefs") && cx.feature("aside");
+	nativeSheet(cx: DescribeContext): "prefs" | false {
+		return cx.supports("prefs") && cx.feature("aside") && "prefs";
 	}
 
 	/**

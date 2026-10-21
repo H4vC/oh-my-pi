@@ -78,7 +78,7 @@ describe("session selector picker", () => {
 
 	it("describes a grouped cards picker with a preview when the terminal has the kind, else the card", () => {
 		const selector = make();
-		expect(selector.nativeSheet(withPicker)).toBe(true);
+		expect(selector.nativeSheet(withPicker)).toBe("picker");
 		const root = selector.describe(withPicker);
 		const p = props(root);
 		expect(p.size).toBe("lg");

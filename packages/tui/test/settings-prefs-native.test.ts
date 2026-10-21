@@ -163,7 +163,7 @@ describe("settings as a native prefs page", () => {
 
 	it("docks beside the transcript only where the terminal advertises aside", () => {
 		const { selector } = harness();
-		expect(selector.nativeSheet(PREFS)).toBe(true);
+		expect(selector.nativeSheet(PREFS)).toBe("prefs");
 		expect(selector.nativeSheet({ ...PREFS, feature: name => name !== "aside" })).toBe(false);
 		expect(selector.nativeSheet({ ...PREFS, supports: kind => kind !== "prefs" })).toBe(false);
 	});

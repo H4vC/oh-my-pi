@@ -44,9 +44,9 @@ import {
 	pickerAction,
 	pickerEvent,
 	pickerQuery,
-	pickerSize,
+	pickerFills,
 } from "../native/picker";
-import type { TspPickerItem, TspPickerProps } from "@oh-my-pi/pi-wire";
+import type { TspPickerItem } from "@oh-my-pi/pi-wire";
 
 /** One segment of a {@link HookSelectorSlider} — a label and an optional
  *  detail line (e.g. the resolved model name) shown beneath the track while
@@ -237,7 +237,7 @@ export class HookSelectorComponent extends OverlayPanel {
 				selected: string | undefined;
 				query: string;
 				cursor: number;
-				size: TspPickerProps["size"];
+				fill: boolean;
 				node: NativeNode;
 		  }
 		| undefined;
@@ -699,7 +699,7 @@ export class HookSelectorComponent extends OverlayPanel {
 	 * The options as a `picker md` sheet (full-pane when narrow): every option by original index, filtering sends
 	 * only `order`.
 	 */
-	#describePicker(size: TspPickerProps["size"]): NativeNode {
+	#describePicker(fill: boolean): NativeNode {
 		const items = this.#menu.visibleItems;
 		const selected = this.#menu.selectedKey;
 		const query = this.#menu.query;
@@ -711,7 +711,7 @@ export class HookSelectorComponent extends OverlayPanel {
 			memo.selected === selected &&
 			memo.query === query &&
 			memo.cursor === cursor &&
-			memo.size === size
+			memo.fill === fill
 		) {
 			return memo.node;
 		}
@@ -724,23 +724,27 @@ export class HookSelectorComponent extends OverlayPanel {
 			...(this.#isDisabled(index) ? { disabled: true as const } : {}),
 		}));
 		const checkbox = this.#selectionMarker === "checkbox";
-		const result = dockedPicker({
-			title: fixed.title,
-			...(this.#detailLines.length > 0 ? { subtitle: plainText(this.#detailLines.join("\n")) } : {}),
-			noun: "options",
-			size,
-			layout: "rows",
-			preview: "none",
-			...pickerQuery(this.#isSearchEnabled() || query.length > 0 ? this.#search : null),
-			items: this.#pickerItems,
-			...(query.length > 0 ? { order: items.map(filtered => String(filtered.index)) } : {}),
-			selected: selected ?? null,
-			...(checkbox ? { current: [...this.#checkedIndices].map(String) } : {}),
-			total: this.#options.length,
-			empty: "No matching options",
-			actions: [pickerAction("confirm", "Select", "enter", { primary: true }), CLOSE_ACTION],
-		});
-		this.#pickerMemo = { items, selected, query, cursor, size, node: result };
+		const result = dockedPicker(
+			{
+				title: fixed.title,
+				...(this.#detailLines.length > 0 ? { subtitle: plainText(this.#detailLines.join("\n")) } : {}),
+				noun: "options",
+				size: "md",
+				layout: "rows",
+				preview: "none",
+				...pickerQuery(this.#isSearchEnabled() || query.length > 0 ? this.#search : null),
+				items: this.#pickerItems,
+				...(query.length > 0 ? { order: items.map(filtered => String(filtered.index)) } : {}),
+				selected: selected ?? null,
+				...(checkbox ? { current: [...this.#checkedIndices].map(String) } : {}),
+				total: this.#options.length,
+				empty: "No matching options",
+				actions: [pickerAction("confirm", "Select", "enter", { primary: true }), CLOSE_ACTION],
+			},
+			undefined,
+			fill,
+		);
+		this.#pickerMemo = { items, selected, query, cursor, fill, node: result };
 		return result;
 	}
 
@@ -753,7 +757,7 @@ export class HookSelectorComponent extends OverlayPanel {
 	 */
 	override describe(cx: DescribeContext): NativeNode {
 		if (cx.supports("picker") && !this.#inline && !this.#slider && !this.#countdown) {
-			return this.#describePicker(pickerSize(cx, "md"));
+			return this.#describePicker(pickerFills(cx));
 		}
 		const items = this.#menu.visibleItems;
 		const selected = this.#menu.selectedKey;

@@ -286,12 +286,13 @@ export interface Component {
 	};
 
 	/**
-	 * True when this component, shown as an overlay, describes a data-first
-	 * sheet (`picker`, `prefs`) that is its own frame: the backend puts it
-	 * directly in `layer` with no `overlay` wrapper. Usually
-	 * `cx.supports("picker")`, so older terminals keep the wrapped fallback.
+	 * The data-first sheet kind (`picker`, `prefs`) this component, shown as an
+	 * overlay, describes as its own frame; the backend puts it directly in
+	 * `layer` with no `overlay` wrapper (a `picker` in a narrow pane goes in a
+	 * full-pane one). False keeps the wrapped fallback. Usually
+	 * `cx.supports("picker") && "picker"`, so older terminals keep the fallback.
 	 */
-	nativeSheet?(cx: DescribeContext): boolean;
+	nativeSheet?(cx: DescribeContext): "picker" | "prefs" | false;
 
 	/**
 	 * A fullscreen overlay that is a page of its own rather than one block:

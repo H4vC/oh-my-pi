@@ -17,8 +17,8 @@ class Panel implements Component {
 		this.keys.push(data);
 	}
 	invalidate(): void {}
-	nativeSheet(): boolean {
-		return this.sheet;
+	nativeSheet(): "prefs" | false {
+		return this.sheet && "prefs";
 	}
 	describe(): NativeNode {
 		return node("prefs", { title: "Settings", pages: [{ id: "a", label: "A" }], page: "a", sections: [] });

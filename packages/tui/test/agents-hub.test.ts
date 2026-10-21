@@ -308,7 +308,7 @@ describe("AgentsHub picker", () => {
 	test("select then Configure opens the agent strip; a strip chip persists like Enter on it", async () => {
 		const settings = new TestSettings();
 		const { hub } = await createHub(settings);
-		expect(hub.nativeSheet(pickerCx)).toBe(true);
+		expect(hub.nativeSheet(pickerCx)).toBe("picker");
 		expect(hub.nativeSheet(cx)).toBe(false);
 
 		hub.handleNativeEvent({ type: "select", key: "", item: "agent:bundled:scout" });

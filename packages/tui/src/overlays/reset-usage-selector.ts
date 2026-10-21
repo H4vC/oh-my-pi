@@ -12,7 +12,7 @@ import { editorKey, editorKeys } from "../chrome/keybinding-hints";
 import { node, span, text } from "../native/describe";
 import type { DescribeContext, NativeNode, NativeUiEvent } from "../native/node";
 import { actionHint, hintsRow, overlayCard } from "../native/overlay";
-import { CLOSE_ACTION, dockedPicker, PICKER_KEY, pickerAction, pickerEvent, pickerSize } from "../native/picker";
+import { CLOSE_ACTION, dockedPicker, PICKER_KEY, pickerAction, pickerEvent, pickerFills } from "../native/picker";
 import type { TspPickerItem, TspPickerProps, TspSpan } from "@oh-my-pi/pi-wire";
 
 const RESET_SELECTOR_MAX_VISIBLE = 10;
@@ -107,7 +107,7 @@ export class ResetUsageSelectorComponent extends OverlayPanel {
 	#nativeItems: readonly NativeNode[] | undefined;
 	#nativeHints: NativeNode | undefined;
 	#nativeRoot: NativeNode | undefined;
-	#pickerRoot: { size: TspPickerProps["size"]; node: NativeNode } | undefined;
+	#pickerRoot: { fill: boolean; node: NativeNode } | undefined;
 	#pickerItems: readonly TspPickerItem[] | undefined;
 
 	constructor(accounts: ResetUsageAccount[], onSelect: (account: ResetUsageAccount) => void, onCancel: () => void) {
@@ -331,8 +331,8 @@ export class ResetUsageSelectorComponent extends OverlayPanel {
 	 * reason; the first `Spend reset` turns the selected row into a confirm strip.
 	 */
 	#describePicker(cx: DescribeContext): NativeNode {
-		const size = pickerSize(cx, "md");
-		if (this.#pickerRoot?.size === size) return this.#pickerRoot.node;
+		const fill = pickerFills(cx);
+		if (this.#pickerRoot?.fill === fill) return this.#pickerRoot.node;
 		const items = (this.#pickerItems ??= this.#menu.visibleItems.map(account =>
 			accountPickerItem(account, this.#menu.adapter.getKey(account)),
 		));
@@ -346,29 +346,33 @@ export class ResetUsageSelectorComponent extends OverlayPanel {
 			if (notes.length > 0) subtitle = oneLine(notes.join(" "));
 		}
 		if (this.#statusMessage) subtitle = [span(oneLine(this.#statusMessage), "warning")];
-		const node = dockedPicker({
-			title: "Rate-limit resets",
-			subtitle,
-			icon: "refresh",
-			noun: "accounts",
-			size,
-			layout: "cards",
-			preview: "none",
-			query: null,
-			columns: [
-				{ id: "expires", priority: 1 },
-				{ id: "resets", priority: 2 },
-			],
-			items,
-			current: this.#menu.visibleItems
-				.filter(account => account.active)
-				.map(account => this.#menu.adapter.getKey(account)),
-			selected: this.#menu.selectedKey ?? null,
-			empty: "No provider accounts with saved resets",
-			actions: [pickerAction("confirm", "Spend reset", "enter", { primary: true }), CLOSE_ACTION],
-			confirm,
-		});
-		this.#pickerRoot = { size, node };
+		const node = dockedPicker(
+			{
+				title: "Rate-limit resets",
+				subtitle,
+				icon: "refresh",
+				noun: "accounts",
+				size: "md",
+				layout: "cards",
+				preview: "none",
+				query: null,
+				columns: [
+					{ id: "expires", priority: 1 },
+					{ id: "resets", priority: 2 },
+				],
+				items,
+				current: this.#menu.visibleItems
+					.filter(account => account.active)
+					.map(account => this.#menu.adapter.getKey(account)),
+				selected: this.#menu.selectedKey ?? null,
+				empty: "No provider accounts with saved resets",
+				actions: [pickerAction("confirm", "Spend reset", "enter", { primary: true }), CLOSE_ACTION],
+				confirm,
+			},
+			undefined,
+			fill,
+		);
+		this.#pickerRoot = { fill, node };
 		return node;
 	}
 

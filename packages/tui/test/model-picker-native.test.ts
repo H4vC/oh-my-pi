@@ -136,7 +136,7 @@ function titleOf(children: readonly NativeChild[] | undefined): unknown {
 
 test("the model hub describes a data-first picker when the terminal has the kind, else its generic frame", () => {
 	const hub = openHub({ assign: [], cancel: 0 });
-	expect(hub.nativeSheet(withPicker)).toBe(true);
+	expect(hub.nativeSheet(withPicker)).toBe("picker");
 	expect(hub.nativeSheet(withoutPicker)).toBe(false);
 	expect(hub.describe(withoutPicker).k).not.toBe("picker");
 

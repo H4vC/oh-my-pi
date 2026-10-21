@@ -11,14 +11,7 @@
  */
 
 import type { Model } from "@oh-my-pi/pi-ai";
-import type {
-	TspPickerAction,
-	TspPickerColumn,
-	TspPickerItem,
-	TspPickerProps,
-	TspPickerScope,
-	TspSpan,
-} from "@oh-my-pi/pi-wire";
+import type { TspPickerAction, TspPickerColumn, TspPickerItem, TspPickerScope, TspSpan } from "@oh-my-pi/pi-wire";
 import {
 	type Component,
 	Editor,
@@ -36,7 +29,7 @@ import {
 import { code, col, md, node, row, span, text } from "../native/describe";
 import type { DescribeContext, NativeChild, NativeNode, NativeUiEvent } from "../native/node";
 import { actionHint, type NativeHint, hintsRow } from "../native/overlay";
-import { CLOSE_ACTION, type PickerEvent, picker, pickerEvent, pickerQuery, pickerSize } from "../native/picker";
+import { CLOSE_ACTION, type PickerEvent, picker, pickerEvent, pickerQuery } from "../native/picker";
 import type { AgentSource } from "../tools/task";
 import { shortenPath } from "../render/render-utils";
 import { sanitizeDisplaySingleLine } from "./extensions/display-text";
@@ -249,7 +242,7 @@ export class AgentsHubComponent implements Component {
 
 	/** Bumped on every visible-state change; the described node is rebuilt when it moves. */
 	#nativeVersion = 0;
-	#nativeCache: { version: number; sheet: boolean; size: TspPickerProps["size"]; node: NativeNode } | undefined;
+	#nativeCache: { version: number; sheet: boolean; node: NativeNode } | undefined;
 	/** Collapsed state of the generated system-prompt card (native only). */
 	#promptCollapsed = true;
 
@@ -1278,18 +1271,19 @@ export class AgentsHubComponent implements Component {
 	 * The agent list (and its chip strips) is a `picker` sheet. The pattern
 	 * input, the model browser and the create wizard stay the generic overlay.
 	 */
-	nativeSheet(cx: DescribeContext): boolean {
-		return cx.supports("picker") && !this.#createActive && !this.#assigning && this.#strip?.kind !== "pattern";
+	nativeSheet(cx: DescribeContext): "picker" | false {
+		return (
+			cx.supports("picker") && !this.#createActive && !this.#assigning && this.#strip?.kind !== "pattern" && "picker"
+		);
 	}
 
 	describe(cx: DescribeContext): NativeNode {
-		const sheet = this.nativeSheet(cx);
-		const size = pickerSize(cx, "lg");
+		const sheet = this.nativeSheet(cx) !== false;
 		const cached = this.#nativeCache;
-		if (cached?.version === this.#nativeVersion && cached.sheet === sheet && cached.size === size) return cached.node;
+		if (cached?.version === this.#nativeVersion && cached.sheet === sheet) return cached.node;
 		if (sheet) {
-			const described = this.#describePicker(size);
-			this.#nativeCache = { version: this.#nativeVersion, sheet, size, node: described };
+			const described = this.#describePicker();
+			this.#nativeCache = { version: this.#nativeVersion, sheet, node: described };
 			return described;
 		}
 		const footer: NativeChild[] = [];
@@ -1303,7 +1297,7 @@ export class AgentsHubComponent implements Component {
 			this.#describeBody(),
 			node("col", { gap: "xs" }, footer, "footer"),
 		);
-		this.#nativeCache = { version: this.#nativeVersion, sheet, size, node: described };
+		this.#nativeCache = { version: this.#nativeVersion, sheet, node: described };
 		return described;
 	}
 
@@ -1416,7 +1410,7 @@ export class AgentsHubComponent implements Component {
 	}
 
 	/** The config hub as a `picker` (§9.1): source scopes, override columns, prompt preview. */
-	#describePicker(size: TspPickerProps["size"]): NativeNode {
+	#describePicker(): NativeNode {
 		const counts: Record<AgentSource, number> = { project: 0, user: 0, bundled: 0 };
 		for (const agent of this.#allAgents) counts[agent.source]++;
 		const scopes: TspPickerScope[] = [
@@ -1463,7 +1457,7 @@ export class AgentsHubComponent implements Component {
 				subtitle: this.#notice ?? undefined,
 				icon: "users",
 				noun: "agents",
-				size,
+				size: "lg",
 				layout: "rows",
 				preview: "side",
 				...pickerQuery(this.#search),
