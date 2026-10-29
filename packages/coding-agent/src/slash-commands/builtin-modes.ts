@@ -40,7 +40,7 @@ import {
 	cfgComputerMaxWidth,
 	cfgRatchetEnabled,
 } from "../tools/settings";
-import { cfgSkillful } from "../session/settings";
+import { cfgPrewalkFrom, cfgPrewalkInto, cfgSkillful } from "../session/settings";
 import { formatSlowModeResetClock } from "../session/anthropic-slow-mode";
 import { cfgExtendedContext } from "../session/context-settings";
 import { cfgGoalEnabled } from "../goals/settings";
@@ -732,8 +732,7 @@ export const BUILTIN_MODE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 		subcommands: [
 			{
 				name: "restart",
-				description:
-					"Return to the planning model and re-arm the handoff (default: last pair, else @default → @smol)",
+				description: "Return to the planning model and re-arm the handoff (default prewalk.from → prewalk.into)",
 				usage: "[from] [into]",
 			},
 			{ name: "off", description: "Cancel this session's handoff without changing the active model" },
@@ -756,8 +755,7 @@ export const BUILTIN_MODE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 				);
 				return commandConsumed();
 			}
-			const last = runtime.session.getPrewalkSelectors();
-			const into = (restart ? args[1] : args[0]) ?? last.into;
+			const into = (restart ? args[1] : args[0]) ?? cfgPrewalkInto.get(runtime.settings);
 			const target = resolveSessionModelSelector(into, runtime.session, runtime.settings);
 			if (target.error || !target.model) {
 				return usage(target.error ?? `Model "${into}" not found`, runtime);
@@ -767,7 +765,7 @@ export const BUILTIN_MODE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 			}
 			const targetLabel = `${into} (${target.model.provider}/${target.model.id})`;
 			if (restart) {
-				const from = args[0] ?? last.from;
+				const from = args[0] ?? cfgPrewalkFrom.get(runtime.settings);
 				const source = resolveSessionModelSelector(from, runtime.session, runtime.settings);
 				if (source.error || !source.model) {
 					return usage(source.error ?? `Model "${from}" not found`, runtime);
@@ -782,7 +780,6 @@ export const BUILTIN_MODE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 					target.thinkingLevel,
 				);
 				if (result === "rejected") return commandConsumed();
-				runtime.session.setPrewalkSelectors(from, into);
 				const sourceLabel = `${from} (${source.model.provider}/${source.model.id})`;
 				await runtime.output(
 					result === "armed"
@@ -793,7 +790,6 @@ export const BUILTIN_MODE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 			}
 			const armed = runtime.session.armPrewalk(target.model, target.thinkingLevel);
 			if (armed) {
-				runtime.session.setPrewalkSelectors(last.from, into);
 				await runtime.output(
 					`Prewalk on: switching to ${target.model.provider}/${target.model.id} at the next edit/write (todo-gated).`,
 				);

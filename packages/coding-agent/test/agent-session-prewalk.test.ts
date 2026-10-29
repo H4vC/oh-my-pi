@@ -18,6 +18,8 @@ import { getRestorableSessionModels } from "@oh-my-pi/pi-coding-agent/session/se
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import {
 	cfgPrewalkEnabled,
+	cfgPrewalkFrom,
+	cfgPrewalkInto,
 	cfgRetryBaseDelayMs,
 	cfgRetryFallbackChains,
 	cfgRetryFallbackRevertPolicy,
@@ -1424,11 +1426,7 @@ describe("AgentSession prewalk", () => {
 		expect(showStatus).toHaveBeenCalledWith(expect.stringContaining("Prewalk reset"));
 	});
 
-	function createSelectorFixture(
-		initial: Model,
-		roles: { default: Model; smol: Model },
-		sessionManager = SessionManager.inMemory(),
-	) {
+	function createSelectorFixture(initial: Model, roles: { default: Model; smol: Model }) {
 		const mock = createMockModel({
 			responses: [toolCall("first-todo", "todo"), toolCall("first-write", "write"), { content: ["first done"] }],
 		});
@@ -1447,6 +1445,7 @@ describe("AgentSession prewalk", () => {
 		const settings = Settings.isolated({ "compaction.enabled": false });
 		settings.setModelRole("default", `${roles.default.provider}/${roles.default.id}:medium`);
 		settings.setModelRole("smol", `${roles.smol.provider}/${roles.smol.id}:medium`);
+		const sessionManager = SessionManager.inMemory();
 		const created = new AgentSession({
 			agent,
 			sessionManager,
@@ -1466,21 +1465,24 @@ describe("AgentSession prewalk", () => {
 			editor: { setText: vi.fn() },
 			refreshSlashCommandState: vi.fn(),
 		} as unknown as InteractiveModeContext;
-		return { session: created, showStatus, runtime: { ctx } satisfies TuiSlashCommandRuntime };
+		return { session: created, settings, showStatus, runtime: { ctx } satisfies TuiSlashCommandRuntime };
 	}
 
-	it("/prewalk restart <from> <into> sets the pair a bare /prewalk restart reuses", async () => {
+	it("prewalk.from and prewalk.into drive every bare /prewalk restart", async () => {
 		const primary = modelOrThrow("claude-sonnet-4-5");
 		const target = modelOrThrow("claude-sonnet-4-6");
-		// Both roles resolve to `target`, so the role fallback would plan on `target` and never hand off.
-		const { session, showStatus, runtime } = createSelectorFixture(target, { default: target, smol: target });
+		// Both roles resolve to `target`, so the role defaults would plan on `target` and never hand off.
+		const { session, settings, showStatus, runtime } = createSelectorFixture(target, {
+			default: target,
+			smol: target,
+		});
 		const from = `${primary.provider}/${primary.id}:medium`;
-		const into = `${target.provider}/${target.id}:medium`;
+		cfgPrewalkFrom.override(settings, from);
+		cfgPrewalkInto.override(settings, `${target.provider}/${target.id}:medium`);
 
-		expect(await executeBuiltinSlashCommand(`/prewalk restart ${from} ${into}`, runtime)).toBe(true);
+		expect(await executeBuiltinSlashCommand("/prewalk restart", runtime)).toBe(true);
 		expect(session.model?.id).toBe(primary.id);
 		expect(session.getPrewalkState()?.target.id).toBe(target.id);
-
 		await session.prompt("first task");
 		expect(session.model?.id).toBe(target.id);
 
@@ -1488,22 +1490,14 @@ describe("AgentSession prewalk", () => {
 		expect(session.model?.id).toBe(primary.id);
 		expect(session.getPrewalkState()?.target.id).toBe(target.id);
 		expect(showStatus).toHaveBeenLastCalledWith(expect.stringContaining(`using ${from}`));
-
-		// Extra arguments are rejected without touching the session.
-		expect(await executeBuiltinSlashCommand(`/prewalk restart ${from} ${into} extra`, runtime)).toBe(true);
-		expect(session.model?.id).toBe(primary.id);
-		expect(session.getPrewalkSelectors()).toEqual({ from, into });
 	});
 
-	it("/prewalk <into> sets the restart target for the current session only", async () => {
+	it("/prewalk arguments override the configured pair for that command only", async () => {
 		const primary = modelOrThrow("claude-sonnet-4-5");
 		const target = modelOrThrow("claude-sonnet-4-6");
-		// Both roles resolve to `primary`, so a role-only restart would hand off nowhere.
-		const { session, showStatus, runtime } = createSelectorFixture(
-			primary,
-			{ default: primary, smol: primary },
-			SessionManager.create(tempDir.path(), path.join(tempDir.path(), "selector-scope")),
-		);
+		// Both roles resolve to `primary`, so the configured defaults hand off nowhere.
+		const { session, showStatus, runtime } = createSelectorFixture(primary, { default: primary, smol: primary });
+		const from = `${primary.provider}/${primary.id}:medium`;
 		const into = `${target.provider}/${target.id}:medium`;
 
 		expect(await executeBuiltinSlashCommand(`/prewalk ${into}`, runtime)).toBe(true);
@@ -1511,42 +1505,22 @@ describe("AgentSession prewalk", () => {
 		await session.prompt("first task");
 		expect(session.model?.id).toBe(target.id);
 
+		// The override is not remembered: a bare restart uses @default → @smol, which coincide here.
 		expect(await executeBuiltinSlashCommand("/prewalk restart", runtime)).toBe(true);
 		expect(session.model?.id).toBe(primary.id);
-		expect(session.getPrewalkState()?.target.id).toBe(target.id);
-		const original = session.sessionFile;
-		if (!original) throw new Error("Expected persisted session file");
-
-		// Leaving the session forgets its pair: neither the new session nor a return to the original revives it.
-		// Back at @default → @smol, which coincide here, restart arms nothing.
-		expect(await session.newSession()).toBe(true);
-		expect(session.getPrewalkSelectors()).toEqual({ from: "@default", into: "@smol" });
-		expect(await session.switchSession(original)).toBe(true);
-		expect(await executeBuiltinSlashCommand("/prewalk restart", runtime)).toBe(true);
 		expect(session.getPrewalkState()).toBeUndefined();
 		expect(showStatus).toHaveBeenLastCalledWith(expect.stringContaining("Prewalk reset: using @default"));
-	});
 
-	it("a session switch that rolls back keeps the /prewalk pair", async () => {
-		const primary = modelOrThrow("claude-sonnet-4-5");
-		const target = modelOrThrow("claude-sonnet-4-6");
-		const { session, runtime } = createSelectorFixture(
-			primary,
-			{ default: primary, smol: primary },
-			SessionManager.create(tempDir.path(), path.join(tempDir.path(), "selector-rollback")),
-		);
-		const into = `${target.provider}/${target.id}:medium`;
-		expect(await executeBuiltinSlashCommand(`/prewalk ${into}`, runtime)).toBe(true);
+		expect(await executeBuiltinSlashCommand(`/prewalk restart ${from} ${into}`, runtime)).toBe(true);
+		expect(session.getPrewalkState()?.target.id).toBe(target.id);
+		expect(showStatus).toHaveBeenLastCalledWith(expect.stringContaining("Prewalk restarted"));
 
-		// Fails after the switch adopted the target's session id, forcing the rollback path.
-		const failure = new Error("switch failed after id sync");
-		vi.spyOn(session, "buildDisplaySessionContext").mockImplementationOnce(() => {
-			throw failure;
-		});
-		await expect(session.switchSession(SessionManager.createEmptySessionFile(tempDir.path()))).rejects.toThrow(
-			failure,
-		);
-		expect(session.getPrewalkSelectors()).toEqual({ from: "@default", into });
+		// Extra arguments are rejected without touching the session.
+		const calls = showStatus.mock.calls.length;
+		expect(await executeBuiltinSlashCommand(`/prewalk restart ${from} ${into} extra`, runtime)).toBe(true);
+		expect(session.getPrewalkState()?.target.id).toBe(target.id);
+		expect(showStatus.mock.calls.length).toBe(calls + 1);
+		expect(showStatus).toHaveBeenLastCalledWith(expect.stringContaining("Usage: /prewalk"));
 	});
 
 	it("requires a fresh todo before a later explicit prewalk can hand off", async () => {

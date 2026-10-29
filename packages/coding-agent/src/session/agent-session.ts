@@ -125,7 +125,6 @@ import type { SessionAccountPoolScope } from "../config/account-pools";
 import { shouldEnableAppendOnlyContext } from "../config/append-only-context-mode";
 import type { ModelRegistry } from "../config/model-registry";
 import {
-	DEFAULT_PREWALK_TARGET,
 	disabledProviderIds,
 	getModelMatchPreferences,
 	type ResolvedModelRoleValue,
@@ -525,6 +524,7 @@ import {
 	cfgPowerSleepPrevention,
 	cfgPrewalkAutoTarget,
 	cfgPrewalkEnabled,
+	cfgPrewalkInto,
 	cfgProviderAppendOnlyContext,
 	cfgProvidersCacheWarming,
 	cfgProvidersCacheRetention,
@@ -943,8 +943,6 @@ export class AgentSession implements SettingsScope {
 	readonly #models: ModelControls;
 	readonly #tools: SessionTools;
 	readonly #prewalk: PrewalkCoordinator;
-	/** Last `/prewalk` selector pair; cleared whenever the logical session changes. */
-	#prewalkSelectors: { from: string; into: string } | undefined;
 
 	readonly #providerBoundary: SessionProviderBoundary;
 	#promptTemplates: PromptTemplate[];
@@ -1891,16 +1889,6 @@ export class AgentSession implements SettingsScope {
 		targetThinkingLevel: ConfiguredThinkingLevel | undefined,
 	): Promise<PrewalkRestartResult> {
 		return this.#prewalk.restart(source, sourceThinkingLevel, target, targetThinkingLevel);
-	}
-
-	/** The selector pair a bare `/prewalk restart` reuses; `@default` → `@smol` until this session sets one. */
-	getPrewalkSelectors(): { from: string; into: string } {
-		return this.#prewalkSelectors ?? { from: "@default", into: DEFAULT_PREWALK_TARGET };
-	}
-
-	/** Remember the selector pair for the current logical session; any session switch forgets it. */
-	setPrewalkSelectors(from: string, into: string): void {
-		this.#prewalkSelectors = { from, into };
 	}
 
 	/** Validate the active plan artifact and shape an `xd://propose` result for review-mode hosts. */
@@ -2989,7 +2977,7 @@ export class AgentSession implements SettingsScope {
 
 	/** Resolve the configured startup/new-session handoff using the settings-change selection path. */
 	#resolveDefaultPrewalk(): Prewalk | undefined {
-		const resolved = this.#resolvePrewalkTarget(DEFAULT_PREWALK_TARGET);
+		const resolved = this.#resolvePrewalkTarget(cfgPrewalkInto.get(this.settings));
 		if (typeof resolved !== "string") return resolved;
 		this.emitNotice("warning", `Prewalk not armed: ${resolved}.`, "prewalk");
 		return undefined;
@@ -6079,7 +6067,6 @@ export class AgentSession implements SettingsScope {
 			this.#observedSessionId = currentSessionId;
 		} else if (this.#observedSessionId !== currentSessionId) {
 			this.#observedSessionId = currentSessionId;
-			this.#prewalkSelectors = undefined;
 			if (notifyChange) this.#notifySessionChangeCallbacks();
 		}
 		const sid = this.#activeProviderSessionId(sessionId);
@@ -13059,8 +13046,6 @@ export class AgentSession implements SettingsScope {
 		// record on success but stays valid if the switch is rolled back to this same session.
 		const previousIrcPending = this.#irc.clearPending();
 		const previousSessionGeneration = this.#sessionGeneration++;
-		// The target's id sync forgets the pair; a rolled-back switch keeps the still-live session's.
-		const previousPrewalkSelectors = this.#prewalkSelectors;
 		const generationSettled = Promise.withResolvers<void>();
 		const previousSessionGenerationSettled = this.#sessionGenerationSettled;
 		this.#sessionGenerationSettled = generationSettled.promise;
@@ -13302,7 +13287,6 @@ export class AgentSession implements SettingsScope {
 			this.agent.replaceQueues(previousSteeringMessages, previousFollowUpMessages);
 			this.#irc.restorePending(previousIrcPending);
 			this.#sessionGeneration = previousSessionGeneration;
-			this.#prewalkSelectors = previousPrewalkSelectors;
 			generationSettled.resolve();
 			this.#sessionGenerationSettled = previousSessionGenerationSettled;
 			this.#pendingNextTurnMessages = previousPendingNextTurnMessages;
