@@ -1527,6 +1527,28 @@ describe("AgentSession prewalk", () => {
 		expect(showStatus).toHaveBeenLastCalledWith(expect.stringContaining("Prewalk reset: using @default"));
 	});
 
+	it("a session switch that rolls back keeps the /prewalk pair", async () => {
+		const primary = modelOrThrow("claude-sonnet-4-5");
+		const target = modelOrThrow("claude-sonnet-4-6");
+		const { session, runtime } = createSelectorFixture(
+			primary,
+			{ default: primary, smol: primary },
+			SessionManager.create(tempDir.path(), path.join(tempDir.path(), "selector-rollback")),
+		);
+		const into = `${target.provider}/${target.id}:medium`;
+		expect(await executeBuiltinSlashCommand(`/prewalk ${into}`, runtime)).toBe(true);
+
+		// Fails after the switch adopted the target's session id, forcing the rollback path.
+		const failure = new Error("switch failed after id sync");
+		vi.spyOn(session, "buildDisplaySessionContext").mockImplementationOnce(() => {
+			throw failure;
+		});
+		await expect(session.switchSession(SessionManager.createEmptySessionFile(tempDir.path()))).rejects.toThrow(
+			failure,
+		);
+		expect(session.getPrewalkSelectors()).toEqual({ from: "@default", into });
+	});
+
 	it("requires a fresh todo before a later explicit prewalk can hand off", async () => {
 		const primary = modelOrThrow("claude-sonnet-4-5");
 		const target = modelOrThrow("claude-sonnet-4-6");
