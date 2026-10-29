@@ -1424,6 +1424,69 @@ describe("AgentSession prewalk", () => {
 		expect(showStatus).toHaveBeenCalledWith(expect.stringContaining("Prewalk reset"));
 	});
 
+	it("/prewalk restart <from> <into> sets the pair a bare /prewalk restart reuses", async () => {
+		const primary = modelOrThrow("claude-sonnet-4-5");
+		const target = modelOrThrow("claude-sonnet-4-6");
+		const mock = createMockModel({
+			responses: [toolCall("first-todo", "todo"), toolCall("first-write", "write"), { content: ["first done"] }],
+		});
+		const agent = new Agent({
+			getApiKey: () => "test-key",
+			initialState: {
+				model: target,
+				systemPrompt: ["Test"],
+				tools: [todoTool as AgentTool, writeTool as AgentTool],
+				messages: [],
+				thinkingLevel: Effort.Medium,
+			},
+			convertToLlm,
+			streamFn: (model, context, options) => mock.stream(model, context, options),
+		});
+		const settings = Settings.isolated({ "compaction.enabled": false });
+		// Roles point the opposite way, so the role fallback would plan on `target` and never hand off.
+		settings.setModelRole("default", `${target.provider}/${target.id}:medium`);
+		settings.setModelRole("smol", `${target.provider}/${target.id}:medium`);
+		const sessionManager = SessionManager.inMemory();
+		session = new AgentSession({
+			agent,
+			sessionManager,
+			settings,
+			modelRegistry,
+			toolRegistry,
+			thinkingLevel: Effort.Medium,
+		});
+		const showStatus = vi.fn();
+		const ctx = {
+			session,
+			sessionManager,
+			settings,
+			collabGuest: false,
+			showStatus,
+			editor: { setText: vi.fn() },
+			refreshSlashCommandState: vi.fn(),
+		} as unknown as InteractiveModeContext;
+		const runtime = { ctx } satisfies TuiSlashCommandRuntime;
+		const from = `${primary.provider}/${primary.id}:medium`;
+		const into = `${target.provider}/${target.id}:medium`;
+
+		expect(await executeBuiltinSlashCommand(`/prewalk restart ${from} ${into}`, runtime)).toBe(true);
+		expect(session.model?.id).toBe(primary.id);
+		expect(session.getPrewalkState()?.target.id).toBe(target.id);
+
+		await session.prompt("first task");
+		expect(session.model?.id).toBe(target.id);
+
+		expect(await executeBuiltinSlashCommand("/prewalk restart", runtime)).toBe(true);
+		expect(session.model?.id).toBe(primary.id);
+		expect(session.getPrewalkState()?.target.id).toBe(target.id);
+		expect(showStatus).toHaveBeenLastCalledWith(expect.stringContaining(`using ${from}`));
+
+		// Extra arguments are rejected without touching the session.
+		expect(await executeBuiltinSlashCommand(`/prewalk restart ${from} ${into} extra`, runtime)).toBe(true);
+		expect(session.model?.id).toBe(primary.id);
+		expect(session.prewalkSelectors).toEqual({ from, into });
+	});
+
 	it("requires a fresh todo before a later explicit prewalk can hand off", async () => {
 		const primary = modelOrThrow("claude-sonnet-4-5");
 		const target = modelOrThrow("claude-sonnet-4-6");

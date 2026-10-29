@@ -64,18 +64,18 @@ disarms a pending handoff. This does not control subagent prewalk.
 Run these slash commands without restarting OMP:
 
 ```text
-/prewalk
-/prewalk restart
+/prewalk [into]
+/prewalk restart [from] [into]
 /prewalk off
 ```
 
-`/prewalk` arms a one-shot handoff from the active model to the current `@smol` assignment.
+`/prewalk` arms a one-shot handoff from the active model to `into` (any model selector or role; default the last `/prewalk` target, initially `@smol`).
 
 `/prewalk off` cancels a pending handoff and clears its planning steering without changing the active model, saved configuration, or already-delivered continuation history. It is safe to run when already off or after a handoff; it does not switch back to the planning model. Cancellation applies only to the current session: `/new` re-arms prewalk when the configured setting is enabled. It also keeps [auto-prewalk](#auto-prewalk) from arming again until `/new`.
 
-After a handoff, `/prewalk restart` immediately returns the session to the current `@default` assignment and re-arms the handoff to `@smol`. Both roles are resolved when the command runs, so the cycle is independent of concrete model names and does not alter either role's persisted configuration.
+After a handoff, `/prewalk restart` immediately returns the session to `from` and re-arms the handoff to `into`. Omitted arguments reuse the session's last `/prewalk` pair, initially `@default` → `@smol`, so `/prewalk restart @slow @default` once makes every later bare `/prewalk restart` cycle slow → default. Selectors are resolved when the command runs, so role reassignments take effect, and neither role's persisted configuration changes. The pair is session-local.
 
-If prewalk is already armed, `/prewalk` leaves the existing target in place. `/prewalk restart` also preserves a matching arm; if its existing target differs from the current `@smol` resolution, restart is rejected before changing the active model. To choose a different target at startup, use `--prewalk-into`.
+If prewalk is already armed, `/prewalk` leaves the existing target in place. `/prewalk restart` also preserves a matching arm; if its existing target differs from the requested `into`, restart is rejected before changing the active model. To choose a different target at startup, use `--prewalk-into`.
 
 ## Auto-prewalk
 

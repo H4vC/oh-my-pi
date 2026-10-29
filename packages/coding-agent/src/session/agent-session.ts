@@ -943,6 +943,8 @@ export class AgentSession implements SettingsScope {
 	readonly #models: ModelControls;
 	readonly #tools: SessionTools;
 	readonly #prewalk: PrewalkCoordinator;
+	/** Selectors of the last `/prewalk` pair; a bare `/prewalk restart` reuses them. Session-local. */
+	prewalkSelectors = { from: "@default", into: DEFAULT_PREWALK_TARGET };
 
 	readonly #providerBoundary: SessionProviderBoundary;
 	#promptTemplates: PromptTemplate[];
