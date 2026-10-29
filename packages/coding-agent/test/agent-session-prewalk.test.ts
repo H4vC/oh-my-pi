@@ -1424,7 +1424,11 @@ describe("AgentSession prewalk", () => {
 		expect(showStatus).toHaveBeenCalledWith(expect.stringContaining("Prewalk reset"));
 	});
 
-	function createSelectorFixture(initial: Model, roles: { default: Model; smol: Model }) {
+	function createSelectorFixture(
+		initial: Model,
+		roles: { default: Model; smol: Model },
+		sessionManager = SessionManager.inMemory(),
+	) {
 		const mock = createMockModel({
 			responses: [toolCall("first-todo", "todo"), toolCall("first-write", "write"), { content: ["first done"] }],
 		});
@@ -1443,7 +1447,6 @@ describe("AgentSession prewalk", () => {
 		const settings = Settings.isolated({ "compaction.enabled": false });
 		settings.setModelRole("default", `${roles.default.provider}/${roles.default.id}:medium`);
 		settings.setModelRole("smol", `${roles.smol.provider}/${roles.smol.id}:medium`);
-		const sessionManager = SessionManager.inMemory();
 		const created = new AgentSession({
 			agent,
 			sessionManager,
@@ -1492,11 +1495,15 @@ describe("AgentSession prewalk", () => {
 		expect(session.getPrewalkSelectors()).toEqual({ from, into });
 	});
 
-	it("/prewalk <into> sets the restart target for this session only", async () => {
+	it("/prewalk <into> sets the restart target for the current session only", async () => {
 		const primary = modelOrThrow("claude-sonnet-4-5");
 		const target = modelOrThrow("claude-sonnet-4-6");
 		// Both roles resolve to `primary`, so a role-only restart would hand off nowhere.
-		const { session, showStatus, runtime } = createSelectorFixture(primary, { default: primary, smol: primary });
+		const { session, showStatus, runtime } = createSelectorFixture(
+			primary,
+			{ default: primary, smol: primary },
+			SessionManager.create(tempDir.path(), path.join(tempDir.path(), "selector-scope")),
+		);
 		const into = `${target.provider}/${target.id}:medium`;
 
 		expect(await executeBuiltinSlashCommand(`/prewalk ${into}`, runtime)).toBe(true);
@@ -1507,9 +1514,14 @@ describe("AgentSession prewalk", () => {
 		expect(await executeBuiltinSlashCommand("/prewalk restart", runtime)).toBe(true);
 		expect(session.model?.id).toBe(primary.id);
 		expect(session.getPrewalkState()?.target.id).toBe(target.id);
+		const original = session.sessionFile;
+		if (!original) throw new Error("Expected persisted session file");
 
-		// A new session starts back at @default → @smol, which coincide here, so restart arms nothing.
+		// Leaving the session forgets its pair: neither the new session nor a return to the original revives it.
+		// Back at @default → @smol, which coincide here, restart arms nothing.
 		expect(await session.newSession()).toBe(true);
+		expect(session.getPrewalkSelectors()).toEqual({ from: "@default", into: "@smol" });
+		expect(await session.switchSession(original)).toBe(true);
 		expect(await executeBuiltinSlashCommand("/prewalk restart", runtime)).toBe(true);
 		expect(session.getPrewalkState()).toBeUndefined();
 		expect(showStatus).toHaveBeenLastCalledWith(expect.stringContaining("Prewalk reset: using @default"));

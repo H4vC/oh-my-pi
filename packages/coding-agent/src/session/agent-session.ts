@@ -943,8 +943,8 @@ export class AgentSession implements SettingsScope {
 	readonly #models: ModelControls;
 	readonly #tools: SessionTools;
 	readonly #prewalk: PrewalkCoordinator;
-	/** Last `/prewalk` selector pair, tagged with the logical session that set it. */
-	#prewalkSelectors: { sessionId: string; from: string; into: string } | undefined;
+	/** Last `/prewalk` selector pair; cleared whenever the logical session changes. */
+	#prewalkSelectors: { from: string; into: string } | undefined;
 
 	readonly #providerBoundary: SessionProviderBoundary;
 	#promptTemplates: PromptTemplate[];
@@ -1895,14 +1895,12 @@ export class AgentSession implements SettingsScope {
 
 	/** The selector pair a bare `/prewalk restart` reuses; `@default` → `@smol` until this session sets one. */
 	getPrewalkSelectors(): { from: string; into: string } {
-		const stored = this.#prewalkSelectors;
-		if (stored?.sessionId === this.sessionManager.getSessionId()) return { from: stored.from, into: stored.into };
-		return { from: "@default", into: DEFAULT_PREWALK_TARGET };
+		return this.#prewalkSelectors ?? { from: "@default", into: DEFAULT_PREWALK_TARGET };
 	}
 
-	/** Remember the selector pair for this logical session only; `/new`, `/resume`, and forks start fresh. */
+	/** Remember the selector pair for the current logical session; any session switch forgets it. */
 	setPrewalkSelectors(from: string, into: string): void {
-		this.#prewalkSelectors = { sessionId: this.sessionManager.getSessionId(), from, into };
+		this.#prewalkSelectors = { from, into };
 	}
 
 	/** Validate the active plan artifact and shape an `xd://propose` result for review-mode hosts. */
@@ -6081,6 +6079,7 @@ export class AgentSession implements SettingsScope {
 			this.#observedSessionId = currentSessionId;
 		} else if (this.#observedSessionId !== currentSessionId) {
 			this.#observedSessionId = currentSessionId;
+			this.#prewalkSelectors = undefined;
 			if (notifyChange) this.#notifySessionChangeCallbacks();
 		}
 		const sid = this.#activeProviderSessionId(sessionId);
