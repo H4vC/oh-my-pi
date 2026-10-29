@@ -756,7 +756,7 @@ export const BUILTIN_MODE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 				);
 				return commandConsumed();
 			}
-			const last = runtime.session.prewalkSelectors;
+			const last = runtime.session.getPrewalkSelectors();
 			const into = (restart ? args[1] : args[0]) ?? last.into;
 			const target = resolveSessionModelSelector(into, runtime.session, runtime.settings);
 			if (target.error || !target.model) {
@@ -782,7 +782,7 @@ export const BUILTIN_MODE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 					target.thinkingLevel,
 				);
 				if (result === "rejected") return commandConsumed();
-				runtime.session.prewalkSelectors = { from, into };
+				runtime.session.setPrewalkSelectors(from, into);
 				const sourceLabel = `${from} (${source.model.provider}/${source.model.id})`;
 				await runtime.output(
 					result === "armed"
@@ -793,7 +793,7 @@ export const BUILTIN_MODE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 			}
 			const armed = runtime.session.armPrewalk(target.model, target.thinkingLevel);
 			if (armed) {
-				runtime.session.prewalkSelectors = { from: last.from, into };
+				runtime.session.setPrewalkSelectors(last.from, into);
 				await runtime.output(
 					`Prewalk on: switching to ${target.model.provider}/${target.model.id} at the next edit/write (todo-gated).`,
 				);

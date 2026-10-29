@@ -943,8 +943,8 @@ export class AgentSession implements SettingsScope {
 	readonly #models: ModelControls;
 	readonly #tools: SessionTools;
 	readonly #prewalk: PrewalkCoordinator;
-	/** Selectors of the last `/prewalk` pair; a bare `/prewalk restart` reuses them. Session-local. */
-	prewalkSelectors = { from: "@default", into: DEFAULT_PREWALK_TARGET };
+	/** Last `/prewalk` selector pair, tagged with the logical session that set it. */
+	#prewalkSelectors: { sessionId: string; from: string; into: string } | undefined;
 
 	readonly #providerBoundary: SessionProviderBoundary;
 	#promptTemplates: PromptTemplate[];
@@ -1891,6 +1891,18 @@ export class AgentSession implements SettingsScope {
 		targetThinkingLevel: ConfiguredThinkingLevel | undefined,
 	): Promise<PrewalkRestartResult> {
 		return this.#prewalk.restart(source, sourceThinkingLevel, target, targetThinkingLevel);
+	}
+
+	/** The selector pair a bare `/prewalk restart` reuses; `@default` → `@smol` until this session sets one. */
+	getPrewalkSelectors(): { from: string; into: string } {
+		const stored = this.#prewalkSelectors;
+		if (stored?.sessionId === this.sessionManager.getSessionId()) return { from: stored.from, into: stored.into };
+		return { from: "@default", into: DEFAULT_PREWALK_TARGET };
+	}
+
+	/** Remember the selector pair for this logical session only; `/new`, `/resume`, and forks start fresh. */
+	setPrewalkSelectors(from: string, into: string): void {
+		this.#prewalkSelectors = { sessionId: this.sessionManager.getSessionId(), from, into };
 	}
 
 	/** Validate the active plan artifact and shape an `xd://propose` result for review-mode hosts. */
